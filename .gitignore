@@ -13,3 +13,6 @@ build/
 .coverage
 .idea/
 .vscode/
+celerybeat-schedule
+celerybeat-schedule.*
+
