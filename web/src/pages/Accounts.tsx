@@ -208,7 +208,7 @@ export default function Accounts() {
                   <button
                     onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(acc.id); }}
                     disabled={remove.isPending}
-                    className="ml-auto text-sm font-medium text-red-500 hover:text-red-700 transition-colors disabled:opacity-50"
+                    className="ml-auto rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
                   >
                     {remove.isPending ? "Removing…" : "Remove account"}
                   </button>
