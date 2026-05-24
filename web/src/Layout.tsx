@@ -29,9 +29,9 @@ export default function Layout() {
       >
         {/* Logo */}
         <div className="px-6 py-7" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <div className="grid grid-cols-[56px_minmax(0,1fr)] items-center gap-4">
+          <div className="flex items-center gap-4">
             <div
-              className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+              className="h-14 w-14 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{
                 background:
                   "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(14,165,233,0.2))",
@@ -40,9 +40,9 @@ export default function Layout() {
                 border: "1px solid rgba(99,102,241,0.3)",
               }}
             >
-              <img src="/favicon.png" alt="Vigil" className="w-8 h-8 object-contain drop-shadow" />
+              <img src="/favicon.png" alt="Vigil" className="h-8 w-8 object-contain drop-shadow" />
             </div>
-            <span className="translate-y-px text-xl font-semibold leading-none tracking-tight text-white">Vigil</span>
+            <span className="text-xl font-semibold leading-none tracking-tight text-white">Vigil</span>
           </div>
         </div>
 
