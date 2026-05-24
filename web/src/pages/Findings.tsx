@@ -106,6 +106,16 @@ function matchesSeverityFilter(f: Finding, filter: SeverityFilter): boolean {
   return f.severity === filter;
 }
 
+function sortLabel(k: SortKey): string {
+  if (k === "first_seen") return "Age";
+  return k.charAt(0).toUpperCase() + k.slice(1);
+}
+
+function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
+  if (k !== active) return "";
+  return dir === "asc" ? "↑" : "↓";
+}
+
 export default function Findings() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<StatusTab>("open");
@@ -310,56 +320,34 @@ export default function Findings() {
   ];
 
   return (
-    <div className="mx-auto max-w-[1320px] px-8 py-7">
+    <div className="mx-auto w-full max-w-[1320px] px-8 py-7">
       {/* Header */}
-      <div className="mb-7 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
-            Findings
-          </h1>
-          <p className="text-sm text-zinc-500 mt-1">
+      <div className="mb-7 flex items-start justify-between gap-6">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
+          <p className="mt-1 text-sm text-zinc-500">
             IAM posture issues from the latest account scan.
             {scanRun.data?.finished_at && (
               <> Last scan {lastScanLabel(scanRun.data.finished_at)}.</>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             onClick={downloadCsv}
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 hover:shadow-md"
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-              />
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Export
           </button>
           <button
             onClick={() => qc.invalidateQueries({ queryKey: ["findings"] })}
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:-translate-y-0.5 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 hover:shadow-md"
           >
-            <svg
-              className={`w-4 h-4 ${q.isFetching ? "animate-spin" : ""}`}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
+            <svg className={`h-4 w-4 ${q.isFetching ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             Refresh
           </button>
@@ -367,54 +355,28 @@ export default function Findings() {
             <button
               onClick={() => scan.mutate(connectedId)}
               disabled={scan.isPending || isRunning}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-all hover:-translate-y-0.5 hover:bg-indigo-700 hover:shadow-md hover:shadow-indigo-600/25 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
             >
-              <svg
-                className={`w-4 h-4 ${isRunning || scan.isPending ? "animate-spin" : ""}`}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2}
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
+              <svg className={`h-4 w-4 ${isRunning || scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              {isRunning
-                ? "Scanning…"
-                : scan.isPending
-                  ? "Triggering…"
-                  : "Re-scan"}
+              {isRunning ? "Scanning…" : scan.isPending ? "Triggering…" : "Re-scan"}
             </button>
           )}
         </div>
       </div>
 
-      {/* Scan status banners */}
       {isRunning && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
-          <svg
-            className="w-4 h-4 animate-spin flex-shrink-0"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
+        <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">
+          <svg className="h-4 w-4 flex-shrink-0 animate-spin" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           Scan running — findings will refresh automatically on completion.
         </div>
       )}
       {scanStatus === "error" && scanRun.data?.error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <span className="font-medium">Last scan failed:</span>{" "}
-          {scanRun.data.error}
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span className="font-semibold">Last scan failed:</span> {scanRun.data.error}
         </div>
       )}
 
@@ -426,217 +388,144 @@ export default function Findings() {
             onClick={() => setSeverityFilter(card.key)}
             className={`group relative overflow-hidden rounded-2xl border bg-white px-5 py-5 text-left shadow-sm shadow-zinc-950/[0.03] transition-all hover:-translate-y-0.5 hover:shadow-md ${
               severityFilter === card.key
-                ? "border-zinc-900 ring-4 ring-zinc-950/[0.04]"
+                ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]"
                 : "border-zinc-200 hover:border-zinc-300"
             }`}
           >
             <div className="mb-3 flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
-                {card.label}
-              </span>
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${card.dot} shadow-sm`}
-              />
+              <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-400">{card.label}</span>
+              <span className={`h-2.5 w-2.5 rounded-full ${card.dot} shadow-sm`} />
             </div>
-            <div
-              className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}
-            >
-              {card.value}
-            </div>
+            <div className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div>
             <div className="mt-3 text-sm text-zinc-500">{card.hint}</div>
           </button>
         ))}
       </div>
 
-      {/* Tabs + search row */}
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex w-fit items-center gap-1 rounded-2xl bg-zinc-100 p-1">
-          {statusTabs.map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatus(s)}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold capitalize transition-all ${
-                status === s
-                  ? "bg-zinc-950 text-white shadow-sm"
-                  : "text-zinc-500 hover:bg-white hover:text-zinc-900"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M21 21l-4.35-4.35m1.1-5.15a6.25 6.25 0 11-12.5 0 6.25 6.25 0 0112.5 0z"
-              />
-            </svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search findings…"
-              className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm shadow-zinc-950/[0.02] outline-none transition focus:border-zinc-400 lg:w-64 placeholder:text-zinc-400"
-            />
-          </div>
-          <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs font-bold uppercase tracking-[0.14em] text-zinc-400 shadow-sm shadow-zinc-950/[0.02]">
-            <span>Sort</span>
-            {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+      {/* Toolbar */}
+      <div className="mb-5 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm shadow-zinc-950/[0.03]">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex w-fit items-center gap-1 rounded-xl bg-zinc-100 p-1">
+            {statusTabs.map((s) => (
               <button
-                key={k}
-                onClick={() => toggleSort(k)}
-                className={`hover:text-zinc-700 transition-colors ${sortKey === k ? "text-zinc-900" : ""}`}
+                key={s}
+                onClick={() => setStatus(s)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold capitalize transition-all ${
+                  status === s
+                    ? "bg-zinc-950 text-white shadow-sm"
+                    : "text-zinc-500 hover:bg-white hover:text-zinc-900"
+                }`}
               >
-                {k === "first_seen"
-                  ? "Age"
-                  : k.charAt(0).toUpperCase() + k.slice(1)}
-                {sortKey === k && (sortDir === "asc" ? " ↑" : " ↓")}
+                {s}
               </button>
             ))}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative">
+              <svg className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35m1.1-5.15a6.25 6.25 0 11-12.5 0 6.25 6.25 0 0112.5 0z" />
+              </svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search findings…"
+                className="h-11 w-full rounded-xl border border-zinc-200 bg-white pl-10 pr-3 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-4 focus:ring-zinc-950/[0.04] sm:w-72"
+              />
+            </div>
+
+            <div className="flex h-11 items-center gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-1">
+              <span className="px-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">Sort</span>
+              {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => toggleSort(k)}
+                  className={`inline-flex h-8 items-center gap-1 rounded-lg px-3 text-sm font-semibold transition-all ${
+                    sortKey === k
+                      ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200"
+                      : "text-zinc-500 hover:bg-white/70 hover:text-zinc-900"
+                  }`}
+                >
+                  {sortLabel(k)}
+                  {sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Empty / loading states */}
       {q.isLoading && (
-        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">
-          Loading…
-        </div>
+        <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">Loading…</div>
       )}
       {!q.isLoading && rows.length === 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-16 text-center">
-          <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-3">
-            <svg
-              className="w-5 h-5 text-green-500"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M5 13l4 4L19 7"
-              />
+        <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-green-50">
+            <svg className="h-5 w-5 text-green-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <p className="text-sm font-medium text-zinc-700">
-            No {status} findings
-          </p>
-          <p className="text-sm text-zinc-400 mt-1">
-            {status === "open"
-              ? "Run a scan to check your account for IAM issues."
-              : "Nothing to show here."}
-          </p>
+          <p className="text-sm font-semibold text-zinc-700">No {status} findings</p>
+          <p className="mt-1 text-sm text-zinc-400">{status === "open" ? "Run a scan to check your account for IAM issues." : "Nothing to show here."}</p>
         </div>
       )}
 
-      {/* Findings list — sections always expanded */}
       {rows.length > 0 && (
-        <div className="space-y-4 pb-8">
-          {(grouped ?? [["all", rows] as [string, Finding[]]]).map(
-            ([key, items]) => {
-              const isGrouped = grouped !== null;
-              const sev = items[0]?.severity ?? "low";
-              const label = checkLabels[key] ?? key;
-              const description = checkDescriptions[key];
+        <div className="space-y-3 pb-8">
+          {(grouped ?? [["all", rows] as [string, Finding[]]]).map(([key, items]) => {
+            const isGrouped = grouped !== null;
+            const sev = items[0]?.severity ?? "low";
+            const label = checkLabels[key] ?? key;
+            const description = checkDescriptions[key];
 
-              return (
-                <div
-                  key={key}
-                  className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]"
-                >
-                  {/* Section header */}
-                  {isGrouped && (
-                    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50 to-white px-5 py-4">
-                      <span
-                        className={`flex-shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[sev] ?? sevBadge.low}`}
-                      >
-                        {sev}
-                      </span>
-                      <span className="text-sm font-bold text-zinc-950">
-                        {label}
-                      </span>
-                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-500">
-                        {items.length}
-                      </span>
-                      {description && (
-                        <span className="hidden text-sm text-zinc-500 lg:block">
-                          {description}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Column header */}
-                  <div className="grid grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-4 border-b border-zinc-100 bg-zinc-50/80 px-5 py-2.5">
-                    <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
-                      Resource
-                    </div>
-                    <div className="text-right text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
-                      Score
-                    </div>
-                    <div className="text-right text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
-                      Age
-                    </div>
-                  </div>
-
-                  {/* Rows */}
-                  <div className="divide-y divide-zinc-100">
-                    {items.map((f) => (
-                      <div
-                        key={f.id}
-                        onClick={() => setSelected(f)}
-                        className="group grid cursor-pointer grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-4 px-5 py-4 transition-colors hover:bg-indigo-50/35"
-                      >
-                        <div className="flex-1 min-w-0 relative">
-                          <div className="truncate font-mono text-sm text-zinc-700 group-hover:pr-36">
-                            {shortArn(f.resource_arn)}
-                          </div>
-                          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {(["resolve", "snooze", "ignore"] as const).map(
-                              (action) => (
-                                <button
-                                  key={action}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    act.mutate({ id: f.id, action });
-                                  }}
-                                  className="rounded-lg px-2 py-1 text-xs font-medium capitalize text-zinc-500 hover:bg-white hover:text-zinc-950 hover:shadow-sm"
-                                >
-                                  {action}
-                                </button>
-                              ),
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="text-right">
-                          <span className="inline-flex min-w-10 justify-center rounded-full bg-zinc-100 px-2 py-1 text-sm font-bold tabular-nums text-zinc-800">
-                            {f.risk_score}
-                          </span>
-                        </div>
-
-                        <div className="text-right">
-                          <span className="text-sm tabular-nums text-zinc-500">
-                            {daysAgo(f.first_seen)}
-                          </span>
-                        </div>
+            return (
+              <div key={key} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04] transition-all hover:border-zinc-300 hover:shadow-md">
+                {isGrouped && (
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50 to-white px-5 py-4">
+                    <span className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[sev] ?? sevBadge.low}`}>{sev}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-bold text-zinc-950">{label}</span>
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-500">{items.length}</span>
                       </div>
-                    ))}
+                      {description && <p className="mt-1 truncate text-sm text-zinc-500">{description}</p>}
+                    </div>
+                    <span className="hidden text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Score</span>
+                    <span className="hidden text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Age</span>
                   </div>
+                )}
+
+                <div className="divide-y divide-zinc-100">
+                  {items.map((f) => (
+                    <div
+                      key={f.id}
+                      onClick={() => setSelected(f)}
+                      className="group grid cursor-pointer grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-4 px-5 py-4 transition-colors hover:bg-indigo-50/35"
+                    >
+                      <div className="min-w-0">
+                        {!isGrouped && (
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[f.severity] ?? sevBadge.low}`}>{f.severity}</span>
+                            <span className="text-sm font-bold text-zinc-950">{checkLabels[f.check_id] ?? f.title}</span>
+                          </div>
+                        )}
+                        <div className="truncate font-mono text-sm text-zinc-700 group-hover:text-zinc-950">{shortArn(f.resource_arn)}</div>
+                        {!isGrouped && description && <p className="mt-1 truncate text-sm text-zinc-500">{description}</p>}
+                      </div>
+
+                      <div className="text-right">
+                        <span className="inline-flex min-w-10 justify-center rounded-full bg-zinc-100 px-2 py-1 text-sm font-bold tabular-nums text-zinc-800">{f.risk_score}</span>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-sm tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              );
-            },
-          )}
+              </div>
+            );
+          })}
         </div>
       )}
 

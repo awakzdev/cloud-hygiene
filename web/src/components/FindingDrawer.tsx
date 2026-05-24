@@ -17,9 +17,56 @@ type Finding = {
 
 const sevHeaderBadge: Record<string, string> = {
   critical: "bg-red-600 text-white",
-  high:     "bg-red-500 text-white",
-  medium:   "bg-amber-500 text-white",
-  low:      "bg-zinc-500 text-white",
+  high: "bg-red-500 text-white",
+  medium: "bg-amber-500 text-white",
+  low: "bg-slate-500 text-white",
+};
+
+const severityTheme: Record<string, {
+  shell: string;
+  badgeGlow: string;
+  divider: string;
+  eyebrow: string;
+  number: string;
+  primary: string;
+  primaryHover: string;
+}> = {
+  critical: {
+    shell: "linear-gradient(135deg, #4c0519 0%, #881337 42%, #19070d 100%)",
+    badgeGlow: "0 0 28px rgba(248,113,113,.45)",
+    divider: "border-red-200/20",
+    eyebrow: "text-red-100/60",
+    number: "bg-red-950 text-white shadow-[0_0_14px_rgba(248,113,113,.35)]",
+    primary: "bg-red-950",
+    primaryHover: "hover:bg-red-900 hover:shadow-[0_0_22px_rgba(248,113,113,.35)]",
+  },
+  high: {
+    shell: "linear-gradient(135deg, #5f0710 0%, #7f1d1d 46%, #21070b 100%)",
+    badgeGlow: "0 0 26px rgba(248,113,113,.42)",
+    divider: "border-red-200/20",
+    eyebrow: "text-red-100/60",
+    number: "bg-red-950 text-white shadow-[0_0_14px_rgba(248,113,113,.32)]",
+    primary: "bg-red-950",
+    primaryHover: "hover:bg-red-900 hover:shadow-[0_0_22px_rgba(248,113,113,.32)]",
+  },
+  medium: {
+    shell: "linear-gradient(135deg, #451a03 0%, #92400e 46%, #1c1003 100%)",
+    badgeGlow: "0 0 24px rgba(251,191,36,.36)",
+    divider: "border-amber-100/20",
+    eyebrow: "text-amber-100/65",
+    number: "bg-amber-900 text-white shadow-[0_0_14px_rgba(251,191,36,.28)]",
+    primary: "bg-amber-900",
+    primaryHover: "hover:bg-amber-800 hover:shadow-[0_0_22px_rgba(251,191,36,.28)]",
+  },
+  low: {
+    shell: "linear-gradient(135deg, #0f172a 0%, #334155 48%, #020617 100%)",
+    badgeGlow: "0 0 20px rgba(148,163,184,.22)",
+    divider: "border-slate-100/15",
+    eyebrow: "text-slate-100/55",
+    number: "bg-slate-800 text-white shadow-[0_0_12px_rgba(148,163,184,.18)]",
+    primary: "bg-slate-900",
+    primaryHover: "hover:bg-slate-800 hover:shadow-[0_0_18px_rgba(148,163,184,.18)]",
+  },
 };
 
 
@@ -415,6 +462,7 @@ export function FindingDrawer({
 
   const rem = remediations[finding.check_id] ?? fallbackRemediation;
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
+  const theme = severityTheme[finding.severity] ?? severityTheme.low;
   const hasEvidence = Object.keys(finding.evidence).length > 0;
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
 
@@ -422,43 +470,45 @@ export function FindingDrawer({
     <>
       <div className="fixed inset-0 bg-black/30 z-40 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="fixed right-0 top-0 h-full w-full max-w-[480px] bg-white z-50 shadow-2xl flex flex-col overflow-hidden">
+      <div className="fixed right-0 top-0 h-full w-full max-w-[640px] bg-white z-50 shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="bg-zinc-900 px-6 pt-5 pb-5">
+        <div className="px-8 pt-7 pb-7 relative overflow-hidden" style={{ background: theme.shell }}>
+          <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full blur-3xl opacity-70" style={{ background: finding.severity === "medium" ? "rgba(251,191,36,.32)" : finding.severity === "low" ? "rgba(148,163,184,.18)" : "rgba(248,113,113,.38)" }} />
+          <div className="pointer-events-none absolute left-0 top-0 h-1.5 w-full" style={{ background: finding.severity === "medium" ? "linear-gradient(90deg,#f59e0b,#fde68a)" : finding.severity === "low" ? "linear-gradient(90deg,#64748b,#cbd5e1)" : "linear-gradient(90deg,#ef4444,#fecaca)" }} />
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-2.5 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${headerBadge}`}>
+                <span className={`inline-flex items-center px-3 py-1 rounded-md text-xs font-bold uppercase tracking-wide ${headerBadge}`} style={{ boxShadow: theme.badgeGlow }}>
                   {finding.severity}
                 </span>
                 <span className="text-xs font-mono text-zinc-400">{finding.check_id}</span>
               </div>
-              <h2 className="text-base font-semibold text-white leading-snug">{finding.title}</h2>
+              <h2 className="text-2xl font-semibold text-white leading-snug tracking-tight">{finding.title}</h2>
             </div>
-            <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 transition-colors flex-shrink-0 mt-0.5">
+            <button onClick={onClose} className="text-white/45 hover:text-white transition-colors flex-shrink-0 mt-0.5">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
           {/* Affected resource */}
-          <div className="mt-4 pt-4 border-t border-zinc-800">
-            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-1">Affected Resource</div>
-            <p className="text-xs font-mono text-zinc-300 break-all leading-relaxed">{finding.resource_arn}</p>
+          <div className={`mt-5 pt-5 border-t ${theme.divider}`}>
+            <div className={`text-sm font-semibold uppercase tracking-[0.24em] mb-2 ${theme.eyebrow}`}>Affected Resource</div>
+            <p className="text-base font-mono text-white/90 break-all leading-relaxed">{finding.resource_arn}</p>
           </div>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+        <div className="flex-1 overflow-y-auto px-8 py-7 space-y-7">
           {/* Context + Risk side by side */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4">
-              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2">Finding Context</div>
-              <p className="text-xs text-zinc-700 leading-relaxed">{rem.why}</p>
+            <div className="rounded-xl border border-zinc-200 bg-white px-5 py-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-400 uppercase tracking-[0.18em] mb-3">Finding Context</div>
+              <p className="text-base text-zinc-700 leading-8">{rem.why}</p>
             </div>
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-4">
-              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2">Risk</div>
-              <p className="text-xs text-zinc-500 leading-relaxed">{rem.risk}</p>
+            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-5 py-5 shadow-sm">
+              <div className="text-sm font-semibold text-zinc-400 uppercase tracking-[0.18em] mb-3">Risk</div>
+              <p className="text-base text-zinc-600 leading-8">{rem.risk}</p>
             </div>
           </div>
 
@@ -499,10 +549,10 @@ export function FindingDrawer({
             </div>
 
             {tab === "console" && (
-              <ol className="space-y-2.5">
+              <ol className="space-y-3 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
                 {rem.console.map((step, i) => (
-                  <li key={i} className="flex gap-3 text-sm text-zinc-700 leading-relaxed">
-                    <span className="w-5 h-5 rounded-full bg-zinc-900 text-zinc-50 text-xs font-semibold flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <li key={i} className="flex gap-4 text-base text-zinc-700 leading-7">
+                    <span className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5 ${theme.number}`}>
                       {i + 1}
                     </span>
                     {step}
@@ -529,22 +579,22 @@ export function FindingDrawer({
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-zinc-100 flex gap-2">
+        <div className="px-8 py-5 border-t border-zinc-100 flex gap-2">
           <button
             onClick={() => { onAction(finding.id, "resolve"); onClose(); }}
-            className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-medium py-2 rounded transition-colors"
+            className={`flex-1 ${theme.primary} ${theme.primaryHover} text-white text-sm font-semibold py-3 rounded-lg transition-all`}
           >
             Resolve
           </button>
           <button
             onClick={() => { onAction(finding.id, "snooze"); onClose(); }}
-            className="flex-1 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 text-sm font-medium py-2 rounded-lg transition-colors"
+            className="flex-1 border border-zinc-300 text-zinc-700 hover:bg-zinc-50 hover:border-zinc-500 hover:shadow-md text-sm font-semibold py-3 rounded-lg transition-all"
           >
-            Snooze 30d
+            Snooze
           </button>
           <button
             onClick={() => { onAction(finding.id, "ignore"); onClose(); }}
-            className="px-4 border border-zinc-200 text-zinc-400 hover:bg-zinc-50 text-sm font-medium py-2 rounded-lg transition-colors"
+            className="px-5 border border-zinc-300 bg-white text-zinc-700 hover:text-zinc-950 hover:border-zinc-500 hover:bg-zinc-50 hover:shadow-md text-sm font-semibold py-3 rounded-lg transition-all"
           >
             Ignore
           </button>
