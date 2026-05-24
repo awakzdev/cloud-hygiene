@@ -15,17 +15,11 @@ type Finding = { id: string; severity: string; status: string };
 
 function AwsProviderIcon() {
   return (
-    <span
-      title="Amazon Web Services"
-      aria-label="Amazon Web Services"
-      className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-white ring-1 ring-zinc-200"
-    >
-      <img
-        src="https://www.google.com/s2/favicons?domain=aws.amazon.com&sz=64"
-        alt="AWS"
-        className="h-3.5 w-3.5 object-contain"
-      />
-    </span>
+    <img
+      src="https://www.google.com/s2/favicons?domain=aws.amazon.com&sz=64"
+      alt="AWS"
+      className="h-6 w-6 object-contain"
+    />
   );
 }
 
@@ -92,16 +86,11 @@ export default function Accounts() {
             {/* Account header */}
             <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center flex-shrink-0">
-                  <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-                  </svg>
+                <div className="w-10 h-10 rounded-xl bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center flex-shrink-0">
+                  <AwsProviderIcon />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
-                    <AwsProviderIcon />
-                  </div>
+                  <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
                   {acc.account_id && <div className="text-xs text-zinc-400 font-mono mt-0.5">{acc.account_id}</div>}
                 </div>
               </div>
