@@ -142,14 +142,21 @@ export default function Findings() {
 
   const grouped = useMemo(() => {
     if (sortKey !== "severity") return null;
-    const order = ["critical", "high", "medium", "low"];
     const map = new Map<string, Finding[]>();
-    for (const s of order) map.set(s, []);
-    for (const f of rows) (map.get(f.severity) ?? map.set(f.severity, []).get(f.severity)!).push(f);
-    return order.filter((s) => (map.get(s)?.length ?? 0) > 0).map((s) => [s, map.get(s)!] as const);
+    for (const f of rows) {
+      const list = map.get(f.check_id) ?? [];
+      list.push(f);
+      map.set(f.check_id, list);
+    }
+    // sort groups by max severity then by count desc
+    return [...map.entries()].sort(([, a], [, b]) => {
+      const sa = sevWeight[a[0].severity] ?? 9;
+      const sb = sevWeight[b[0].severity] ?? 9;
+      return sa - sb || b.length - a.length;
+    });
   }, [rows, sortKey]);
 
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ low: true });
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   function toggleGroup(s: string) {
     setCollapsed((c) => ({ ...c, [s]: !c[s] }));
   }
@@ -283,12 +290,7 @@ export default function Findings() {
 
       {/* Table */}
       <div className="border border-zinc-200 rounded bg-white overflow-hidden">
-        <div className="grid grid-cols-[24px_140px_220px_minmax(0,1fr)_60px_70px_120px] items-center text-[11px] font-medium text-zinc-500 uppercase tracking-wide px-3 py-2 border-b border-zinc-200 bg-zinc-50">
-          <span />
-          <button onClick={() => toggleSort("severity")} className="text-left hover:text-zinc-900">
-            Severity {sortKey === "severity" && (sortDir === "asc" ? "↑" : "↓")}
-          </button>
-          <span>Check</span>
+        <div className="grid grid-cols-[minmax(0,1fr)_60px_70px_120px] items-center text-[11px] font-medium text-zinc-500 uppercase tracking-wide px-3 py-2 border-b border-zinc-200 bg-zinc-50">
           <span>Resource</span>
           <button onClick={() => toggleSort("score")} className="text-right hover:text-zinc-900">
             Score {sortKey === "score" && (sortDir === "asc" ? "↑" : "↓")}
@@ -309,18 +311,20 @@ export default function Findings() {
         )}
 
         <div>
-          {(grouped ?? [["all", rows] as const]).map(([sev, items]) => {
+          {(grouped ?? [["all", rows] as const]).map(([key, items]) => {
             const isGrouped = grouped !== null;
-            const isCollapsed = isGrouped && collapsed[sev];
+            const isCollapsed = isGrouped && collapsed[key];
+            const sev = items[0]?.severity ?? "low";
+            const label = checkLabels[key] ?? key;
             return (
-              <div key={sev}>
+              <div key={key}>
                 {isGrouped && (
                   <button
-                    onClick={() => toggleGroup(sev)}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 bg-zinc-50/60 border-y border-zinc-200 text-[11px] font-semibold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100 transition-colors"
+                    onClick={() => toggleGroup(key)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 bg-zinc-50/60 border-y border-zinc-200 text-[13px] font-semibold text-zinc-800 hover:bg-zinc-100 transition-colors"
                   >
                     <svg
-                      className={`w-3 h-3 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                      className={`w-3 h-3 text-zinc-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
                       fill="none"
                       stroke="currentColor"
                       strokeWidth={2.5}
@@ -329,8 +333,9 @@ export default function Findings() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
                     </svg>
                     <span className={`w-1.5 h-1.5 rounded-full ${sevDot[sev] ?? sevDot.low}`} />
-                    <span>{sev}</span>
-                    <span className="text-zinc-400 font-normal normal-case">· {items.length}</span>
+                    <span>{label}</span>
+                    <span className="text-zinc-400 font-normal tabular-nums">{items.length}</span>
+                    <span className="ml-auto text-[11px] font-normal text-zinc-400 uppercase tracking-wide capitalize">{sev}</span>
                   </button>
                 )}
                 {!isCollapsed && (
@@ -339,13 +344,8 @@ export default function Findings() {
                       <div
                         key={f.id}
                         onClick={() => setSelected(f)}
-                        className="grid grid-cols-[24px_140px_220px_minmax(0,1fr)_60px_70px_120px] items-center px-3 py-2 hover:bg-zinc-50 cursor-pointer text-[13px] group"
+                        className="grid grid-cols-[minmax(0,1fr)_60px_70px_120px] items-center px-3 py-2 hover:bg-zinc-50 cursor-pointer text-[13px] group"
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full ${sevDot[f.severity] ?? sevDot.low}`} title={f.severity} />
-                        <span className="capitalize text-zinc-700">{f.severity}</span>
-                        <span className="text-zinc-600 truncate" title={f.check_id}>
-                          {checkLabels[f.check_id] ?? f.check_id}
-                        </span>
                         <span className="font-mono text-[12px] text-zinc-700 truncate" title={f.resource_arn}>
                           {shortArn(f.resource_arn)}
                         </span>
