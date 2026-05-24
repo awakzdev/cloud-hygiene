@@ -30,20 +30,33 @@ const sevBadge: Record<string, string> = {
 const sevWeight: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 
 const checkLabels: Record<string, string> = {
+  // IAM root
+  "iam.root.has_access_keys": "Root has access keys",
+  "iam.root.no_mfa": "Root MFA not enabled",
+  // IAM users
   "iam.user.no_mfa": "MFA not enabled",
   "iam.user.inactive_90d": "Inactive user",
+  // Access keys
   "iam.access_key.unused_90d": "Unused access key",
   "iam.access_key.no_rotation_90d": "Long-lived access key",
   "iam.access_key.multiple_active": "Multiple active access keys",
+  // Roles
   "iam.role.unassumed_90d": "Role unassumed",
   "iam.role.wildcard_action": "Wildcard action",
   "iam.role.unused_services_90d": "Unused granted services",
   "iam.role.trust_wildcard": "Wildcard trust policy",
-  "iam.role.allows_iam_star": "Grants iam:*",
-  "iam.role.confused_deputy": "Confused deputy risk",
+  // S3
+  "s3.bucket.public_access_not_blocked": "Public access not blocked",
+  "s3.bucket.no_https_policy": "No HTTPS-only policy",
+  "s3.bucket.no_kms": "Not encrypted with KMS",
+  "s3.bucket.no_logging": "Access logging disabled",
+  // KMS
+  "kms.key.no_rotation": "Key rotation disabled",
 };
 
 const checkDescriptions: Record<string, string> = {
+  "iam.root.has_access_keys": "Root account access keys are permanent credentials — delete them.",
+  "iam.root.no_mfa": "Root account without MFA can be compromised with credentials alone.",
   "iam.user.no_mfa": "Require MFA for interactive IAM users.",
   "iam.user.inactive_90d": "Disable or remove dormant IAM users.",
   "iam.access_key.unused_90d": "Deactivate stale access keys, then delete after validation.",
@@ -53,11 +66,14 @@ const checkDescriptions: Record<string, string> = {
   "iam.role.wildcard_action": "Replace wildcard permissions with scoped actions.",
   "iam.role.unused_services_90d": "Trim unused service permissions from role policies.",
   "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
-  "iam.role.allows_iam_star": "Inline policy grants iam:* — privilege escalation path.",
-  "iam.role.confused_deputy": "Cross-account trust without ExternalId — confused deputy risk.",
+  "s3.bucket.public_access_not_blocked": "Enable all four Block Public Access settings to prevent accidental exposure.",
+  "s3.bucket.no_https_policy": "Add a bucket policy that denies requests where aws:SecureTransport is false.",
+  "s3.bucket.no_kms": "Enable SSE-KMS to use customer-managed keys for encryption at rest.",
+  "s3.bucket.no_logging": "Enable server access logging for audit and forensic visibility.",
+  "kms.key.no_rotation": "Enable annual automatic rotation for customer-managed KMS keys.",
 };
 
-const statusTabs = ["open", "snoozed", "resolved", "all"] as const;
+const statusTabs = ["open", "ignored", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
 type SeverityFilter = "all" | "critical_high" | "medium" | "low";
 type SortKey = "severity" | "score" | "first_seen";
@@ -116,6 +132,10 @@ function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
 
 export default function Findings() {
   const qc = useQueryClient();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [scanTriggered, setScanTriggered] = useState(false);
+  const [drawerResolved, setDrawerResolved] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [status, setStatus] = useState<StatusTab>("open");
   const [selected, setSelected] = useState<Finding | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
@@ -143,7 +163,11 @@ export default function Findings() {
     URL.revokeObjectURL(url);
   }, [status]);
 
-  const q = useQuery({ queryKey: ["findings", status], queryFn: () => api<Finding[]>(`/v1/findings?status=${status}`) });
+  const q = useQuery({
+    queryKey: ["findings", status],
+    queryFn: () => api<Finding[]>(`/v1/findings?status=${status}`),
+    refetchInterval: verifying ? 3000 : false,
+  });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
   const connectedId = accounts.data?.find((a) => a.status === "connected")?.id;
 
@@ -161,11 +185,43 @@ export default function Findings() {
 
   useEffect(() => {
     if (prevScanStatus.current === "running" && scanStatus === "ok") qc.invalidateQueries({ queryKey: ["findings"] });
+    if (scanStatus === "running") setScanTriggered(false);
     prevScanStatus.current = scanStatus;
   }, [scanStatus, qc]);
 
-  const scan = useMutation({ mutationFn: (id: string) => api(`/v1/accounts/${id}/scan`, { method: "POST" }), onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }), 1000) });
-  const act = useMutation({ mutationFn: ({ id, action }: { id: string; action: "snooze" | "resolve" | "ignore" }) => api(`/v1/findings/${id}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 30 }) : JSON.stringify({}) }), onSuccess: () => qc.invalidateQueries({ queryKey: ["findings"] }) });
+  useEffect(() => {
+    if (isRefreshing && !q.isFetching) {
+      const t = setTimeout(() => setIsRefreshing(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [q.isFetching, isRefreshing]);
+
+  useEffect(() => {
+    if (!selected || !q.data || drawerResolved) return;
+    const still = q.data.find((f) => f.id === selected.id);
+    if (!still) { setDrawerResolved(true); setVerifying(false); }
+  }, [q.data, selected, drawerResolved]);
+
+  const scan = useMutation({
+    mutationFn: (id: string) => api(`/v1/accounts/${id}/scan`, { method: "POST" }),
+    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }), 300),
+    onError: () => setScanTriggered(false),
+  });
+  const act = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "recheck" | "resolve" | "ignore" }) =>
+      api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: (_data, { action }) => {
+      if (action === "recheck") {
+        setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
+        setTimeout(() => setVerifying(false), 40000);
+      } else {
+        qc.invalidateQueries({ queryKey: ["findings"] });
+      }
+    },
+    onError: (_err, { action }) => {
+      if (action === "recheck") setVerifying(false);
+    },
+  });
 
   const findings = q.data ?? [];
   const totals = useMemo(() => {
@@ -195,7 +251,7 @@ export default function Findings() {
   }, [findings, search, severityFilter, sortKey, sortDir]);
 
   const grouped = useMemo(() => {
-    if (sortKey !== "severity") return null;
+    if (sortKey !== "severity" || status !== "open") return null;
     const map = new Map<string, Finding[]>();
     for (const f of rows) {
       const list = map.get(f.check_id) ?? [];
@@ -213,11 +269,13 @@ export default function Findings() {
     }
   }
 
+  const pctOf = (n: number) => totals.open === 0 ? "—" : `${Math.round((n / totals.open) * 100)}% of open`;
+  const chTotal = totals.critical + totals.high;
   const summaryCards = [
-    { key: "all" as SeverityFilter, label: "Open", value: totals.open, tone: "text-zinc-900", hint: "active IAM posture issues", dot: "bg-zinc-400" },
-    { key: "critical_high" as SeverityFilter, label: "Critical / High", value: totals.critical + totals.high, tone: "text-red-600", hint: "fix first", dot: "bg-red-500" },
-    { key: "medium" as SeverityFilter, label: "Medium", value: totals.medium, tone: "text-amber-600", hint: "reduce backlog", dot: "bg-amber-500" },
-    { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-500", hint: "monitor", dot: "bg-zinc-300" },
+    { key: "all" as SeverityFilter, label: "Open", value: totals.open, tone: "text-zinc-900", hint: `${chTotal} crit/high · ${totals.medium} medium · ${totals.low} low`, dot: "bg-zinc-400" },
+    { key: "critical_high" as SeverityFilter, label: "Critical / High", value: chTotal, tone: "text-red-600", hint: pctOf(chTotal), dot: "bg-red-500" },
+    { key: "medium" as SeverityFilter, label: "Medium", value: totals.medium, tone: "text-amber-600", hint: pctOf(totals.medium), dot: "bg-amber-500" },
+    { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-500", hint: pctOf(totals.low), dot: "bg-zinc-300" },
   ];
 
   return (
@@ -229,22 +287,23 @@ export default function Findings() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button onClick={downloadCsv} className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950">Export</button>
-          <button onClick={() => qc.invalidateQueries({ queryKey: ["findings"] })} className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950">Refresh</button>
-          {connectedId && <button onClick={() => scan.mutate(connectedId)} disabled={scan.isPending || isRunning} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{isRunning ? "Scanning…" : scan.isPending ? "Triggering…" : "Re-scan"}</button>}
+          <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 disabled:opacity-50 disabled:cursor-not-allowed">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
+          {connectedId && <button onClick={() => { setScanTriggered(true); scan.mutate(connectedId); }} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
         </div>
       </div>
 
-      {isRunning && <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">Scan running — findings will refresh automatically on completion.</div>}
+      {isRunning && <div className="mb-4 inline-flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700"><svg className="h-3.5 w-3.5 flex-shrink-0 animate-spin opacity-70" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Scan running — findings will refresh automatically on completion.</div>}
       {scanStatus === "error" && scanRun.data?.error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span className="font-semibold">Last scan failed:</span> {scanRun.data.error}</div>}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {summaryCards.map((card) => <button key={card.key} onClick={() => setSeverityFilter(card.key)} className={`group relative overflow-hidden rounded-2xl border bg-white px-5 py-5 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md ${severityFilter === card.key ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]" : "border-zinc-200"}`}><div className="mb-3 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-400">{card.label}</span><span className={`h-2.5 w-2.5 rounded-full ${card.dot}`} /></div><div className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div><div className="mt-3 text-sm text-zinc-500">{card.hint}</div></button>)}
+        {summaryCards.map((card) => <button key={card.key} onClick={() => setSeverityFilter(card.key)} className={`group relative overflow-hidden rounded-2xl border bg-white px-5 py-4 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md ${severityFilter === card.key ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]" : "border-zinc-200"}`}><div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-400">{card.label}</span><span className={`h-2 w-2 rounded-full ${card.dot}`} /></div><div className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div><div className="mt-2 text-xs text-zinc-400 tabular-nums">{card.hint}</div></button>)}
       </div>
 
-      <div className="mb-5 rounded-2xl border border-zinc-200 bg-white p-2 shadow-sm shadow-zinc-950/[0.03]">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex w-fit items-center gap-1 rounded-xl bg-zinc-100 p-1">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold capitalize transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-white hover:text-zinc-900"}`}>{s}</button>)}</div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search findings…" className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-4 focus:ring-zinc-950/[0.04] sm:w-80" /><div className="flex h-11 items-center gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-1"><span className="px-2 text-xs font-bold uppercase tracking-[0.14em] text-zinc-400">Sort</span>{(["severity", "score", "first_seen"] as SortKey[]).map((k) => <button key={k} onClick={() => toggleSort(k)} className={`inline-flex h-8 items-center gap-1 rounded-lg px-3 text-sm font-semibold transition-all ${sortKey === k ? "bg-white text-zinc-950 shadow-sm ring-1 ring-zinc-200" : "text-zinc-500 hover:bg-white/70 hover:text-zinc-900"}`}>{sortLabel(k)}{sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}</button>)}</div></div>
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex w-fit items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold capitalize transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"}`}>{s}</button>)}</div>
+        <div className="flex items-center gap-2">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search findings…" className="h-10 w-72 rounded-xl border border-zinc-200 bg-white px-4 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-950/[0.06]" />
+          <div className="flex h-10 items-center gap-0.5 rounded-xl border border-zinc-200 bg-white px-1.5 shadow-sm">{(["severity", "score", "first_seen"] as SortKey[]).map((k) => <button key={k} onClick={() => toggleSort(k)} className={`inline-flex h-7 items-center gap-1 rounded-lg px-3 text-sm font-medium transition-all ${sortKey === k ? "bg-zinc-100 text-zinc-950 font-semibold" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"}`}>{sortLabel(k)}{sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}</button>)}</div>
         </div>
       </div>
 
@@ -260,7 +319,17 @@ export default function Findings() {
         return <div key={key} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04] transition-all hover:border-zinc-300 hover:shadow-md">{isGrouped && <button type="button" onClick={() => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))} className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_72px_72px] items-center gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50 to-white px-5 py-4 text-left"><svg className={`h-4 w-4 text-zinc-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg><span className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[sev] ?? sevBadge.low}`}>{sev}</span><div className="min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-zinc-950">{label}</span><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-500">{items.length}</span></div>{description && <p className="mt-1 truncate text-sm text-zinc-500">{description}</p>}</div><span className="hidden text-center text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Score</span><span className="hidden text-center text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Age</span></button>}{!isCollapsed && <div className="divide-y divide-zinc-100">{items.map((f) => <div key={f.id} onClick={() => setSelected(f)} className="group grid cursor-pointer grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 px-5 py-4 transition-colors hover:bg-zinc-50"><div className="min-w-0"><div className="truncate text-sm font-semibold text-zinc-900">{resourceName(f.resource_arn)}</div>{!isGrouped && description && <p className="mt-1.5 truncate text-sm text-zinc-500">{description}</p>}</div><div className="flex justify-center"><span className="inline-flex min-w-10 justify-center rounded-full bg-zinc-100 px-2 py-1 text-sm font-bold tabular-nums text-zinc-800">{f.risk_score}</span></div><div className="text-center"><span className="text-sm tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span></div></div>)}</div>}</div>;
       })}</div>}
 
-      <FindingDrawer finding={selected} accountId={connectedId ?? null} onClose={() => setSelected(null)} onAction={(id, action) => act.mutate({ id, action })} />
+      <FindingDrawer
+        finding={selected}
+        accountId={connectedId ?? null}
+        resolved={drawerResolved}
+        verifying={verifying}
+        onClose={() => { setSelected(null); setDrawerResolved(false); setVerifying(false); }}
+        onAction={(id, action) => {
+          if (action === "recheck") setVerifying(true);
+          act.mutate({ id, action });
+        }}
+      />
     </div>
   );
 }

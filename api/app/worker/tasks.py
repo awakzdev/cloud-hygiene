@@ -11,9 +11,20 @@ from app.checks.registry import ALL_CHECKS
 from app.checks import role_unused_services
 from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
+from app.collectors.account import collect_s3, collect_kms
 from app.core.db import SessionLocal
 from app.models import AwsAccount, ScanRun
+from app.models.org import Org
 from app.worker.celery_app import celery_app
+
+# maps check_id prefix → collector function(db, acc)
+_COLLECTOR_FOR_CHECK = {
+    "iam.": lambda db, acc: collect_iam(db, acc),
+    "s3.": lambda db, acc: collect_s3(db, acc),
+    "kms.": lambda db, acc: collect_kms(db, acc),
+}
+
+_CHECK_BY_ID = {mod.CHECK_ID: mod for mod in ALL_CHECKS}
 
 log = structlog.get_logger()
 
@@ -31,10 +42,17 @@ def run_scan(account_id: str) -> dict:
 
     try:
         stats = collect_iam(db, acc)
+        stats["s3_buckets"] = collect_s3(db, acc)
+        stats["kms_keys"] = collect_kms(db, acc)
+
+        org_obj = db.get(Org, acc.org_id)
+        check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}
 
         drafts = []
         check_ids_run: set[str] = set()
         for mod in ALL_CHECKS:
+            if check_cfg.get(mod.CHECK_ID, {}).get("enabled", True) is False:
+                continue
             check_ids_run.add(mod.CHECK_ID)
             drafts.extend(mod.run(db, acc.id))
 
@@ -98,6 +116,44 @@ def collect_perm_usage_task(account_id: str) -> dict:
     except Exception as e:  # noqa: BLE001
         db.rollback()
         log.exception("perm_usage.failed", account_id=account_id)
+        return {"ok": False, "error": str(e)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.worker.tasks.recheck_finding")
+def recheck_finding(account_id: str, check_id: str) -> dict:
+    """Re-collect only what's needed for check_id, then rerun that check."""
+    db = SessionLocal()
+    try:
+        acc = db.get(AwsAccount, uuid.UUID(account_id))
+        if not acc:
+            return {"error": "account not found"}
+
+        collector = next(
+            (fn for prefix, fn in _COLLECTOR_FOR_CHECK.items() if check_id.startswith(prefix)),
+            None,
+        )
+        if collector:
+            collector(db, acc)
+
+        mod = _CHECK_BY_ID.get(check_id)
+        if not mod:
+            return {"error": f"unknown check: {check_id}"}
+
+        drafts = mod.run(db, acc.id)
+        opened, resolved = persist_findings(
+            db,
+            org_id=acc.org_id,
+            account_id=acc.id,
+            drafts=drafts,
+            check_ids_run={check_id},
+        )
+        log.info("recheck.complete", account_id=account_id, check_id=check_id, opened=opened, resolved=resolved)
+        return {"ok": True, "opened": opened, "resolved": resolved}
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.exception("recheck.failed", account_id=account_id, check_id=check_id)
         return {"ok": False, "error": str(e)}
     finally:
         db.close()

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.models import Finding, FindingEvent
+from app.models import Finding, FindingEvent, AwsAccount
 
 router = APIRouter()
 
@@ -107,3 +107,14 @@ def ignore(finding_id: str, p=Depends(current_principal), db: Session = Depends(
     db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="ignored", actor=p["sub"]))
     db.commit()
     return _to_out(f)
+
+
+@router.post("/{finding_id}/recheck")
+def recheck(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    from app.worker.tasks import recheck_finding
+    f = _get_owned(db, p, finding_id)
+    acc = db.get(AwsAccount, f.account_id)
+    if not acc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    recheck_finding.delay(str(acc.id), f.check_id)
+    return {"queued": True, "check_id": f.check_id}

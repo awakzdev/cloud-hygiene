@@ -28,19 +28,17 @@ export default function Layout() {
         }}
       >
         {/* Logo */}
-        <div className="px-6 py-7" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
-          <div className="flex items-center gap-4">
+        <div className="px-3 py-5" style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div className="flex items-center gap-4 px-5 py-2">
             <div
-              className="h-14 w-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+              className="h-12 w-12 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{
-                background:
-                  "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(14,165,233,0.2))",
-                boxShadow:
-                  "0 0 12px rgba(99,102,241,0.25), inset 0 1px 0 rgba(255,255,255,0.1)",
+                background: "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(14,165,233,0.2))",
+                boxShadow: "0 0 12px rgba(99,102,241,0.25), inset 0 1px 0 rgba(255,255,255,0.1)",
                 border: "1px solid rgba(99,102,241,0.3)",
               }}
             >
-              <img src="/favicon.png" alt="Vigil" className="h-8 w-8 object-contain drop-shadow" />
+              <img src="/favicon.png" alt="Vigil" className="h-7 w-7 object-contain drop-shadow" />
             </div>
             <span className="text-xl font-semibold leading-none tracking-tight text-white">Vigil</span>
           </div>
@@ -62,12 +60,14 @@ export default function Layout() {
             Findings
           </NavLink>
 
-          <NavLink to="/dashboard" className={navItem}>
+          <NavLink to="/settings" className={navItem}>
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 13h8V3H3v10zm10 8h8V11h-8v10zM3 21h8v-6H3v6zm10-10h8V3h-8v8z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
-            Dashboard
+            Settings
           </NavLink>
+
         </nav>
 
         {/* Bottom: Account + Sign out */}
