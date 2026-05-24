@@ -48,7 +48,8 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - ./api:/app
-      - ${HOME}/.aws:/root/.aws:ro
+      # AWS SSO refreshes cached tokens during scans, so this cannot be read-only.
+      - ${HOME}/.aws:/root/.aws:rw
 
   worker:
     build:
@@ -69,7 +70,8 @@ services:
     command: watchfiles --filter python "celery -A app.worker.celery_app worker --beat --loglevel=info" app
     volumes:
       - ./api:/app
-      - ${HOME}/.aws:/root/.aws:ro
+      # AWS SSO refreshes cached tokens during scans, so this cannot be read-only.
+      - ${HOME}/.aws:/root/.aws:rw
 
   web:
     build:
