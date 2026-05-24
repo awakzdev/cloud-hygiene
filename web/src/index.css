@@ -4,7 +4,7 @@
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply bg-zinc-50 text-zinc-900 antialiased;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
 }

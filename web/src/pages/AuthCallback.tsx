@@ -22,7 +22,7 @@ export default function AuthCallback() {
   }, [nav, params]);
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-sm">
+    <div className="min-h-screen bg-zinc-900 flex items-center justify-center text-white text-sm">
       Signing in…
     </div>
   );

@@ -16,10 +16,10 @@ type Finding = {
 };
 
 const sevBadge: Record<string, string> = {
-  critical: "bg-red-100 text-red-700",
-  high:     "bg-orange-100 text-orange-700",
-  medium:   "bg-amber-100 text-amber-700",
-  low:      "bg-slate-100 text-slate-600",
+  critical: "bg-red-50 text-red-700 border border-red-200",
+  high:     "bg-red-50 text-red-700 border border-red-200",
+  medium:   "bg-amber-50 text-amber-700 border border-amber-200",
+  low:      "bg-zinc-100 text-zinc-600 border border-zinc-200",
 };
 
 type Remediation = {
@@ -154,16 +154,16 @@ function RemovableStatementsBlock({ statements }: { statements: RemovableStateme
   if (!statements.length) return null;
   return (
     <div>
-      <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+      <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
         Removable statements
-        <span className="ml-1.5 text-slate-400 font-normal normal-case tracking-normal">from inline policies</span>
+        <span className="ml-1.5 text-zinc-400 font-normal normal-case tracking-normal">from inline policies</span>
       </div>
       <div className="space-y-2">
         {statements.map((stmt, i) => (
-          <div key={i} className="rounded-lg border border-slate-200 overflow-hidden text-xs">
-            <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-              <span className="font-mono font-medium text-slate-800">{stmt.policy}</span>
-              {stmt.sid && <span className="text-slate-400">· {stmt.sid}</span>}
+          <div key={i} className="rounded-lg border border-zinc-200 overflow-hidden text-xs">
+            <div className="px-3 py-2 bg-zinc-50 border-b border-zinc-200 flex items-center gap-2">
+              <span className="font-mono font-medium text-zinc-800">{stmt.policy}</span>
+              {stmt.sid && <span className="text-zinc-400">· {stmt.sid}</span>}
             </div>
             <div className="px-3 py-2.5 space-y-2">
               <div className="flex flex-wrap gap-1">
@@ -173,7 +173,7 @@ function RemovableStatementsBlock({ statements }: { statements: RemovableStateme
                   </span>
                 ))}
               </div>
-              <div className="font-mono text-slate-400 text-[11px]">
+              <div className="font-mono text-zinc-400 text-[11px]">
                 on: {stmt.resources.join(", ")}
               </div>
             </div>
@@ -195,9 +195,9 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
     <div className="space-y-4">
       {unusedServices && unusedServices.length > 0 && (
         <div>
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+          <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">
             Unused services
-            <span className="ml-1.5 font-normal normal-case tracking-normal text-slate-400">
+            <span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-400">
               {unusedServices.length} of {(evidence.total_granted_services as number) ?? "?"} granted
             </span>
           </div>
@@ -206,11 +206,11 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
       )}
 
       {scalar.length > 0 && (
-        <div className="rounded-lg border border-slate-200 overflow-hidden">
+        <div className="rounded-lg border border-zinc-200 overflow-hidden">
           {scalar.map(([k, v], i) => (
-            <div key={k} className={`flex gap-4 px-4 py-2.5 text-xs ${i % 2 === 0 ? "bg-white" : "bg-slate-50"}`}>
-              <span className="text-slate-400 w-32 flex-shrink-0">{k.replace(/_/g, " ")}</span>
-              <span className="font-mono text-slate-800 break-all">{String(v)}</span>
+            <div key={k} className={`flex gap-4 px-4 py-2.5 text-xs ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
+              <span className="text-zinc-400 w-32 flex-shrink-0">{k.replace(/_/g, " ")}</span>
+              <span className="font-mono text-zinc-800 break-all">{String(v)}</span>
             </div>
           ))}
         </div>
@@ -291,11 +291,11 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Suggested Policy</div>
+        <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Suggested Policy</div>
         {!enabled && (
           <button
             onClick={() => setEnabled(true)}
-            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-md transition-colors"
+            className="text-xs font-medium text-zinc-700 hover:text-zinc-900 border border-zinc-300 bg-white hover:bg-zinc-50 px-3 py-1 rounded transition-colors"
           >
             Generate
           </button>
@@ -303,13 +303,13 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
       </div>
 
       {!enabled && (
-        <p className="text-xs text-slate-400 leading-relaxed">
+        <p className="text-xs text-zinc-400 leading-relaxed">
           Vigil will strip unused service statements from inline policies and show you the cleaned version, ready to apply.
         </p>
       )}
 
       {enabled && isLoading && (
-        <div className="text-xs text-slate-400 py-3">Generating...</div>
+        <div className="text-xs text-zinc-400 py-3">Generating...</div>
       )}
 
       {enabled && error && (
@@ -325,16 +325,16 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
       {enabled && data && data.has_inline_policies && data.cleaned_policies && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-zinc-500">
               {data.statements_removed} statement{data.statements_removed !== 1 ? "s" : ""} removed
             </span>
-            <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <div className="flex gap-1 bg-zinc-100 rounded-lg p-0.5">
               {(["cleaned", "original"] as const).map(v => (
                 <button
                   key={v}
                   onClick={() => setView(v)}
                   className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                    view === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
                   }`}
                 >
                   {v === "cleaned" ? "Cleaned" : "Original"}
@@ -342,7 +342,7 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
               ))}
             </div>
           </div>
-          <pre className="bg-slate-950 text-slate-200 rounded-lg px-4 py-4 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
+          <pre className="bg-zinc-950 text-zinc-200 rounded-lg px-4 py-4 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
             {JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)}
           </pre>
         </div>
@@ -377,19 +377,19 @@ export function FindingDrawer({
 
       <div className="fixed right-0 top-0 h-full w-full max-w-[480px] bg-white z-50 shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-6 pt-5 pb-4 border-b border-slate-100">
+        <div className="px-6 pt-5 pb-4 border-b border-zinc-100">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-2 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${badge}`}>
                   {finding.severity}
                 </span>
-                <span className="text-xs font-mono text-slate-400">{finding.check_id}</span>
+                <span className="text-xs font-mono text-zinc-400">{finding.check_id}</span>
               </div>
-              <h2 className="text-sm font-semibold text-slate-900 leading-snug">{finding.title}</h2>
-              <p className="text-[11px] font-mono text-slate-400 break-all leading-relaxed">{finding.resource_arn}</p>
+              <h2 className="text-sm font-semibold text-zinc-900 leading-snug">{finding.title}</h2>
+              <p className="text-[11px] font-mono text-zinc-400 break-all leading-relaxed">{finding.resource_arn}</p>
             </div>
-            <button onClick={onClose} className="text-slate-300 hover:text-slate-500 transition-colors flex-shrink-0 mt-0.5">
+            <button onClick={onClose} className="text-zinc-300 hover:text-zinc-500 transition-colors flex-shrink-0 mt-0.5">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -400,16 +400,16 @@ export function FindingDrawer({
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {/* Context */}
-          <div className="rounded-lg border border-slate-200 px-4 py-4 space-y-3">
-            <p className="text-sm text-slate-700 leading-relaxed">{rem.why}</p>
-            <hr className="border-slate-100" />
-            <p className="text-sm text-slate-500 leading-relaxed">{rem.risk}</p>
+          <div className="rounded-lg border border-zinc-200 px-4 py-4 space-y-3">
+            <p className="text-sm text-zinc-700 leading-relaxed">{rem.why}</p>
+            <hr className="border-zinc-100" />
+            <p className="text-sm text-zinc-500 leading-relaxed">{rem.risk}</p>
           </div>
 
           {/* Evidence */}
           {hasEvidence && (
             <div>
-              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Evidence</div>
+              <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Evidence</div>
               <EvidenceSection evidence={finding.evidence} checkId={finding.check_id} />
             </div>
           )}
@@ -421,14 +421,14 @@ export function FindingDrawer({
 
           {/* Remediation */}
           <div>
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Remediation</div>
-            <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-1 w-fit">
+            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Remediation</div>
+            <div className="flex gap-1 mb-4 bg-zinc-100 rounded-lg p-1 w-fit">
               {(["console", "cli"] as Tab[]).map(t => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
                   className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors uppercase tracking-wide ${
-                    tab === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                    tab === t ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
                   }`}
                 >
                   {t === "cli" ? "AWS CLI" : "Console"}
@@ -439,8 +439,8 @@ export function FindingDrawer({
             {tab === "console" && (
               <ol className="space-y-2.5">
                 {rem.console.map((step, i) => (
-                  <li key={i} className="flex gap-3 text-sm text-slate-700 leading-relaxed">
-                    <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 text-xs font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <li key={i} className="flex gap-3 text-sm text-zinc-700 leading-relaxed">
+                    <span className="w-5 h-5 rounded-full bg-zinc-900 text-zinc-50 text-[11px] font-semibold flex items-center justify-center flex-shrink-0 mt-0.5">
                       {i + 1}
                     </span>
                     {step}
@@ -450,39 +450,39 @@ export function FindingDrawer({
             )}
 
             {tab === "cli" && (
-              <pre className="bg-slate-950 text-slate-200 rounded-lg px-4 py-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
+              <pre className="bg-zinc-950 text-zinc-200 rounded-lg px-4 py-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed">
                 {resolvedCli(finding)}
               </pre>
             )}
           </div>
 
           {/* Meta */}
-          <div className="flex items-center gap-4 text-xs text-slate-400 pb-2">
+          <div className="flex items-center gap-4 text-xs text-zinc-400 pb-2">
             <span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span>
             <span>·</span>
             <span>Last seen {new Date(finding.last_seen).toLocaleDateString()}</span>
             <span>·</span>
-            <span>Score <span className="font-semibold text-slate-600">{finding.risk_score}</span></span>
+            <span>Score <span className="font-semibold text-zinc-600">{finding.risk_score}</span></span>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex gap-2">
+        <div className="px-6 py-4 border-t border-zinc-100 flex gap-2">
           <button
             onClick={() => { onAction(finding.id, "resolve"); onClose(); }}
-            className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+            className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-medium py-2 rounded transition-colors"
           >
             Resolve
           </button>
           <button
             onClick={() => { onAction(finding.id, "snooze"); onClose(); }}
-            className="flex-1 border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-medium py-2 rounded-lg transition-colors"
+            className="flex-1 border border-zinc-200 text-zinc-600 hover:bg-zinc-50 text-sm font-medium py-2 rounded-lg transition-colors"
           >
             Snooze 30d
           </button>
           <button
             onClick={() => { onAction(finding.id, "ignore"); onClose(); }}
-            className="px-4 border border-slate-200 text-slate-400 hover:bg-slate-50 text-sm font-medium py-2 rounded-lg transition-colors"
+            className="px-4 border border-zinc-200 text-zinc-400 hover:bg-zinc-50 text-sm font-medium py-2 rounded-lg transition-colors"
           >
             Ignore
           </button>
