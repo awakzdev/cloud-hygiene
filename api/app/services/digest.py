@@ -109,17 +109,22 @@ def _html(
     </div>
 
     <!-- Summary bar -->
-    <div style="background:#f8fafc;padding:20px 32px;border-bottom:1px solid #e4e4e7;display:flex;gap:24px;align-items:center">
-      <div>
-        <div style="font-size:36px;font-weight:800;color:{score_color};line-height:1">{posture_score}</div>
-        <div style="font-size:11px;color:#71717a;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">Posture Score</div>
-      </div>
-      <div style="flex:1">
-        <div style="font-size:14px;color:#18181b;font-weight:500">{account_label}</div>
-        <div style="font-size:12px;color:#71717a;margin-top:2px">{len(open_findings)} open findings total</div>
-        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">{new_badge}{resolved_badge}</div>
-      </div>
-    </div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border-bottom:1px solid #e4e4e7">
+      <tr>
+        <td style="padding:28px 24px 28px 32px;width:80px;text-align:center;vertical-align:middle">
+          <div style="font-size:42px;font-weight:800;color:{score_color};line-height:1">{posture_score}</div>
+          <div style="font-size:11px;color:#71717a;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px">Posture Score</div>
+        </td>
+        <td style="padding:28px 8px;width:1px;vertical-align:middle">
+          <div style="width:1px;height:52px;background:#e4e4e7"></div>
+        </td>
+        <td style="padding:28px 32px 28px 24px;vertical-align:middle">
+          <div style="font-size:15px;color:#18181b;font-weight:600">{account_label}</div>
+          <div style="font-size:12px;color:#71717a;margin-top:5px">{len(open_findings)} open findings total</div>
+          <div style="margin-top:10px">{new_badge}&nbsp;&nbsp;{resolved_badge}</div>
+        </td>
+      </tr>
+    </table>
 
     <!-- Top findings table -->
     <div style="padding:24px 32px">
@@ -152,7 +157,7 @@ def _html(
     <div style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e4e4e7">
       <div style="font-size:11px;color:#a1a1aa">
         Vigil weekly digest for {org_name} · {datetime.now(timezone.utc).strftime('%B %d, %Y')} ·
-        <a href="#" style="color:#71717a">Unsubscribe</a>
+        <a href="{settings.API_PUBLIC_URL.replace(':8000', ':5173') if '8000' in settings.API_PUBLIC_URL else settings.API_PUBLIC_URL}/settings" style="color:#71717a">Unsubscribe</a>
       </div>
     </div>
   </div>

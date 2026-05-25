@@ -1,6 +1,6 @@
 # Vigil
 
-**AWS security evidence for SOC2 Type 2 — without the Vanta tax.**
+**AWS security evidence for SOC2 Type 2.**
 
 Connect your AWS account read-only. Vigil scans daily, produces continuous evidence for CC6 (Logical & Physical Access) and CC7 (System Operations), maps every finding to CIS AWS Benchmark controls, and gives you an auditor-ready PDF on demand.
 

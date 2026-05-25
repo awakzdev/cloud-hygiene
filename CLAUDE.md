@@ -4,14 +4,14 @@ This file is auto-loaded by Claude Code on every session. Read it before doing a
 
 ## What this is
 
-AWS IAM hygiene SaaS for small/mid teams. Read-only. Connect AWS account → daily scan → ranked findings → weekly digest (planned). Killer feature: Monday IAM cleanup digest as a recurring ritual, not just a dashboard.
+Continuous cloud compliance evidence SaaS for startup engineering teams. Read-only. Connect AWS → daily scan → ranked findings → auditor-ready evidence pack (ZIP + PDF) → weekly digest. Killer feature: one-click evidence pack auditors can sample by date.
 
-**Not** a CSPM (Wiz/Prisma). Focus: stale access, over-permissive IAM, forgotten infra, ownership gaps.
+**Not** a CSPM (Wiz/Prisma) or GRC suite (Vanta/Drata). Focus: evidence quality, stale access, over-permissive IAM, SOC2/CIS compliance mapping.
 
 ## Constraints (do not violate)
 
 - AWS only (no GCP/Azure/k8s in MVP)
-- Read-only IAM (`SecurityAudit` + `ViewOnlyAccess` for now; tighten before public beta)
+- Read-only — CFN role has exact actions enumerated (no SecurityAudit/ViewOnlyAccess)
 - One AWS account per org in MVP (schema is multi-account ready)
 - Solo founder, Docker Compose, no microservices, no k8s
 - FastAPI + Postgres + Celery + React + Tailwind + TanStack Query
@@ -55,44 +55,47 @@ HANDOFF.md      detailed status + roadmap (read this for scope)
 - GitHub OAuth + Google OAuth (login + connect/disconnect from Account settings)
 - Account settings page: change/set password (SSO-aware), GitHub connect/disconnect
 - Create AWS account → CFN launch URL (pre-filled ExternalId + control plane principal)
-- Verify role via `sts:AssumeRole`
-- Trigger scan → Celery task
-- Collectors: IAM users + console password + MFA + access keys + last-used + service last-accessed per role
-- 6 checks: `iam.user.inactive_90d`, `iam.access_key.unused_90d`, `iam.user.no_mfa`, `iam.role.unassumed_90d`, `iam.role.wildcard_action`, `iam.role.unused_services_90d`
-- Risk scoring (severity base + age + admin)
-- Diff-aware persist: open new, refresh existing, auto-resolve missing, auto-reopen
-- Findings UI: grouped by check, severity-tinted headers, indented rows, stat cards, snooze/resolve/ignore
-- Finding detail drawer: evidence (service pills, removable statements), Console/CLI remediation (auto-interpolates role/user/key names), generate least-privilege policy button (`GET /v1/accounts/:id/roles/generated-policy`)
-- Scan status polling + auto-refresh; Re-scan unlocks after 5 min if stuck
-- Hot reload everywhere: api (uvicorn --reload), worker (watchfiles), web (Vite HMR)
-- Service-linked roles (`/aws-service-role/`) excluded from all checks and perm-usage collection
+- Verify role via `sts:AssumeRole`; CFN role has exact actions enumerated (no wildcards)
+- Trigger scan → Celery task; re-scan unlocks after 5 min if stuck
+- Collectors: IAM users + console password + MFA + access keys + last-used + service last-accessed per role + S3 buckets + KMS keys
+- 16 checks across IAM root/users/access keys/roles, S3, KMS (see HANDOFF.md for full list)
+- Risk scoring (severity base + age + admin); diff-aware persist (open/refresh/resolve/reopen)
+- Findings UI: multi-tag filter with autocomplete + URL-synced `?checks=` param, grouped by check, stat cards, snooze/resolve/ignore
+- Finding detail drawer: evidence, Console/CLI remediation, generate least-privilege policy
+- Controls/Compliance page: SOC2 + CIS AWS L1 frameworks, pass/fail/no_data per control, evidence pack download (ZIP + PDF)
+- Settings page: per-check enable/disable, weekly digest toggle + recipient email
+- Weekly email digest via Resend (Celery beat Monday 9am UTC); configurable recipient; test button; `RESEND_API_KEY` + `DIGEST_FROM` in `.env`
+- Evidence snapshots per scan run (IAM users, keys, roles, S3, KMS)
+- Fernet encryption for `role_arn` + `external_id` at rest
+- Cursor pagination on `/v1/findings`; CSV export
+- 16 pytest tests passing (botocore Stubber collectors + check unit tests)
+- Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
+- Service-linked roles excluded from all checks
 
-## P0 (revised, in order)
+## Primary differentiator: "What If" blast radius analysis
 
-1. Throwaway AWS sandbox account with seeded junk (inactive users, old keys, no-MFA users, wildcard policy)
-2. Encrypt `aws_accounts.role_arn` and `external_id` at rest (pgcrypto)
-3. End-to-end test: signup → CFN → verify → scan → findings populated
-4. Tighten IAM permissions in CFN — drop `SecurityAudit` + `ViewOnlyAccess`, list exact actions collectors need
-5. `scan_runs` progress + error surface in UI (poll `GET /v1/accounts/:id/scan-runs`)
-6. Pagination on `/v1/findings` (cursor + limit)
-7. More checks: root usage, role unassumed 90d, policy unattached, wildcard action, wildcard resource, wildcard trust
-8. CSV export
-9. pytest skeleton: botocore Stubber for collectors, unit tests for checks
-10. Hetzner deploy + domain + Caddy TLS + nightly pg_dump → B2
+**This is the key feature that separates Vigil from Orca, Wiz, Checkmarx, Prisma, and every CSPM/CNAPP tool.** They flag findings. Nobody shows what breaks if you actually remediate. Engineers don't fix IAM debt because they're afraid of breaking prod — Vigil removes that fear.
 
-## P1 (after P0)
+Feature: "What If I fix this?" drawer tab per finding:
+- Blast radius — what principals/services depend on this resource right now
+- Used vs. unused actions — from `iam_perm_usage` table (data already exists)
+- Policy diff — before/after if you scope down to least-privilege (reuses "Generate" button)
+- Confidence score — "High confidence: no recorded usage in 90 days" vs. "Warning: used 3× recently"
 
-- Weekly digest email (Resend)
-- Stripe billing (Checkout + portal + webhook)
-- Finding detail drawer with Console/CLI/Terraform remediation tabs
-- PDF monthly report
-- Slack webhook
-- TOTP MFA on user accounts
-- Refresh tokens
+See HANDOFF.md "Key differentiator: What If blast radius analysis" for full spec + build order.
 
-## Phase 2 (not now)
+## Next priorities
 
-S3/cert/secret/Trail/Config/GuardDuty checks → Terraform remediation diffs (GitHub App) → multi-account AWS Orgs StackSet → Kubernetes RBAC + cert-manager.
+See HANDOFF.md for full roadmap.
+
+Immediate unblocked work:
+1. "What If" blast radius tab on IAM role findings (uses existing `iam_perm_usage` data — no new collectors needed)
+2. Throwaway AWS sandbox with seeded junk (test the full flow end-to-end)
+3. Hetzner deploy + domain + Caddy TLS + nightly pg_dump → B2
+
+## Phase 2+ (not now)
+
+GitHub integration (identity + change mgmt) → Google Workspace → Stripe billing → Slack webhook → multi-account AWS Orgs.
 
 ## Style + decisions
 
@@ -117,11 +120,11 @@ docker compose up
 ## Known gaps / shortcuts
 
 - CORS `*` in dev, locked in prod via APP_ENV
-- No tests yet
-- `role_arn` + `external_id` plaintext in DB (P0 #2 fixes)
 - One account per org enforced in route (schema is fine)
 - CFN URL pinned to repo `main` — pin to release tag once stable
 - No request-id / structured access logging
+- `RESEND_API_KEY` in `.env` — rotate before prod; `onboarding@resend.dev` sender only delivers to verified Resend account email
+- Digest unsubscribe links to `/settings` — no token-based one-click unsubscribe yet
 
 ## Repo
 

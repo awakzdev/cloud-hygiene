@@ -5,29 +5,26 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.models.org import Org
+from app.models.org import Org, User
+from app.models import AwsAccount, Finding
 
 router = APIRouter()
 
-# Default settings — all checks enabled, no notifications wired
 DEFAULT_SETTINGS: dict = {
     "checks": {},
     "notifications": {
-        "slack_enabled": False,
-        "slack_webhook_url": None,
         "email_digest_enabled": False,
-        "email_digest_address": None,
-        "email_digest_frequency": "weekly",
+        "digest_email": None,
     },
 }
 
 
 def _merged(stored: dict) -> dict:
-    """Merge stored settings over defaults so missing keys get defaults."""
     merged = {**DEFAULT_SETTINGS}
     merged["checks"] = {**stored.get("checks", {})}
     merged["notifications"] = {**DEFAULT_SETTINGS["notifications"], **stored.get("notifications", {})}
@@ -39,11 +36,8 @@ class CheckSettingIn(BaseModel):
 
 
 class NotificationsIn(BaseModel):
-    slack_enabled: bool = False
-    slack_webhook_url: str | None = None
     email_digest_enabled: bool = False
-    email_digest_address: str | None = None
-    email_digest_frequency: str = "weekly"
+    digest_email: str | None = None
 
 
 class SettingsPatch(BaseModel):
@@ -88,3 +82,74 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
     db.commit()
     db.refresh(org)
     return _merged(org.settings)
+
+
+@router.post("/test-digest", status_code=200)
+def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Fire a digest email immediately to the configured address (or current user)."""
+    from app.services.digest import send_digest
+    from datetime import datetime, timedelta, timezone
+
+    org = _get_org(p, db)
+    org_settings = org.settings or {}
+    digest_email = org_settings.get("notifications", {}).get("digest_email")
+
+    if not digest_email:
+        user = db.get(User, uuid.UUID(p["sub"]))
+        if not user or not user.email:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No recipient email configured")
+        digest_email = user.email
+
+    acc = db.scalars(
+        select(AwsAccount).where(
+            AwsAccount.org_id == org.id,
+            AwsAccount.status == "connected",
+        )
+    ).first()
+
+    if not acc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No connected AWS account")
+
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+
+    open_findings = db.scalars(
+        select(Finding).where(
+            Finding.account_id == acc.id,
+            Finding.status == "open",
+        ).order_by(Finding.risk_score.desc())
+    ).all()
+
+    new_this_week = db.scalars(
+        select(Finding).where(
+            Finding.account_id == acc.id,
+            Finding.first_seen >= since,
+        )
+    ).all()
+
+    from sqlalchemy import func as sa_func
+    resolved_count = db.scalar(
+        select(sa_func.count()).select_from(
+            select(Finding).where(
+                Finding.account_id == acc.id,
+                Finding.status == "resolved",
+                Finding.last_seen >= since,
+            ).subquery()
+        )
+    ) or 0
+
+    ok = send_digest(
+        to=digest_email,
+        org_name=org.name if hasattr(org, "name") else str(org.id),
+        account_label=acc.label,
+        open_findings=[
+            {"title": f.title, "severity": f.severity, "risk_score": f.risk_score, "resource_arn": f.resource_arn, "check_id": f.check_id}
+            for f in open_findings
+        ],
+        new_this_week=[{"title": f.title, "severity": f.severity} for f in new_this_week],
+        resolved_this_week=resolved_count,
+    )
+
+    if not ok:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Failed to send email — check RESEND_API_KEY")
+
+    return {"sent_to": digest_email}

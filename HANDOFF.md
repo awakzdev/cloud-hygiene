@@ -25,12 +25,22 @@ _Last updated: 2026-05-25_
 ### Checks
 | Check ID | Severity |
 |---|---|
+| `iam.root.has_access_keys` | critical |
+| `iam.root.no_mfa` | critical |
+| `iam.user.no_mfa` | high |
 | `iam.user.inactive_90d` | medium |
 | `iam.access_key.unused_90d` | high |
-| `iam.user.no_mfa` | high |
+| `iam.access_key.no_rotation_90d` | medium |
+| `iam.access_key.multiple_active` | medium |
 | `iam.role.unassumed_90d` | medium |
 | `iam.role.wildcard_action` | high |
 | `iam.role.unused_services_90d` | medium |
+| `iam.role.trust_wildcard` | critical |
+| `s3.bucket.public_access_not_blocked` | high |
+| `s3.bucket.no_https_policy` | medium |
+| `s3.bucket.no_kms` | medium |
+| `s3.bucket.no_logging` | low |
+| `kms.key.no_rotation` | medium |
 
 ### Findings UI
 - Grouped by check type, sorted by severity
@@ -43,12 +53,21 @@ _Last updated: 2026-05-25_
 - CLI commands auto-interpolate actual role/user/key names from the finding ARN
 - Scan status polling (5s) + auto-refresh findings on completion; Re-scan unlocks after 5 min if stuck
 
+### Notifications
+- Weekly email digest via Resend (Celery beat, Monday 9am UTC)
+- Per-org enable/disable toggle + configurable recipient email in Settings
+- Fallback: sends to account email if no recipient configured
+- "Send test email" button fires immediately from Settings UI
+- Unsubscribe link in email → `/settings`
+
 ### Frontend
 - Login page: email/password + GitHub SSO + Google SSO
 - AWS Accounts page
-- Findings page (grouped, severity-aware)
+- Findings page (grouped, severity-aware, multi-tag filter with autocomplete + URL-synced `?checks=` param)
+- Controls/Compliance page (SOC2 + CIS AWS L1, evidence pack download)
+- Settings page (check enable/disable per group, weekly digest toggle + recipient email)
 - Account settings page (password + GitHub)
-- Sidebar: Vigil logo, AWS Accounts, Findings, Account, Sign out
+- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Settings, Account, Sign out
 
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
@@ -86,7 +105,7 @@ AWS control-plane APIs, reachable via public HTTPS.
 
 ## P1 — after P0
 
-- [ ] Weekly digest email (Resend) — Monday 9am per-org TZ
+- [x] Weekly digest email (Resend) — Monday 9am UTC, configurable recipient, test button
 - [ ] Stripe billing — Checkout + portal + webhook → `orgs.plan`
 - [x] Finding detail drawer — evidence, Console/CLI remediation, auto-interpolated resource names
 - [ ] **Generate Least-Privilege Policy** — `GET /v1/accounts/:id/roles/generated-policy` strips unused service statements from inline policies and returns cleaned JSON; Access Analyzer CloudTrail-based generation is future work (requires `accessRole` setup)
@@ -126,13 +145,12 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 | Gap | Notes |
 |---|---|
 | CORS `*` in dev | locked to `API_PUBLIC_URL` in prod via `APP_ENV` |
-| `role_arn` + `external_id` plaintext in DB | P0 #2 |
-| No tests | P0 #8 |
 | CFN URL pinned to repo `main` | pin to release tag before beta |
-| Findings table missing index on `(org_id, status, risk_score)` | fine until ~50k rows |
 | No request-id / structured access logging | add before prod |
 | One account per org enforced in route | schema is multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
+| `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
+| Digest unsubscribe is a link to `/settings` | no token-based one-click unsubscribe yet |
 
 ---
 
@@ -240,6 +258,79 @@ points per year. The recurring fee is justified by recurring evidence.
 | Repo secret scanning (Gitleaks, Semgrep) | **No.** Different category, Snyk territory. |
 | Write actions / auto-remediation | **No.** Read-only is the entire trust story. |
 | Compliance frameworks to map | **CIS AWS L1, SOC2 CC6/CC7 first.** ISO 27001 A.9/A.12 second. Skip CC1/CC2/CC3/CC5/CC9 — can't evidence from AWS data. |
+
+## Key differentiator: "What If" blast radius analysis
+
+**Identified 2026-05-25. This is the primary product differentiator.**
+
+Most CSPM/CNAPP tools (Orca, Wiz, Checkmarx, Prisma, Lacework) flag findings.
+None show you what breaks if you actually fix them. This is why IAM debt
+accumulates: engineers are afraid to touch stale roles and access keys because
+they don't know what depends on them.
+
+**The feature:** before remediating a finding, the user can click "What If I fix this?"
+and get:
+
+### Blast radius — what depends on this resource?
+
+For a stale access key:
+- Which services have seen API calls from this key in the last 90 days (via CloudTrail or IAM last-accessed)?
+- Which IAM policies grant it access to what resources?
+- Is it the only key for this user, or is there a backup?
+
+For an over-permissive role:
+- Which principals (services, users, other roles) trust this role?
+- Which of its granted services has actually been used in the last 90 days vs. which are dead weight?
+- If you remove `Action: *`, which specific actions would be blocked that are currently in use?
+- Cross-account trust: does removing this role affect external accounts?
+
+For a public S3 bucket:
+- What objects are in it (count, last modified)?
+- Are there CloudFront distributions or presigned URL patterns that depend on public access?
+- Is it referenced in any role's resource policy?
+
+### Remediation simulation
+
+Before applying a fix, show a diff of the "before" vs "after" policy state:
+- Current policy JSON vs. scoped-down policy (stripped to used actions/services only)
+- Highlight which statements are being removed and whether they've been used
+- Confidence score: "High confidence — these actions have no recorded usage in 90 days"
+- Risk flags: "Warning — this service was used 3 times in the last 90 days, verify before removing"
+
+### Why competitors don't have this
+
+- Orca, Wiz, Prisma: agentless CSPM — they scan, they flag, they stop. No remediation intelligence.
+- Checkmarx: code scanning focus — CNAPP is a bolt-on.
+- Vanta/Drata: evidence aggregators — no technical depth on IAM graph.
+- AWS IAM Access Analyzer: shows external access, not blast radius of removal.
+- Prowler: CLI scanner, no UX, no "what if."
+
+The insight the cybersecurity advisor surfaced: **the gap is not more checks, it's
+remediation confidence**. The reason IAM debt compounds is that engineers are
+correct to be afraid — removing the wrong thing breaks prod. Vigil solves this by
+answering "what actually uses this?" before you touch it.
+
+### Data already available to build this
+
+- `iam_perm_usage` table — service last-accessed per role (90-day window)
+- `evidence_snapshots` — full role policy JSON, trust policy, all inline statements
+- `iam_access_keys` — `last_used_at` per key
+- IAM Access Analyzer API — can enumerate resource policies and trust chains
+- CloudTrail (future) — action-level usage, not just service-level
+
+### Build order (when to tackle this)
+
+Phase 2.5 — after CIS L1 checks, before GitHub integration:
+1. "What if" drawer tab on IAM role findings — shows used vs. unused actions from `iam_perm_usage`
+2. Blast radius panel for access key findings — last-used date + which services it touched
+3. Policy diff view — before/after for "generate least-privilege" (already scaffolded in drawer)
+4. Confidence scoring on generated policies
+
+This can be shipped incrementally: start with the data Vigil already collects
+(step 1 + 2), before building anything new. Step 3 reuses the existing
+"Generate" button output. Step 4 is a one-liner on top of step 3.
+
+---
 
 ## The real moat: evidence quality, not check count
 

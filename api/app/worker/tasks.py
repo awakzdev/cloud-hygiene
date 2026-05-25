@@ -289,6 +289,11 @@ def send_weekly_digests() -> dict:
         since = datetime.now(timezone.utc) - timedelta(days=7)
 
         for org in orgs:
+            org_settings = org.settings or {}
+            if not org_settings.get("notifications", {}).get("email_digest_enabled", False):
+                skipped += 1
+                continue
+
             acc = db.scalars(
                 select(AwsAccount).where(
                     AwsAccount.org_id == org.id,
@@ -339,12 +344,19 @@ def send_weekly_digests() -> dict:
                 for f in new_this_week
             ]
 
-            users = db.scalars(select(User).where(User.org_id == org.id)).all()
-            for user in users:
-                if not user.email:
-                    continue
+            digest_email = org_settings.get("notifications", {}).get("digest_email")
+            if digest_email:
+                recipients = [digest_email]
+            else:
+                recipients = [
+                    u.email
+                    for u in db.scalars(select(User).where(User.org_id == org.id)).all()
+                    if u.email
+                ]
+
+            for email in recipients:
                 ok = send_digest(
-                    to=user.email,
+                    to=email,
                     org_name=org.name if hasattr(org, "name") else str(org.id),
                     account_label=acc.label,
                     open_findings=findings_dicts,

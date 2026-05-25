@@ -6,11 +6,8 @@ type CheckCfg = { enabled: boolean };
 type SettingsData = {
   checks: Record<string, CheckCfg>;
   notifications: {
-    slack_enabled: boolean;
-    slack_webhook_url: string | null;
     email_digest_enabled: boolean;
-    email_digest_address: string | null;
-    email_digest_frequency: string;
+    digest_email: string | null;
   };
 };
 
@@ -74,12 +71,11 @@ export default function Settings() {
   });
 
   const [checks, setChecks] = useState<Record<string, boolean>>({});
-  const [slackEnabled, setSlackEnabled] = useState(false);
-  const [slackUrl, setSlackUrl] = useState("");
-  const [emailEnabled, setEmailEnabled] = useState(false);
-  const [emailAddress, setEmailAddress] = useState("");
-  const [emailFrequency, setEmailFrequency] = useState("weekly");
+  const [emailDigestEnabled, setEmailDigestEnabled] = useState(false);
+  const [digestEmail, setDigestEmail] = useState("");
   const [saved, setSaved] = useState(false);
+  const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [testError, setTestError] = useState("");
 
   useEffect(() => {
     if (!data) return;
@@ -88,11 +84,8 @@ export default function Settings() {
       map[c.id] = data.checks[c.id]?.enabled ?? true;
     }
     setChecks(map);
-    setSlackEnabled(data.notifications.slack_enabled ?? false);
-    setSlackUrl(data.notifications.slack_webhook_url ?? "");
-    setEmailEnabled(data.notifications.email_digest_enabled ?? false);
-    setEmailAddress(data.notifications.email_digest_address ?? "");
-    setEmailFrequency(data.notifications.email_digest_frequency ?? "weekly");
+    setEmailDigestEnabled(data.notifications.email_digest_enabled ?? false);
+    setDigestEmail(data.notifications.digest_email ?? "");
   }, [data]);
 
   const mutation = useMutation({
@@ -105,6 +98,20 @@ export default function Settings() {
     },
   });
 
+  async function sendTest() {
+    setTestState("sending");
+    setTestError("");
+    try {
+      await api("/v1/settings/test-digest", { method: "POST" });
+      setTestState("sent");
+      setTimeout(() => setTestState("idle"), 3000);
+    } catch (e) {
+      setTestState("error");
+      setTestError((e as Error).message);
+      setTimeout(() => setTestState("idle"), 4000);
+    }
+  }
+
   function save() {
     const checksPayload: Record<string, CheckCfg> = {};
     for (const [id, enabled] of Object.entries(checks)) {
@@ -113,11 +120,8 @@ export default function Settings() {
     mutation.mutate({
       checks: checksPayload,
       notifications: {
-        slack_enabled: slackEnabled,
-        slack_webhook_url: slackUrl.trim() || null,
-        email_digest_enabled: emailEnabled,
-        email_digest_address: emailAddress.trim() || null,
-        email_digest_frequency: emailFrequency,
+        email_digest_enabled: emailDigestEnabled,
+        digest_email: digestEmail.trim() || null,
       },
     });
   }
@@ -198,64 +202,47 @@ export default function Settings() {
       {/* Notifications */}
       <section className="space-y-4">
         <h2 className="text-base font-semibold text-zinc-800">Notifications</h2>
-        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden divide-y divide-zinc-100" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
-          {/* Slack */}
-          <div className="px-5 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-zinc-900">Slack notifications</p>
-                <p className="text-xs text-zinc-500">Post a summary to Slack after each scan.</p>
-              </div>
-              <Toggle checked={slackEnabled} onChange={setSlackEnabled} />
+        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
+          <div className="flex items-center justify-between px-5 py-4">
+            <div>
+              <p className="text-sm font-medium text-zinc-900">Weekly email digest</p>
+              <p className="text-xs text-zinc-500">Send a findings summary every Monday at 9am UTC.</p>
             </div>
-            {slackEnabled && (
+            <Toggle checked={emailDigestEnabled} onChange={setEmailDigestEnabled} />
+          </div>
+          {emailDigestEnabled && (
+            <div className="px-5 pb-4 border-t border-zinc-100">
+              <label className="block text-xs font-medium text-zinc-500 mb-1.5 mt-3">
+                Recipient email
+              </label>
               <input
-                type="url"
-                placeholder="https://hooks.slack.com/services/…"
-                value={slackUrl}
-                onChange={(e) => setSlackUrl(e.target.value)}
-                className="block w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                type="email"
+                value={digestEmail}
+                onChange={(e) => setDigestEmail(e.target.value)}
+                placeholder="Email address"
+                className="w-full max-w-sm rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
               />
-            )}
-          </div>
-
-          {/* Email digest */}
-          <div className="px-5 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-zinc-900">Email digest</p>
-                <p className="text-xs text-zinc-500">Send a findings summary on a schedule.</p>
+              <p className="mt-1.5 text-xs text-zinc-400">
+                Leave blank to send to your account email.
+              </p>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={sendTest}
+                  disabled={testState === "sending"}
+                  className="rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+                >
+                  {testState === "sending" ? "Sending…" : "Send test email"}
+                </button>
+                {testState === "sent" && (
+                  <span className="text-xs text-emerald-600 font-medium">Sent!</span>
+                )}
+                {testState === "error" && (
+                  <span className="text-xs text-red-500">{testError}</span>
+                )}
               </div>
-              <Toggle checked={emailEnabled} onChange={setEmailEnabled} />
             </div>
-            {emailEnabled && (
-              <div className="space-y-2">
-                <input
-                  type="email"
-                  placeholder="Email address"
-                  value={emailAddress}
-                  onChange={(e) => setEmailAddress(e.target.value)}
-                  className="block w-full rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder-zinc-400 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400"
-                />
-                <div className="flex gap-1.5">
-                  {(["daily", "weekly", "monthly"] as const).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      onClick={() => setEmailFrequency(f)}
-                      className={`rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
-                        emailFrequency === f
-                          ? "border-sky-300 bg-sky-50 text-sky-700"
-                          : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300 hover:text-zinc-700"
-                      }`}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </section>
 
