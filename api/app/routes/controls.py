@@ -181,4 +181,24 @@ def _entity_types_for_check_ids(check_ids: list[str]) -> list[str]:
             types.add("s3_bucket")
         elif cid.startswith("kms."):
             types.add("kms_key")
+        elif cid.startswith("cloudtrail."):
+            types.add("cloudtrail_trail")
+        elif cid.startswith("guardduty."):
+            types.add("guardduty_detector")
+        elif cid.startswith("aws.access_analyzer"):
+            types.add("access_analyzer")
+        elif cid.startswith("aws.config"):
+            types.add("config_recorder")
+        elif cid.startswith("aws.securityhub"):
+            types.add("security_hub")
+        elif cid.startswith("vpc."):
+            types.add("vpc")
+        elif cid.startswith("ec2.security_group"):
+            types.add("security_group")
+        elif cid.startswith("ec2.instance"):
+            types.add("ec2_instance")
+        elif cid.startswith("ec2.ebs"):
+            types.add("ebs_encryption_default")
+        elif cid.startswith("rds."):
+            types.add("rds_instance")
     return list(types)

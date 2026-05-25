@@ -49,6 +49,7 @@ _Last updated: 2026-05-25 (session 4)_
 | `cloudtrail.trail.not_enabled` | high |
 | `cloudtrail.trail.no_log_validation` | medium |
 | `guardduty.detector.not_enabled` | high |
+| `aws.securityhub.not_enabled` | medium |
 | `vpc.flow_logs.not_enabled` | medium |
 | `ec2.security_group.unrestricted_ssh` | high |
 | `ec2.security_group.unrestricted_rdp` | high |
@@ -681,4 +682,3 @@ should not be allowed to:
 
 The product is: **continuous, auditor-ready, source-verifiable cloud
 compliance evidence — for engineers who hate compliance theater.**
-

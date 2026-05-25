@@ -19,10 +19,25 @@ from app.collectors.rds import collect_rds
 from app.collectors.ec2 import collect_ec2
 from app.collectors.access_analyzer import collect_access_analyzer
 from app.collectors.config_service import collect_config_service
+from app.collectors.securityhub import collect_securityhub
 from app.core.db import SessionLocal
 from app.models import AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
-from app.models.resources import S3Bucket, KmsKey
+from app.models.resources import (
+    AccessAnalyzer,
+    CloudTrailTrail,
+    ConfigRecorder,
+    EbsEncryptionDefault,
+    Ec2Instance,
+    GuardDutyDetector,
+    IamPasswordPolicy,
+    KmsKey,
+    RdsInstance,
+    S3Bucket,
+    SecurityGroup,
+    SecurityHubStatus,
+    Vpc,
+)
 from app.models.org import Org, User
 from app.worker.celery_app import celery_app
 
@@ -36,6 +51,7 @@ _COLLECTOR_FOR_CHECK = {
     "guardduty.": lambda db, acc: collect_guardduty(db, acc),
     "aws.access_analyzer.": lambda db, acc: collect_access_analyzer(db, acc),
     "aws.config.": lambda db, acc: collect_config_service(db, acc),
+    "aws.securityhub.": lambda db, acc: collect_securityhub(db, acc),
     "vpc.": lambda db, acc: collect_vpc(db, acc),
     "ec2.security_group.": lambda db, acc: collect_vpc(db, acc),
     "ec2.instance.": lambda db, acc: collect_ec2(db, acc),
@@ -147,6 +163,175 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             },
         ))
 
+    for p in db.scalars(select(IamPasswordPolicy).where(IamPasswordPolicy.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="iam_password_policy",
+            entity_id=str(acc.account_id or acc.id),
+            payload_json={
+                "exists": p.exists,
+                "min_length": p.min_length,
+                "require_uppercase": p.require_uppercase,
+                "require_lowercase": p.require_lowercase,
+                "require_numbers": p.require_numbers,
+                "require_symbols": p.require_symbols,
+                "max_age": p.max_age,
+                "password_reuse_prevention": p.password_reuse_prevention,
+            },
+        ))
+
+    for t in db.scalars(select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="cloudtrail_trail",
+            entity_id=t.arn,
+            payload_json={
+                "name": t.name,
+                "arn": t.arn,
+                "home_region": t.home_region,
+                "is_multi_region": t.is_multi_region,
+                "is_logging": t.is_logging,
+                "log_validation_enabled": t.log_validation_enabled,
+            },
+        ))
+
+    for d in db.scalars(select(GuardDutyDetector).where(GuardDutyDetector.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="guardduty_detector",
+            entity_id=f"{d.region}:{d.detector_id}",
+            payload_json={"detector_id": d.detector_id, "region": d.region, "status": d.status},
+        ))
+
+    for a in db.scalars(select(AccessAnalyzer).where(AccessAnalyzer.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="access_analyzer",
+            entity_id=f"{a.region}:{a.analyzer_name or 'none'}",
+            payload_json={"region": a.region, "analyzer_name": a.analyzer_name, "status": a.status},
+        ))
+
+    for c in db.scalars(select(ConfigRecorder).where(ConfigRecorder.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="config_recorder",
+            entity_id=f"{c.region}:{c.recorder_name or 'none'}",
+            payload_json={
+                "region": c.region,
+                "recorder_name": c.recorder_name,
+                "recording": c.recording,
+                "delivery_channel_exists": c.delivery_channel_exists,
+            },
+        ))
+
+    for s in db.scalars(select(SecurityHubStatus).where(SecurityHubStatus.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="security_hub",
+            entity_id=f"{s.region}:{s.hub_arn or 'disabled'}",
+            payload_json={"region": s.region, "hub_arn": s.hub_arn, "enabled": s.enabled},
+        ))
+
+    for v in db.scalars(select(Vpc).where(Vpc.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="vpc",
+            entity_id=f"{v.region}:{v.vpc_id}",
+            payload_json={"vpc_id": v.vpc_id, "region": v.region, "flow_logs_enabled": v.flow_logs_enabled},
+        ))
+
+    for sg in db.scalars(select(SecurityGroup).where(SecurityGroup.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="security_group",
+            entity_id=f"{sg.region}:{sg.group_id}",
+            payload_json={
+                "group_id": sg.group_id,
+                "group_name": sg.group_name,
+                "region": sg.region,
+                "vpc_id": sg.vpc_id,
+                "is_default": sg.is_default,
+                "unrestricted_ssh": sg.unrestricted_ssh,
+                "unrestricted_rdp": sg.unrestricted_rdp,
+                "has_any_inbound_rules": sg.has_any_inbound_rules,
+                "has_any_outbound_rules": sg.has_any_outbound_rules,
+            },
+        ))
+
+    for i in db.scalars(select(Ec2Instance).where(Ec2Instance.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ec2_instance",
+            entity_id=f"{i.region}:{i.instance_id}",
+            payload_json={
+                "instance_id": i.instance_id,
+                "region": i.region,
+                "instance_type": i.instance_type,
+                "state": i.state,
+                "imdsv2_required": i.imdsv2_required,
+                "vpc_id": i.vpc_id,
+                "subnet_id": i.subnet_id,
+                "security_group_ids": i.security_group_ids,
+                "tags": i.tags,
+            },
+        ))
+
+    for e in db.scalars(select(EbsEncryptionDefault).where(EbsEncryptionDefault.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ebs_encryption_default",
+            entity_id=e.region,
+            payload_json={"region": e.region, "enabled": e.enabled},
+        ))
+
+    for r in db.scalars(select(RdsInstance).where(RdsInstance.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="rds_instance",
+            entity_id=r.arn,
+            payload_json={
+                "db_instance_id": r.db_instance_id,
+                "arn": r.arn,
+                "region": r.region,
+                "publicly_accessible": r.publicly_accessible,
+                "storage_encrypted": r.storage_encrypted,
+                "engine": r.engine,
+            },
+        ))
+
     db.add_all(snaps)
     return len(snaps)
 
@@ -177,6 +362,7 @@ def run_scan(account_id: str) -> dict:
         stats["ebs_regions"] = ec2_stats.get("ebs_regions", 0)
         stats["access_analyzers"] = collect_access_analyzer(db, acc)
         stats["config_regions"] = collect_config_service(db, acc)
+        stats["securityhub_regions"] = collect_securityhub(db, acc)
 
         org_obj = db.get(Org, acc.org_id)
         check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}

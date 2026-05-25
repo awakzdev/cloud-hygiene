@@ -28,6 +28,7 @@ from app.checks import (
     sg_default_allows_traffic,
     sg_unrestricted_rdp,
     sg_unrestricted_ssh,
+    securityhub_not_enabled,
     vpc_no_flow_logs,
 )
 
@@ -64,6 +65,8 @@ ALL_CHECKS = [
     access_analyzer_not_enabled,
     # AWS Config
     config_not_enabled,
+    # Security Hub
+    securityhub_not_enabled,
     # VPC
     vpc_no_flow_logs,
     # EC2 Security Groups

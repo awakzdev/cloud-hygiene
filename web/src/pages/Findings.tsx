@@ -85,6 +85,8 @@ const checkLabels: Record<string, string> = {
   "aws.access_analyzer.not_enabled": "IAM Access Analyzer not enabled",
   // AWS Config
   "aws.config.not_enabled": "AWS Config not enabled",
+  // Security Hub
+  "aws.securityhub.not_enabled": "Security Hub not enabled",
   // VPC
   "vpc.flow_logs.not_enabled": "VPC flow logs disabled",
   // Security Groups
@@ -122,6 +124,7 @@ const checkDescriptions: Record<string, string> = {
   "guardduty.detector.not_enabled": "Enable GuardDuty to detect threats, anomalies, and unauthorized activity.",
   "aws.access_analyzer.not_enabled": "Enable IAM Access Analyzer to surface over-permissive cross-account access.",
   "aws.config.not_enabled": "Enable AWS Config to maintain a continuous configuration change history.",
+  "aws.securityhub.not_enabled": "Enable Security Hub to centralize security posture checks and findings.",
   "vpc.flow_logs.not_enabled": "Enable VPC flow logs for network-level visibility and forensics.",
   "ec2.security_group.unrestricted_ssh": "Remove 0.0.0.0/0 ingress on port 22 — use Systems Manager Session Manager instead.",
   "ec2.security_group.unrestricted_rdp": "Remove 0.0.0.0/0 ingress on port 3389 — use Fleet Manager for RDP access.",

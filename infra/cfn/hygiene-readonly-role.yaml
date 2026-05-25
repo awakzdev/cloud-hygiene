@@ -104,6 +104,12 @@ Resources:
                   - guardduty:GetDetector
                 Resource: "*"
 
+              - Sid: SecurityHubConfiguration
+                Effect: Allow
+                Action:
+                  - securityhub:DescribeHub
+                Resource: "*"
+
               - Sid: VpcAndSecurityGroupEnumeration
                 Effect: Allow
                 Action:

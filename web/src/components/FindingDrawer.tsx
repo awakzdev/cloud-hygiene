@@ -438,6 +438,20 @@ aws configservice put-delivery-channel \\
 aws configservice start-configuration-recorder --configuration-recorder-name default`,
     risk: "No Config means no configuration change history — a gap auditors will flag and a blocker for SOC 2 CC6.1.",
   },
+  "aws.securityhub.not_enabled": {
+    why: "Security Hub centralizes AWS security findings and posture checks across regions. Without it, security signals stay fragmented across services and are harder to evidence consistently.",
+    console: [
+      "Open Security Hub in each affected region listed in Scan details",
+      'Click "Go to Security Hub" or "Enable Security Hub"',
+      "Enable the AWS Foundational Security Best Practices standard",
+      "Repeat for each active region, or enable centrally with AWS Organizations",
+    ],
+    cli: `# Enable Security Hub in each region
+for region in $(aws ec2 describe-regions --query 'Regions[].RegionName' --output text); do
+  aws securityhub enable-security-hub --region $region 2>/dev/null || true
+done`,
+    risk: "Without Security Hub, posture checks and service findings are not centralized, making investigation and audit evidence weaker.",
+  },
   "ec2.security_group.default_allows_traffic": {
     why: "The default security group is automatically assigned to new instances and network interfaces if no explicit group is specified. If it has rules, any accidentally unconfigured resource inherits inbound or outbound access — often unintentionally.",
     console: [

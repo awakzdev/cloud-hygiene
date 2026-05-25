@@ -45,6 +45,8 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "aws.access_analyzer.not_enabled", label: "IAM Access Analyzer not enabled", severity: "medium", description: "Enable IAM Access Analyzer to surface cross-account over-permissive access." },
   // AWS Config
   { id: "aws.config.not_enabled", label: "AWS Config not enabled", severity: "low", description: "Enable AWS Config to maintain a continuous configuration change history." },
+  // Security Hub
+  { id: "aws.securityhub.not_enabled", label: "Security Hub not enabled", severity: "medium", description: "Enable Security Hub for centralized security posture checks." },
   // VPC
   { id: "vpc.flow_logs.not_enabled", label: "VPC flow logs disabled", severity: "medium", description: "Enable flow logs on all VPCs for network visibility." },
   // Security Groups
@@ -169,6 +171,7 @@ export default function Settings() {
     guardduty: ALL_CHECKS.filter((c) => c.id.startsWith("guardduty.")),
     access_analyzer: ALL_CHECKS.filter((c) => c.id.startsWith("aws.access_analyzer.")),
     config: ALL_CHECKS.filter((c) => c.id.startsWith("aws.config.")),
+    securityhub: ALL_CHECKS.filter((c) => c.id.startsWith("aws.securityhub.")),
     vpc: ALL_CHECKS.filter((c) => c.id.startsWith("vpc.")),
     ec2: ALL_CHECKS.filter((c) => c.id.startsWith("ec2.")),
     rds: ALL_CHECKS.filter((c) => c.id.startsWith("rds.")),
@@ -200,6 +203,7 @@ export default function Settings() {
             ["GuardDuty", grouped.guardduty],
             ["IAM Access Analyzer", grouped.access_analyzer],
             ["AWS Config", grouped.config],
+            ["Security Hub", grouped.securityhub],
             ["VPC", grouped.vpc],
             ["Security Groups & EC2", grouped.ec2],
             ["RDS", grouped.rds],

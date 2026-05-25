@@ -5,7 +5,7 @@ from app.models.finding import Finding, FindingEvent
 from app.models.resources import (
     S3Bucket, KmsKey,
     Ec2Instance, EbsEncryptionDefault,
-    IamPasswordPolicy, AccessAnalyzer, ConfigRecorder,
+    IamPasswordPolicy, AccessAnalyzer, ConfigRecorder, SecurityHubStatus,
 )
 from app.models.control import Control, CheckControl
 from app.models.evidence_snapshot import EvidenceSnapshot
@@ -17,7 +17,7 @@ __all__ = [
     "Finding", "FindingEvent",
     "S3Bucket", "KmsKey",
     "Ec2Instance", "EbsEncryptionDefault",
-    "IamPasswordPolicy", "AccessAnalyzer", "ConfigRecorder",
+    "IamPasswordPolicy", "AccessAnalyzer", "ConfigRecorder", "SecurityHubStatus",
     "Control", "CheckControl",
     "EvidenceSnapshot",
 ]

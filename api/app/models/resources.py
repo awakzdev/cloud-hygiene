@@ -173,6 +173,18 @@ class ConfigRecorder(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SecurityHubStatus(Base):
+    __tablename__ = "security_hub_statuses"
+    __table_args__ = (UniqueConstraint("account_id", "region"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    hub_arn: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class RdsInstance(Base):
     __tablename__ = "rds_instances"
     __table_args__ = (UniqueConstraint("account_id", "arn"),)

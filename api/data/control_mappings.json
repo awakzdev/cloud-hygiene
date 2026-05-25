@@ -89,9 +89,10 @@
     "control_id": "CC7.2",
     "title": "System Operations — Anomaly Detection",
     "description": "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives.",
-    "guidance": "Evidence: GuardDuty enabled in all regions. VPC Flow Logs enabled on all VPCs.",
+    "guidance": "Evidence: GuardDuty and Security Hub enabled in all regions. VPC Flow Logs enabled on all VPCs.",
     "checks": [
       "guardduty.detector.not_enabled",
+      "aws.securityhub.not_enabled",
       "vpc.flow_logs.not_enabled"
     ]
   },
@@ -233,5 +234,5 @@
     "checks": [
       "rds.instance.publicly_accessible"
     ]
-  },
+  }
 ]
