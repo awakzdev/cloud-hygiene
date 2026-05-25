@@ -44,7 +44,7 @@ class VerifyIn(BaseModel):
 def _launch_url(external_id: str) -> str:
     params = {
         "templateURL": CFN_TEMPLATE_URL,
-        "stackName": "CloudHygieneReadOnly",
+        "stackName": "VigilReadOnly",
         "param_ExternalId": external_id,
         "param_HygieneAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
     }

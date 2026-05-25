@@ -1,24 +1,24 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Cloud Hygiene read-only IAM role. Grants the Cloud Hygiene control plane
-  scoped read access to enumerate IAM, generate last-accessed reports, and
-  query Access Analyzer findings. NO write permissions.
+  Vigil read-only IAM role. Grants the Vigil control plane the minimum
+  permissions to enumerate IAM, S3, and KMS configuration. No write
+  permissions. No AWS-managed SecurityAudit or ViewOnlyAccess attached.
 
 Parameters:
   HygieneAccountPrincipal:
     Type: String
-    Description: ARN of the Cloud Hygiene control plane principal (provided during onboarding).
+    Description: ARN of the Vigil control plane principal (provided during onboarding).
   ExternalId:
     Type: String
     Description: Unique ExternalId issued at onboarding. Required to assume the role.
     NoEcho: true
   RoleName:
     Type: String
-    Default: CloudHygieneReadOnly
+    Default: VigilReadOnly
     Description: Name of the IAM role created in this account.
 
 Resources:
-  HygieneRole:
+  VigilRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Ref RoleName
@@ -33,51 +33,69 @@ Resources:
             Condition:
               StringEquals:
                 sts:ExternalId: !Ref ExternalId
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/SecurityAudit
-        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
       Policies:
-        - PolicyName: HygieneIamReadExtras
+        - PolicyName: VigilMinimalReadOnly
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              - Sid: IamReports
+              - Sid: IamUserAndKeyEnumeration
+                Effect: Allow
+                Action:
+                  - iam:ListUsers
+                  - iam:ListMFADevices
+                  - iam:GetLoginProfile
+                  - iam:ListAccessKeys
+                  - iam:GetAccessKeyLastUsed
+                  - iam:GetAccountSummary
+                  - iam:ListAccountAliases
+                Resource: "*"
+
+              - Sid: IamRoleEnumeration
+                Effect: Allow
+                Action:
+                  - iam:ListRoles
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                Resource: "*"
+
+              - Sid: IamServiceLastAccessed
                 Effect: Allow
                 Action:
                   - iam:GenerateServiceLastAccessedDetails
                   - iam:GetServiceLastAccessedDetails
-                  - iam:GenerateCredentialReport
-                  - iam:GetCredentialReport
-                  - iam:GetAccountAuthorizationDetails
                 Resource: "*"
-              - Sid: AccessAnalyzerRead
+
+              - Sid: S3BucketConfiguration
                 Effect: Allow
                 Action:
-                  - access-analyzer:ListAnalyzers
-                  - access-analyzer:ListFindings
-                  - access-analyzer:GetFinding
-                  - access-analyzer:ListAccessPreviewFindings
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLogging
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketPolicy
                 Resource: "*"
-              - Sid: AccessAnalyzerPolicyGeneration
+
+              - Sid: KmsKeyConfiguration
                 Effect: Allow
                 Action:
-                  - access-analyzer:StartPolicyGeneration
-                  - access-analyzer:GetGeneratedPolicy
-                  - access-analyzer:CancelPolicyGeneration
-                  - iam:GetServiceLastAccessedDetails
+                  - kms:ListKeys
+                  - kms:DescribeKey
+                  - kms:GetKeyRotationStatus
+                  - kms:GetKeyPolicy
+                  - kms:ListAliases
                 Resource: "*"
-              - Sid: CloudTrailReadForPolicyGeneration
+
+              - Sid: OrganizationsAccountLabel
                 Effect: Allow
                 Action:
-                  - cloudtrail:GetTrail
-                  - cloudtrail:GetTrailStatus
-                  - cloudtrail:ListTrails
+                  - organizations:DescribeAccount
                 Resource: "*"
 
 Outputs:
   RoleArn:
-    Description: Paste this ARN into Cloud Hygiene to finish onboarding.
-    Value: !GetAtt HygieneRole.Arn
+    Description: Paste this ARN into Vigil to finish onboarding.
+    Value: !GetAtt VigilRole.Arn
   ExternalId:
     Description: ExternalId required to assume the role.
     Value: !Ref ExternalId
