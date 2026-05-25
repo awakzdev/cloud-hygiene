@@ -77,7 +77,7 @@ AWS control-plane APIs, reachable via public HTTPS.
 - [ ] **End-to-end test**: signup → CFN → verify → scan → findings populated
 - [x] **Tighten CFN IAM** — drop `SecurityAudit` + `ViewOnlyAccess`, enumerate exact actions
 - [x] **Scan progress UI** — poll `GET /v1/accounts/:id/scan-runs`, surface errors
-- [ ] **Pagination on `/v1/findings`** (cursor + limit)
+- [x] **Pagination on `/v1/findings`** (cursor + limit, migration 0009 composite index)
 - [x] **CSV export** (`GET /v1/exports/findings.csv`)
 - [x] **pytest skeleton** — botocore Stubber for collectors, unit tests for checks (16 passing)
 - [ ] **Hetzner deploy** — domain, Caddy auto-TLS, nightly pg_dump → B2

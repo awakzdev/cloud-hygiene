@@ -22,5 +22,9 @@ celery_app.conf.update(
             "task": "app.worker.tasks.scan_all_accounts",
             "schedule": crontab(hour=6, minute=0),
         },
+        "weekly-digest-monday": {
+            "task": "app.worker.tasks.send_weekly_digests",
+            "schedule": crontab(hour=9, minute=0, day_of_week=1),  # Monday 9am UTC
+        },
     },
 )

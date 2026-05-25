@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import structlog
 from sqlalchemy import select
@@ -13,10 +13,10 @@ from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
 from app.collectors.account import collect_s3, collect_kms
 from app.core.db import SessionLocal
-from app.models import AwsAccount, ScanRun, EvidenceSnapshot
+from app.models import AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
 from app.models.resources import S3Bucket, KmsKey
-from app.models.org import Org
+from app.models.org import Org, User
 from app.worker.celery_app import celery_app
 
 # maps check_id prefix → collector function(db, acc)
@@ -272,5 +272,92 @@ def scan_all_accounts() -> dict:
         for acc in rows:
             run_scan.delay(str(acc.id))
         return {"queued": len(rows)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.worker.tasks.send_weekly_digests")
+def send_weekly_digests() -> dict:
+    """Send Monday digest to all org members with a connected account."""
+    from app.services.digest import send_digest
+
+    db = SessionLocal()
+    sent = 0
+    skipped = 0
+    try:
+        orgs = db.scalars(select(Org)).all()
+        since = datetime.now(timezone.utc) - timedelta(days=7)
+
+        for org in orgs:
+            acc = db.scalars(
+                select(AwsAccount).where(
+                    AwsAccount.org_id == org.id,
+                    AwsAccount.status == "connected",
+                )
+            ).first()
+            if not acc:
+                skipped += 1
+                continue
+
+            open_findings = db.scalars(
+                select(Finding).where(
+                    Finding.account_id == acc.id,
+                    Finding.status == "open",
+                ).order_by(Finding.risk_score.desc())
+            ).all()
+
+            new_this_week = db.scalars(
+                select(Finding).where(
+                    Finding.account_id == acc.id,
+                    Finding.first_seen >= since,
+                )
+            ).all()
+
+            from sqlalchemy import func as sa_func
+            resolved_count = db.scalar(
+                select(sa_func.count()).select_from(
+                    select(Finding).where(
+                        Finding.account_id == acc.id,
+                        Finding.status == "resolved",
+                        Finding.last_seen >= since,
+                    ).subquery()
+                )
+            ) or 0
+
+            findings_dicts = [
+                {
+                    "title": f.title,
+                    "severity": f.severity,
+                    "risk_score": f.risk_score,
+                    "resource_arn": f.resource_arn,
+                    "check_id": f.check_id,
+                }
+                for f in open_findings
+            ]
+            new_dicts = [
+                {"title": f.title, "severity": f.severity}
+                for f in new_this_week
+            ]
+
+            users = db.scalars(select(User).where(User.org_id == org.id)).all()
+            for user in users:
+                if not user.email:
+                    continue
+                ok = send_digest(
+                    to=user.email,
+                    org_name=org.name if hasattr(org, "name") else str(org.id),
+                    account_label=acc.label,
+                    open_findings=findings_dicts,
+                    new_this_week=new_dicts,
+                    resolved_this_week=resolved_count,
+                )
+                if ok:
+                    sent += 1
+
+        log.info("digests.complete", sent=sent, skipped=skipped)
+        return {"sent": sent, "skipped": skipped}
+    except Exception as e:  # noqa: BLE001
+        log.exception("digests.failed")
+        return {"ok": False, "error": str(e)}
     finally:
         db.close()
