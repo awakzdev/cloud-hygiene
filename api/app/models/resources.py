@@ -28,6 +28,19 @@ class S3Bucket(Base):
     )
 
 
+class S3AccountPublicAccessBlock(Base):
+    __tablename__ = "s3_account_public_access_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), unique=True, index=True)
+    block_public_acls: Mapped[bool] = mapped_column(Boolean, default=False)
+    ignore_public_acls: Mapped[bool] = mapped_column(Boolean, default=False)
+    block_public_policy: Mapped[bool] = mapped_column(Boolean, default=False)
+    restrict_public_buckets: Mapped[bool] = mapped_column(Boolean, default=False)
+    all_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class KmsKey(Base):
     __tablename__ = "kms_keys"
 

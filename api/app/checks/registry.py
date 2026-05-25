@@ -23,6 +23,7 @@ from app.checks import (
     role_unassumed_90d,
     role_unused_services,
     role_wildcard_action,
+    s3_account_public_access,
     s3_no_https_policy,
     s3_no_kms,
     s3_no_logging,
@@ -52,6 +53,7 @@ ALL_CHECKS = [
     role_unused_services,
     role_trust_wildcard,
     # S3
+    s3_account_public_access,
     s3_public_access,
     s3_no_https_policy,
     s3_no_kms,

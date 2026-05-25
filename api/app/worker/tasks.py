@@ -11,7 +11,7 @@ from app.checks.registry import ALL_CHECKS
 from app.checks import role_unused_services
 from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
-from app.collectors.account import collect_s3, collect_kms
+from app.collectors.account import collect_s3, collect_s3_account_public_access_block, collect_kms
 from app.collectors.cloudtrail import collect_cloudtrail
 from app.collectors.guardduty import collect_guardduty
 from app.collectors.vpc import collect_vpc
@@ -33,6 +33,7 @@ from app.models.resources import (
     IamPasswordPolicy,
     KmsKey,
     RdsInstance,
+    S3AccountPublicAccessBlock,
     S3Bucket,
     SecurityGroup,
     SecurityHubStatus,
@@ -45,6 +46,7 @@ from app.worker.celery_app import celery_app
 # More-specific prefixes must come before less-specific ones
 _COLLECTOR_FOR_CHECK = {
     "iam.": lambda db, acc: collect_iam(db, acc),
+    "s3.account.": lambda db, acc: collect_s3_account_public_access_block(db, acc),
     "s3.": lambda db, acc: collect_s3(db, acc),
     "kms.": lambda db, acc: collect_kms(db, acc),
     "cloudtrail.": lambda db, acc: collect_cloudtrail(db, acc),
@@ -141,6 +143,23 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "versioning_enabled": b.versioning_enabled,
                 "public_access_blocked": b.public_access_blocked,
                 "https_only": b.https_only,
+            },
+        ))
+
+    for pab in db.scalars(select(S3AccountPublicAccessBlock).where(S3AccountPublicAccessBlock.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="s3_account_public_access_block",
+            entity_id=str(acc.account_id or acc.id),
+            payload_json={
+                "block_public_acls": pab.block_public_acls,
+                "ignore_public_acls": pab.ignore_public_acls,
+                "block_public_policy": pab.block_public_policy,
+                "restrict_public_buckets": pab.restrict_public_buckets,
+                "all_blocked": pab.all_blocked,
             },
         ))
 
@@ -351,6 +370,7 @@ def run_scan(account_id: str) -> dict:
 
     try:
         stats = collect_iam(db, acc)
+        stats["s3_account_public_access_block"] = collect_s3_account_public_access_block(db, acc)
         stats["s3_buckets"] = collect_s3(db, acc)
         stats["kms_keys"] = collect_kms(db, acc)
         stats["cloudtrail_trails"] = collect_cloudtrail(db, acc)

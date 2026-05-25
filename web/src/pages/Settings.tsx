@@ -30,6 +30,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "iam.role.unused_services_90d", label: "Unused granted services", severity: "medium", description: "Scope role policies down to services actually used." },
   { id: "iam.role.trust_wildcard", label: "Wildcard trust policy", severity: "critical", description: "Roles that trust '*' can be assumed by anyone." },
   // S3
+  { id: "s3.account.public_access_not_blocked", label: "Account public access not blocked", severity: "high", description: "Enable account-level S3 Block Public Access." },
   { id: "s3.bucket.public_access_not_blocked", label: "Public access not blocked", severity: "high", description: "Enable all four Block Public Access settings." },
   { id: "s3.bucket.no_https_policy", label: "No HTTPS-only policy", severity: "medium", description: "Deny requests where aws:SecureTransport is false." },
   { id: "s3.bucket.no_kms", label: "Not encrypted with KMS", severity: "medium", description: "Use SSE-KMS for encryption at rest." },

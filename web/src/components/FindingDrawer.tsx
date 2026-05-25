@@ -174,6 +174,16 @@ aws s3api put-public-access-block \\
     risk: "Without this, a misconfigured ACL or bucket policy can silently expose objects to the internet.",
   },
 
+  "s3.account.public_access_not_blocked": {
+    why: "Account-level S3 Block Public Access is the broad guardrail that prevents accidental public bucket ACLs or policies across the entire account.",
+    console: ["Open S3 → Block Public Access settings for this account", 'Click "Edit"', "Enable all four Block Public Access settings", "Save changes"],
+    cli: `aws s3control put-public-access-block \\
+  --account-id <account-id> \\
+  --public-access-block-configuration \\
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true`,
+    risk: "Without the account-level guardrail, a single bucket policy or ACL mistake can expose data publicly.",
+  },
+
   "s3.bucket.no_https_policy": {
     why: "Without a deny-HTTP bucket policy, clients can request objects over unencrypted HTTP. Data in transit is exposed to interception.",
     console: ["Open S3 → select the bucket", 'Click "Permissions" tab → "Bucket policy"', "Add or update the policy to include a Deny statement with the condition below", "Save the policy"],

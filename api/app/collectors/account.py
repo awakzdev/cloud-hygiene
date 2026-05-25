@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
 from app.models import AwsAccount
-from app.models.resources import KmsKey, S3Bucket
+from app.models.resources import KmsKey, S3AccountPublicAccessBlock, S3Bucket
 
 log = structlog.get_logger()
 
@@ -104,6 +104,50 @@ def collect_s3(db: Session, account: AwsAccount) -> int:
     db.commit()
     log.info("collect_s3.done", account_id=str(account.id), buckets=count)
     return count
+
+
+def collect_s3_account_public_access_block(db: Session, account: AwsAccount) -> int:
+    if not account.account_id:
+        return 0
+
+    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-s3-account-pab")
+    s3control = sess.client("s3control", region_name="us-east-1")
+
+    try:
+        cfg = s3control.get_public_access_block(AccountId=account.account_id)["PublicAccessBlockConfiguration"]
+    except ClientError:
+        cfg = {}
+
+    block_public_acls = cfg.get("BlockPublicAcls", False)
+    ignore_public_acls = cfg.get("IgnorePublicAcls", False)
+    block_public_policy = cfg.get("BlockPublicPolicy", False)
+    restrict_public_buckets = cfg.get("RestrictPublicBuckets", False)
+    all_blocked = all([block_public_acls, ignore_public_acls, block_public_policy, restrict_public_buckets])
+
+    stmt = pg_insert(S3AccountPublicAccessBlock).values(
+        id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:s3_account_pab"),
+        account_id=account.id,
+        block_public_acls=block_public_acls,
+        ignore_public_acls=ignore_public_acls,
+        block_public_policy=block_public_policy,
+        restrict_public_buckets=restrict_public_buckets,
+        all_blocked=all_blocked,
+        last_seen=_now(),
+    ).on_conflict_do_update(
+        index_elements=["account_id"],
+        set_={
+            "block_public_acls": block_public_acls,
+            "ignore_public_acls": ignore_public_acls,
+            "block_public_policy": block_public_policy,
+            "restrict_public_buckets": restrict_public_buckets,
+            "all_blocked": all_blocked,
+            "last_seen": _now(),
+        },
+    )
+    db.execute(stmt)
+    db.commit()
+    log.info("collect_s3_account_public_access_block.done", account_id=str(account.id), all_blocked=all_blocked)
+    return 1
 
 
 def collect_kms(db: Session, account: AwsAccount) -> int:

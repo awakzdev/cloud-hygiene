@@ -138,6 +138,8 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
             types.add("iam_access_key")
         elif cid.startswith("iam.role"):
             types.add("iam_role")
+        elif cid.startswith("s3.account."):
+            types.add("s3_account_public_access_block")
         elif cid.startswith("s3."):
             types.add("s3_bucket")
         elif cid.startswith("kms."):

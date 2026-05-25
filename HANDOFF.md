@@ -42,6 +42,7 @@ _Last updated: 2026-05-25 (session 4)_
 | `iam.role.unused_services_90d` | medium |
 | `iam.role.trust_wildcard` | critical |
 | `s3.bucket.public_access_not_blocked` | high |
+| `s3.account.public_access_not_blocked` | high |
 | `s3.bucket.no_https_policy` | medium |
 | `s3.bucket.no_kms` | medium |
 | `s3.bucket.no_logging` | low |

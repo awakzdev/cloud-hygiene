@@ -70,6 +70,7 @@ const checkLabels: Record<string, string> = {
   "iam.role.unused_services_90d": "Unused granted services",
   "iam.role.trust_wildcard": "Wildcard trust policy",
   // S3
+  "s3.account.public_access_not_blocked": "Account public access not blocked",
   "s3.bucket.public_access_not_blocked": "Public access not blocked",
   "s3.bucket.no_https_policy": "No HTTPS-only policy",
   "s3.bucket.no_kms": "Not encrypted with KMS",
@@ -116,6 +117,7 @@ const checkDescriptions: Record<string, string> = {
   "iam.role.wildcard_action": "Replace wildcard permissions with scoped actions.",
   "iam.role.unused_services_90d": "Trim unused service permissions from role policies.",
   "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
+  "s3.account.public_access_not_blocked": "Enable account-level S3 Block Public Access to guard every bucket by default.",
   "s3.bucket.public_access_not_blocked": "Enable all four Block Public Access settings to prevent accidental exposure.",
   "s3.bucket.no_https_policy": "Add a bucket policy that denies requests where aws:SecureTransport is false.",
   "s3.bucket.no_kms": "Enable SSE-KMS to use customer-managed keys for encryption at rest.",
