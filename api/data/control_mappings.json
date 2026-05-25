@@ -1,0 +1,187 @@
+[
+  {
+    "framework": "soc2",
+    "control_id": "CC6.1",
+    "title": "Logical Access — Asset Inventory",
+    "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets to protect them from security events to meet the entity's objectives.",
+    "guidance": "Evidence: IAM user inventory, role inventory, access key list with last-used dates. All principals should be accounted for and actively used.",
+    "checks": [
+      "iam.user.inactive_90d",
+      "iam.role.unassumed_90d",
+      "iam.access_key.unused_90d"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC6.2",
+    "title": "Logical Access — Credential Registration",
+    "description": "Prior to issuing system credentials and granting system access, the entity registers and authorizes new internal and external users whose access is administered by the entity.",
+    "guidance": "Evidence: No root access keys present. Each user holds at most one active access key. Programmatic access is scoped to purpose.",
+    "checks": [
+      "iam.root.has_access_keys",
+      "iam.access_key.multiple_active"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC6.3",
+    "title": "Logical Access — Access Removal",
+    "description": "The entity removes access to protected information assets when appropriate (e.g., the individual is no longer associated with the entity).",
+    "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold.",
+    "checks": [
+      "iam.user.inactive_90d",
+      "iam.access_key.unused_90d",
+      "iam.role.unassumed_90d"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC6.6",
+    "title": "Logical Access — Least Privilege and MFA",
+    "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries, including multi-factor authentication for all users with console access.",
+    "guidance": "Evidence: MFA enabled for root and all IAM console users. No wildcard Action in role policies. No wildcard trust principals. S3 public access blocked.",
+    "checks": [
+      "iam.root.no_mfa",
+      "iam.user.no_mfa",
+      "iam.role.wildcard_action",
+      "iam.role.trust_wildcard",
+      "s3.bucket.public_access_not_blocked"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC6.7",
+    "title": "Logical Access — Transmission Encryption",
+    "description": "The entity restricts the transmission of confidential information to authorized internal and external users and protects it during transmission.",
+    "guidance": "Evidence: S3 buckets enforce HTTPS-only via bucket policy (aws:SecureTransport condition).",
+    "checks": [
+      "s3.bucket.no_https_policy"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC6.8",
+    "title": "Logical Access — Encryption at Rest",
+    "description": "The entity implements controls to prevent or detect and act upon the introduction of unauthorized or malicious software to meet the entity's objectives.",
+    "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled.",
+    "checks": [
+      "s3.bucket.no_kms",
+      "kms.key.no_rotation"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC7.1",
+    "title": "System Operations — Configuration Change Detection",
+    "description": "To meet its objectives, the entity uses detection and monitoring procedures to identify changes to configurations that result in the introduction of new vulnerabilities.",
+    "guidance": "Evidence: CloudTrail enabled with log file validation. AWS Config recording enabled. (Checks coming in Phase 2.)",
+    "checks": []
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC7.2",
+    "title": "System Operations — Anomaly Detection",
+    "description": "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives.",
+    "guidance": "Evidence: GuardDuty enabled. CloudWatch alarm on root account usage. VPC Flow Logs enabled. (Checks coming in Phase 2.)",
+    "checks": []
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.4",
+    "title": "Ensure no root account access key exists",
+    "description": "The root account is the most privileged AWS account. Access keys provide programmatic access and, if compromised, cannot be easily revoked. Root access keys should not exist.",
+    "guidance": "Delete any root access keys. Use IAM roles with least-privilege policies for programmatic access instead.",
+    "checks": [
+      "iam.root.has_access_keys"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.5",
+    "title": "Ensure MFA is enabled for the root account",
+    "description": "The root account is the most privileged AWS account. Multi-factor authentication adds an extra layer of protection on top of username and password.",
+    "guidance": "Enable hardware MFA or virtual MFA on the root account. Hardware MFA is preferred for root.",
+    "checks": [
+      "iam.root.no_mfa"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.10",
+    "title": "Ensure MFA is enabled for all IAM users with a console password",
+    "description": "MFA adds an extra layer of protection on top of a username and password. With MFA enabled, when a user signs in to the AWS Management Console, they are prompted for their username and password plus an authentication code from their MFA device.",
+    "guidance": "Enable MFA for every IAM user that has console access. Consider using IAM Identity Center for SSO instead of IAM users.",
+    "checks": [
+      "iam.user.no_mfa"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.12",
+    "title": "Ensure credentials unused for 45 days or greater are disabled",
+    "description": "AWS IAM users can access AWS resources using different types of credentials. It is recommended that all credentials that have been unused in 90 or more days be deactivated or removed.",
+    "guidance": "Disable or remove IAM users with no console activity in 90+ days. Deactivate access keys unused for 90+ days, then delete after confirming no dependency.",
+    "checks": [
+      "iam.user.inactive_90d",
+      "iam.access_key.unused_90d"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.14",
+    "title": "Ensure access keys are rotated every 90 days or less",
+    "description": "Access keys consist of an access key ID and secret access key. Rotating access keys reduces the window of opportunity for keys that are compromised without your knowledge.",
+    "guidance": "Create a new access key, update the consuming workload, then deactivate and delete the old key.",
+    "checks": [
+      "iam.access_key.no_rotation_90d"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.16",
+    "title": "Ensure IAM policies are attached only to groups or roles",
+    "description": "By default, IAM users, groups, and roles have no access to AWS resources. Assigning policies directly to individual users is harder to manage at scale.",
+    "guidance": "Remove directly-attached user policies and instead assign permissions via roles or groups.",
+    "checks": []
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.22",
+    "title": "Ensure IAM policies that allow full administrative privileges are not attached",
+    "description": "IAM policies are the means by which privileges are granted to users, groups, or roles. Policies that grant full administrative privileges provide excessive and unnecessary permissions.",
+    "guidance": "Replace Action: '*' or Resource: '*' with scoped action lists and specific resource ARNs.",
+    "checks": [
+      "iam.role.wildcard_action"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.1.1",
+    "title": "Ensure S3 Bucket Policy enforces HTTPS-only requests",
+    "description": "S3 bucket policies should deny any HTTP request to protect data in transit from interception.",
+    "guidance": "Add a bucket policy with a Deny statement on aws:SecureTransport: false.",
+    "checks": [
+      "s3.bucket.no_https_policy"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.1.5",
+    "title": "Ensure S3 buckets are configured with Block Public Access",
+    "description": "Amazon S3 Block Public Access provides controls to ensure that S3 resources do not allow public access. Enabling all four Block Public Access settings is recommended.",
+    "guidance": "Enable BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy, and RestrictPublicBuckets on every bucket and at the account level.",
+    "checks": [
+      "s3.bucket.public_access_not_blocked"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.8",
+    "title": "Ensure rotation for customer-created symmetric CMKs is enabled",
+    "description": "AWS Key Management Service allows customers to rotate the backing key material for a customer-created customer master key. Automatic key rotation should be enabled.",
+    "guidance": "Enable annual automatic rotation on all customer-managed KMS keys. AWS-managed keys rotate automatically and are not flagged.",
+    "checks": [
+      "kms.key.no_rotation"
+    ]
+  }
+]

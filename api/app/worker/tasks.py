@@ -13,7 +13,9 @@ from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
 from app.collectors.account import collect_s3, collect_kms
 from app.core.db import SessionLocal
-from app.models import AwsAccount, ScanRun
+from app.models import AwsAccount, ScanRun, EvidenceSnapshot
+from app.models.iam import IamUser, IamAccessKey, IamRole
+from app.models.resources import S3Bucket, KmsKey
 from app.models.org import Org
 from app.worker.celery_app import celery_app
 
@@ -27,6 +29,109 @@ _COLLECTOR_FOR_CHECK = {
 _CHECK_BY_ID = {mod.CHECK_ID: mod for mod in ALL_CHECKS}
 
 log = structlog.get_logger()
+
+
+def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
+    """Snapshot all collected entities for this scan run into evidence_snapshots."""
+    snaps = []
+
+    # IAM users
+    for u in db.scalars(select(IamUser).where(IamUser.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="iam_user",
+            entity_id=u.arn,
+            payload_json={
+                "username": u.username,
+                "arn": u.arn,
+                "has_console_password": u.has_console_password,
+                "mfa_active": u.mfa_active,
+                "last_used_at": u.last_used_at.isoformat() if u.last_used_at else None,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+            },
+        ))
+
+    # IAM access keys
+    for k in db.scalars(select(IamAccessKey).where(IamAccessKey.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="iam_access_key",
+            entity_id=k.access_key_id,
+            payload_json={
+                "access_key_id": k.access_key_id,
+                "username": k.username,
+                "status": k.status,
+                "created_at": k.created_at.isoformat() if k.created_at else None,
+                "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+            },
+        ))
+
+    # IAM roles
+    for r in db.scalars(select(IamRole).where(IamRole.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="iam_role",
+            entity_id=r.arn,
+            payload_json={
+                "role_name": r.role_name,
+                "arn": r.arn,
+                "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "trust_policy": r.trust_policy,
+            },
+        ))
+
+    # S3 buckets
+    for b in db.scalars(select(S3Bucket).where(S3Bucket.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="s3_bucket",
+            entity_id=b.arn,
+            payload_json={
+                "name": b.name,
+                "arn": b.arn,
+                "logging_enabled": b.logging_enabled,
+                "encrypted": b.encrypted,
+                "kms_encrypted": b.kms_encrypted,
+                "versioning_enabled": b.versioning_enabled,
+                "public_access_blocked": b.public_access_blocked,
+                "https_only": b.https_only,
+            },
+        ))
+
+    # KMS keys
+    for k in db.scalars(select(KmsKey).where(KmsKey.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="kms_key",
+            entity_id=k.arn,
+            payload_json={
+                "key_id": k.key_id,
+                "arn": k.arn,
+                "alias": k.alias,
+                "rotation_enabled": k.rotation_enabled,
+                "key_state": k.key_state,
+                "has_wildcard_principal": k.has_wildcard_principal,
+            },
+        ))
+
+    db.add_all(snaps)
+    return len(snaps)
 
 
 @celery_app.task(name="app.worker.tasks.run_scan")
@@ -64,19 +169,20 @@ def run_scan(account_id: str) -> dict:
             check_ids_run=check_ids_run,
         )
 
+        snap_count = _write_evidence_snapshots(db, acc, run)
+
         run.status = "ok"
         run.finished_at = datetime.now(timezone.utc)
-        run.stats = stats | {"checks_run": list(check_ids_run), "drafts": len(drafts)}
+        run.stats = stats | {"checks_run": list(check_ids_run), "drafts": len(drafts), "snapshots": snap_count}
         run.findings_opened = opened
         run.findings_resolved = resolved
         acc.last_scan_at = run.finished_at
         db.commit()
-        log.info("scan.complete", account_id=str(acc.id), opened=opened, resolved=resolved)
+        log.info("scan.complete", account_id=str(acc.id), opened=opened, resolved=resolved, snapshots=snap_count)
 
-        # kick off perm usage collection in background — doesn't block findings
         collect_perm_usage_task.delay(account_id)
 
-        return {"ok": True, "opened": opened, "resolved": resolved}
+        return {"ok": True, "opened": opened, "resolved": resolved, "snapshots": snap_count}
     except Exception as e:  # noqa: BLE001
         db.rollback()
         run.status = "error"
@@ -100,7 +206,6 @@ def collect_perm_usage_task(account_id: str) -> dict:
 
         count = collect_perm_usage(db, acc)
 
-        # re-run only the unused_services check and persist delta
         drafts = role_unused_services.run(db, acc.id)
         if drafts:
             persist_findings(

@@ -10,6 +10,7 @@ import AuthCallback from "./pages/AuthCallback";
 import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import Controls from "./pages/Controls";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/account" element={<Account />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/controls" element={<Controls />} />
           </Route>
         </Routes>
       </BrowserRouter>
