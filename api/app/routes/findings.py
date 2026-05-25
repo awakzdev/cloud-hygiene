@@ -1,9 +1,10 @@
+import base64
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -27,6 +28,22 @@ class FindingOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class FindingPage(BaseModel):
+    items: list[FindingOut]
+    total: int
+    next_cursor: str | None
+
+
+def _encode_cursor(risk_score: int, id: uuid.UUID) -> str:
+    return base64.urlsafe_b64encode(f"{risk_score}:{id}".encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> tuple[int, uuid.UUID]:
+    raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+    score_s, id_s = raw.split(":", 1)
+    return int(score_s), uuid.UUID(id_s)
 
 
 class SnoozeIn(BaseModel):
@@ -53,24 +70,44 @@ def _to_out(f: Finding) -> FindingOut:
     )
 
 
-@router.get("", response_model=list[FindingOut])
+@router.get("", response_model=FindingPage)
 def list_findings(
     status_filter: str | None = Query(default="open", alias="status"),
     severity: str | None = None,
     check_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    cursor: str | None = Query(default=None),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    q = select(Finding).where(Finding.org_id == uuid.UUID(p["org_id"]))
+    org_id = uuid.UUID(p["org_id"])
+    base_q = select(Finding).where(Finding.org_id == org_id)
     if status_filter and status_filter != "all":
-        q = q.where(Finding.status == status_filter)
+        base_q = base_q.where(Finding.status == status_filter)
     if severity:
-        q = q.where(Finding.severity == severity)
+        base_q = base_q.where(Finding.severity == severity)
     if check_id:
-        q = q.where(Finding.check_id == check_id)
-    q = q.order_by(Finding.risk_score.desc(), Finding.first_seen.desc())
-    rows = db.scalars(q).all()
-    return [_to_out(f) for f in rows]
+        base_q = base_q.where(Finding.check_id == check_id)
+
+    total = db.scalar(select(func.count()).select_from(base_q.subquery()))
+
+    q = base_q.order_by(Finding.risk_score.desc(), Finding.id.desc())
+    if cursor:
+        try:
+            cur_score, cur_id = _decode_cursor(cursor)
+            q = q.where(
+                (Finding.risk_score < cur_score)
+                | ((Finding.risk_score == cur_score) & (Finding.id < cur_id))
+            )
+        except Exception:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid cursor")
+
+    rows = db.scalars(q.limit(limit + 1)).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    next_cursor = _encode_cursor(items[-1].risk_score, items[-1].id) if has_more and items else None
+
+    return FindingPage(items=[_to_out(f) for f in items], total=total, next_cursor=next_cursor)
 
 
 def _get_owned(db: Session, p, finding_id: str) -> Finding:

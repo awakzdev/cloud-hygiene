@@ -73,13 +73,13 @@ AWS control-plane APIs, reachable via public HTTPS.
 ## P0 — blockers to first paying customer (in order)
 
 - [ ] **Throwaway AWS sandbox** with seeded junk (inactive users, old keys, no-MFA users, wildcard policy, unassumed roles)
-- [ ] **Encrypt `role_arn` + `external_id` at rest** (pgcrypto)
+- [x] **Encrypt `role_arn` + `external_id` at rest** (Fernet/AES-128-CBC, migration 0008)
 - [ ] **End-to-end test**: signup → CFN → verify → scan → findings populated
-- [ ] **Tighten CFN IAM** — drop `SecurityAudit` + `ViewOnlyAccess`, enumerate exact actions
+- [x] **Tighten CFN IAM** — drop `SecurityAudit` + `ViewOnlyAccess`, enumerate exact actions
 - [x] **Scan progress UI** — poll `GET /v1/accounts/:id/scan-runs`, surface errors
 - [ ] **Pagination on `/v1/findings`** (cursor + limit)
 - [x] **CSV export** (`GET /v1/exports/findings.csv`)
-- [ ] **pytest skeleton** — botocore Stubber for collectors, unit tests for checks
+- [x] **pytest skeleton** — botocore Stubber for collectors, unit tests for checks (16 passing)
 - [ ] **Hetzner deploy** — domain, Caddy auto-TLS, nightly pg_dump → B2
 
 ---

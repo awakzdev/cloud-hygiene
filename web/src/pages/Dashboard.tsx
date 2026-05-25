@@ -6,6 +6,8 @@ type Finding = {
   id: string; severity: string; status: string; risk_score: number;
   check_id: string; title: string; resource_arn: string; first_seen: string;
 };
+
+type FindingPage = { items: Finding[]; total: number; next_cursor: string | null };
 type ScanRun = { id: string; status: string; started_at: string; finished_at: string | null; error: string | null };
 
 const checkLabels: Record<string, string> = {
@@ -79,7 +81,7 @@ function scoreLabel(s: number) {
 
 export default function Dashboard() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
-  const findings = useQuery({ queryKey: ["dashboard-findings"], queryFn: () => api<Finding[]>("/v1/findings?status=open") });
+  const findings = useQuery({ queryKey: ["dashboard-findings"], queryFn: () => api<FindingPage>("/v1/findings?status=open&limit=500") });
 
   const connectedAccount = accounts.data?.find((a) => a.status === "connected");
 
@@ -92,7 +94,7 @@ export default function Dashboard() {
     enabled: !!connectedAccount,
   });
 
-  const rows = findings.data ?? [];
+  const rows = findings.data?.items ?? [];
   const isLoading = findings.isLoading || accounts.isLoading;
 
   const critHigh = rows.filter((f) => f.severity === "critical" || f.severity === "high").length;

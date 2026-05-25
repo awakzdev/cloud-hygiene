@@ -16,6 +16,12 @@ type Finding = {
   last_seen: string;
 };
 
+type FindingPage = {
+  items: Finding[];
+  total: number;
+  next_cursor: string | null;
+};
+
 type Account = { id: string; status: string };
 
 const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups";
@@ -165,7 +171,7 @@ export default function Findings() {
 
   const q = useQuery({
     queryKey: ["findings", status],
-    queryFn: () => api<Finding[]>(`/v1/findings?status=${status}`),
+    queryFn: () => api<FindingPage>(`/v1/findings?status=${status}&limit=500`),
     refetchInterval: verifying ? 3000 : false,
   });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
@@ -198,7 +204,7 @@ export default function Findings() {
 
   useEffect(() => {
     if (!selected || !q.data || drawerResolved) return;
-    const still = q.data.find((f) => f.id === selected.id);
+    const still = q.data.items.find((f) => f.id === selected.id);
     if (!still) { setDrawerResolved(true); setVerifying(false); }
   }, [q.data, selected, drawerResolved]);
 
@@ -223,7 +229,7 @@ export default function Findings() {
     },
   });
 
-  const findings = q.data ?? [];
+  const findings = q.data?.items ?? [];
   const totals = useMemo(() => {
     const t = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
     for (const f of findings) {
