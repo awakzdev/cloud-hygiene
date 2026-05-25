@@ -96,6 +96,11 @@ class TestCollectIam:
             "list_roles",
             {"Roles": [], "IsTruncated": False},
         )
+        # get_account_password_policy -> NoSuchEntity means default/no explicit policy
+        stub.add_client_error(
+            "get_account_password_policy",
+            service_error_code="NoSuchEntity",
+        )
 
         stub.activate()
 
@@ -127,6 +132,10 @@ class TestCollectIam:
         stub.add_response(
             "list_roles",
             {"Roles": [], "IsTruncated": False},
+        )
+        stub.add_client_error(
+            "get_account_password_policy",
+            service_error_code="NoSuchEntity",
         )
         stub.activate()
 

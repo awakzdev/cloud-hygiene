@@ -15,6 +15,7 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.iam import IamAccessKey, IamUser
+from app.models.resources import Ec2Instance, SecurityGroup
 from app.models.org import Org
 
 router = APIRouter()
@@ -57,11 +58,6 @@ def _launch_url(external_id: str) -> str:
 def create_account(body: AccountIn, p=Depends(current_principal), db: Session = Depends(get_db)):
     if not db.get(Org, uuid.UUID(p["org_id"])):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expired — please sign in again")
-    # MVP: one account per org
-    existing = db.scalar(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"])))
-    if existing:
-        raise HTTPException(status.HTTP_409_CONFLICT, "account already exists for this org")
-
     ext = secrets.token_urlsafe(24)
     acc = AwsAccount(
         id=uuid.uuid4(),
@@ -126,6 +122,15 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
         external_id=acc.external_id,
         cfn_launch_url=_launch_url(acc.external_id),
     )
+
+
+@router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(account_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    db.delete(acc)
+    db.commit()
 
 
 @router.post("/{account_id}/scan")
@@ -485,6 +490,60 @@ def blast_radius(
             "days_inactive": days_inactive,
             "active_key_count": len(active_keys),
             "keys": key_summary,
+            "warnings": warnings,
+        }
+
+    # ── EC2 Security Group ───────────────────────────────────────────────────
+    if check_id.startswith("ec2.security_group."):
+        # resource_arn: arn:aws:ec2:{region}:{account}:security-group/{group_id}
+        group_id = resource_arn.split("/")[-1] if "/" in resource_arn else None
+        sg = db.scalar(
+            select(SecurityGroup).where(
+                SecurityGroup.account_id == acc.id,
+                SecurityGroup.group_id == group_id,
+            )
+        ) if group_id else None
+
+        if not sg:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "security group not found — run a scan first")
+
+        # Find instances with this SG attached
+        all_instances = db.scalars(
+            select(Ec2Instance).where(Ec2Instance.account_id == acc.id, Ec2Instance.region == sg.region)
+        ).all()
+        affected = [i for i in all_instances if sg.group_id in (i.security_group_ids or [])]
+
+        instance_data = [
+            {
+                "instance_id": i.instance_id,
+                "instance_type": i.instance_type,
+                "state": i.state,
+                "vpc_id": i.vpc_id,
+                "name": (i.tags or {}).get("Name", i.instance_id),
+            }
+            for i in affected
+        ]
+
+        running = [i for i in affected if i.state == "running"]
+        confidence = "high" if not running else ("low" if len(running) > 3 else "medium")
+
+        warnings = []
+        if running:
+            warnings.append(f"{len(running)} running instance(s) currently exposed via this security group rule")
+        if sg.is_default:
+            warnings.append("This is the default security group — removing rules may affect all instances in the VPC that use defaults")
+
+        return {
+            "resource_type": "security_group",
+            "confidence": confidence,
+            "group_id": sg.group_id,
+            "group_name": sg.group_name,
+            "vpc_id": sg.vpc_id,
+            "region": sg.region,
+            "is_default": sg.is_default,
+            "affected_instances": instance_data,
+            "running_count": len(running),
+            "total_count": len(affected),
             "warnings": warnings,
         }
 

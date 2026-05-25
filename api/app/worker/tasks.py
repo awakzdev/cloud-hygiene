@@ -16,6 +16,9 @@ from app.collectors.cloudtrail import collect_cloudtrail
 from app.collectors.guardduty import collect_guardduty
 from app.collectors.vpc import collect_vpc
 from app.collectors.rds import collect_rds
+from app.collectors.ec2 import collect_ec2
+from app.collectors.access_analyzer import collect_access_analyzer
+from app.collectors.config_service import collect_config_service
 from app.core.db import SessionLocal
 from app.models import AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
@@ -24,14 +27,19 @@ from app.models.org import Org, User
 from app.worker.celery_app import celery_app
 
 # maps check_id prefix → collector function(db, acc)
+# More-specific prefixes must come before less-specific ones
 _COLLECTOR_FOR_CHECK = {
     "iam.": lambda db, acc: collect_iam(db, acc),
     "s3.": lambda db, acc: collect_s3(db, acc),
     "kms.": lambda db, acc: collect_kms(db, acc),
     "cloudtrail.": lambda db, acc: collect_cloudtrail(db, acc),
     "guardduty.": lambda db, acc: collect_guardduty(db, acc),
+    "aws.access_analyzer.": lambda db, acc: collect_access_analyzer(db, acc),
+    "aws.config.": lambda db, acc: collect_config_service(db, acc),
     "vpc.": lambda db, acc: collect_vpc(db, acc),
-    "ec2.": lambda db, acc: collect_vpc(db, acc),
+    "ec2.security_group.": lambda db, acc: collect_vpc(db, acc),
+    "ec2.instance.": lambda db, acc: collect_ec2(db, acc),
+    "ec2.ebs.": lambda db, acc: collect_ec2(db, acc),
     "rds.": lambda db, acc: collect_rds(db, acc),
 }
 
@@ -164,6 +172,11 @@ def run_scan(account_id: str) -> dict:
         stats["security_groups"] = vpc_stats.get("security_groups", 0)
         stats["guardduty_detectors"] = collect_guardduty(db, acc)
         stats["rds_instances"] = collect_rds(db, acc)
+        ec2_stats = collect_ec2(db, acc)
+        stats["ec2_instances"] = ec2_stats.get("instances", 0)
+        stats["ebs_regions"] = ec2_stats.get("ebs_regions", 0)
+        stats["access_analyzers"] = collect_access_analyzer(db, acc)
+        stats["config_regions"] = collect_config_service(db, acc)
 
         org_obj = db.get(Org, acc.org_id)
         check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}

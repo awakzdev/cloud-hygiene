@@ -48,6 +48,7 @@ Resources:
                   - iam:GetAccessKeyLastUsed
                   - iam:GetAccountSummary
                   - iam:ListAccountAliases
+                  - iam:GetAccountPasswordPolicy
                 Resource: "*"
 
               - Sid: IamRoleEnumeration
@@ -110,6 +111,27 @@ Resources:
                   - ec2:DescribeVpcs
                   - ec2:DescribeFlowLogs
                   - ec2:DescribeSecurityGroups
+                Resource: "*"
+
+              - Sid: Ec2InstanceEnumeration
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:GetEbsEncryptionByDefault
+                Resource: "*"
+
+              - Sid: AccessAnalyzerConfiguration
+                Effect: Allow
+                Action:
+                  - access-analyzer:ListAnalyzers
+                Resource: "*"
+
+              - Sid: ConfigServiceConfiguration
+                Effect: Allow
+                Action:
+                  - config:DescribeConfigurationRecorders
+                  - config:DescribeConfigurationRecorderStatus
+                  - config:DescribeDeliveryChannels
                 Resource: "*"
 
               - Sid: RdsConfiguration

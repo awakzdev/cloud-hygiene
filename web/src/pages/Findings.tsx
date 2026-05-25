@@ -34,12 +34,29 @@ const sevBadge: Record<string, string> = {
   low: "border-zinc-200 bg-zinc-50 text-zinc-500",
 };
 
+const sevAccent: Record<string, string> = {
+  critical: "border-l-2 border-l-red-300/70",
+  high: "border-l-2 border-l-red-200/80",
+  medium: "border-l-2 border-l-amber-300/60",
+  low: "border-l-2 border-l-zinc-200/80",
+};
+
+const sevExpandedBg: Record<string, string> = {
+  critical: "bg-red-50/[0.18]",
+  high: "bg-red-50/[0.12]",
+  medium: "bg-amber-50/[0.18]",
+  low: "bg-zinc-50/40",
+};
+
 const sevWeight: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
 
 const checkLabels: Record<string, string> = {
   // IAM root
   "iam.root.has_access_keys": "Root has access keys",
   "iam.root.no_mfa": "Root MFA not enabled",
+  // IAM account
+  "iam.account.password_policy_weak": "Weak password policy",
   // IAM users
   "iam.user.no_mfa": "MFA not enabled",
   "iam.user.inactive_90d": "Inactive user",
@@ -64,11 +81,19 @@ const checkLabels: Record<string, string> = {
   "cloudtrail.trail.no_log_validation": "Log file validation disabled",
   // GuardDuty
   "guardduty.detector.not_enabled": "GuardDuty not enabled",
+  // Access Analyzer
+  "aws.access_analyzer.not_enabled": "IAM Access Analyzer not enabled",
+  // AWS Config
+  "aws.config.not_enabled": "AWS Config not enabled",
   // VPC
   "vpc.flow_logs.not_enabled": "VPC flow logs disabled",
   // Security Groups
   "ec2.security_group.unrestricted_ssh": "Unrestricted SSH",
   "ec2.security_group.unrestricted_rdp": "Unrestricted RDP",
+  "ec2.security_group.default_allows_traffic": "Default security group has rules",
+  // EC2
+  "ec2.instance.imdsv2_not_required": "IMDSv2 not required",
+  "ec2.ebs.encryption_not_default": "EBS encryption not default",
   // RDS
   "rds.instance.publicly_accessible": "RDS publicly accessible",
   "rds.instance.no_encryption": "RDS storage not encrypted",
@@ -77,6 +102,7 @@ const checkLabels: Record<string, string> = {
 const checkDescriptions: Record<string, string> = {
   "iam.root.has_access_keys": "Root account access keys are permanent credentials — delete them.",
   "iam.root.no_mfa": "Root account without MFA can be compromised with credentials alone.",
+  "iam.account.password_policy_weak": "Strengthen the account password policy to enforce complexity and rotation.",
   "iam.user.no_mfa": "Require MFA for interactive IAM users.",
   "iam.user.inactive_90d": "Disable or remove dormant IAM users.",
   "iam.access_key.unused_90d": "Deactivate stale access keys, then delete after validation.",
@@ -94,9 +120,14 @@ const checkDescriptions: Record<string, string> = {
   "cloudtrail.trail.not_enabled": "Enable CloudTrail with multi-region logging to capture all API activity.",
   "cloudtrail.trail.no_log_validation": "Enable log file integrity validation to detect log tampering.",
   "guardduty.detector.not_enabled": "Enable GuardDuty to detect threats, anomalies, and unauthorized activity.",
+  "aws.access_analyzer.not_enabled": "Enable IAM Access Analyzer to surface over-permissive cross-account access.",
+  "aws.config.not_enabled": "Enable AWS Config to maintain a continuous configuration change history.",
   "vpc.flow_logs.not_enabled": "Enable VPC flow logs for network-level visibility and forensics.",
   "ec2.security_group.unrestricted_ssh": "Remove 0.0.0.0/0 ingress on port 22 — use Systems Manager Session Manager instead.",
   "ec2.security_group.unrestricted_rdp": "Remove 0.0.0.0/0 ingress on port 3389 — use Fleet Manager for RDP access.",
+  "ec2.security_group.default_allows_traffic": "Default security groups should have no rules — move traffic to named groups.",
+  "ec2.instance.imdsv2_not_required": "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata.",
+  "ec2.ebs.encryption_not_default": "Enable default EBS encryption so all new volumes are encrypted at creation.",
   "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
   "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
 };
@@ -118,12 +149,20 @@ function loadCollapsedGroups(): Record<string, boolean> {
 }
 
 function resourceName(arn: string): string {
-  const tail = arn.split(":").pop() ?? arn;
+  // For region-scoped ARNs with no resource ID (e.g. guardduty detector, vpc flow logs),
+  // surface the region instead of an empty/generic segment
+  const parts = arn.split(":");
+  const region = parts[3] ?? "";
+  const tail = parts.pop() ?? arn;
   const [, rest = tail] = tail.split(/\/(.+)/);
   const [name, suffix] = rest.split("#");
-  if (!suffix) return name || rest;
+  const label = name || rest;
+  // If the label is just the service type with no meaningful ID, show the region
+  const generic = ["detector", "trail", "vpc", "flow-log", "security-group"].includes(label);
+  if (generic && region) return region;
+  if (!suffix) return label;
   const masked = suffix.length > 12 ? `${suffix.slice(0, 4)}…${suffix.slice(-4)}` : suffix;
-  return `${name} · ${masked}`;
+  return `${label} · ${masked}`;
 }
 
 function daysAgo(iso: string): string {
@@ -514,10 +553,10 @@ export default function Findings() {
   const pctOf = (n: number) => totals.open === 0 ? "—" : `${Math.round((n / totals.open) * 100)}% of open`;
   const chTotal = totals.critical + totals.high;
   const summaryCards = [
-    { key: "all" as SeverityFilter, label: "Open", value: totals.open, tone: "text-zinc-900", hint: `${chTotal} crit/high · ${totals.medium} medium · ${totals.low} low`, dot: "bg-zinc-400" },
-    { key: "critical_high" as SeverityFilter, label: "Critical / High", value: chTotal, tone: "text-red-600", hint: pctOf(chTotal), dot: "bg-red-500" },
-    { key: "medium" as SeverityFilter, label: "Medium", value: totals.medium, tone: "text-amber-600", hint: pctOf(totals.medium), dot: "bg-amber-500" },
-    { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-500", hint: pctOf(totals.low), dot: "bg-zinc-300" },
+    { key: "all" as SeverityFilter, label: "Open", value: totals.open, tone: "text-zinc-900", hint: `${chTotal} crit/high · ${totals.medium} med · ${totals.low} low`, dot: "bg-zinc-400", glow: "" },
+    { key: "critical_high" as SeverityFilter, label: "Critical · High", value: chTotal, tone: "text-red-600", hint: pctOf(chTotal), dot: "bg-red-500", glow: "bg-gradient-to-br from-red-50/60 to-white" },
+    { key: "medium" as SeverityFilter, label: "Medium", value: totals.medium, tone: "text-amber-600", hint: pctOf(totals.medium), dot: "bg-amber-500", glow: "bg-gradient-to-br from-amber-50/50 to-white" },
+    { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-600", hint: pctOf(totals.low), dot: "bg-zinc-300", glow: "" },
   ];
 
   if (!accounts.isLoading && accounts.data && !connectedId) {
@@ -569,7 +608,20 @@ export default function Findings() {
       {scanStatus === "error" && scanRun.data?.error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span className="font-semibold">Last scan failed:</span> {scanRun.data.error}</div>}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {summaryCards.map((card) => <button key={card.key} onClick={() => setSeverityFilter(card.key)} className={`group relative overflow-hidden rounded-2xl border bg-white px-5 py-4 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md ${severityFilter === card.key ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]" : "border-zinc-200"}`}><div className="mb-2 flex items-center justify-between"><span className="text-[11px] font-bold uppercase tracking-[0.18em] text-zinc-400">{card.label}</span><span className={`h-2 w-2 rounded-full ${card.dot}`} /></div><div className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div><div className="mt-2 text-xs text-zinc-400 tabular-nums">{card.hint}</div></button>)}
+        {summaryCards.map((card) => (
+          <button
+            key={card.key}
+            onClick={() => setSeverityFilter(card.key)}
+            className={`group relative overflow-hidden rounded-2xl border px-5 py-4 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md ${card.glow || "bg-white"} ${severityFilter === card.key ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]" : "border-zinc-200"}`}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{card.label}</span>
+              <span className={`h-2 w-2 rounded-full ${card.dot}`} />
+            </div>
+            <div className={`text-[2.75rem] font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div>
+            <div className="mt-2.5 text-xs font-medium text-zinc-500 tabular-nums">{card.hint}</div>
+          </button>
+        ))}
       </div>
 
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -583,14 +635,91 @@ export default function Findings() {
       {q.isLoading && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">Loading…</div>}
       {!q.isLoading && rows.length === 0 && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center"><p className="text-sm font-semibold text-zinc-700">No {status} findings</p><p className="mt-1 text-sm text-zinc-400">{status === "open" ? "Run a scan to check your account for IAM issues." : "Nothing to show here."}</p></div>}
 
-      {rows.length > 0 && <div className="space-y-3 pb-8">{(grouped ?? [["all", rows] as [string, Finding[]]]).map(([key, items]) => {
-        const isGrouped = grouped !== null;
-        const sev = items[0]?.severity ?? "low";
-        const label = checkLabels[key] ?? key;
-        const description = checkDescriptions[key];
-        const isCollapsed = !!collapsed[key];
-        return <div key={key} className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04] transition-all hover:border-zinc-300 hover:shadow-md">{isGrouped && <button type="button" onClick={() => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))} className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_72px_72px] items-center gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50 to-white px-5 py-4 text-left"><svg className={`h-4 w-4 text-zinc-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg><span className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[sev] ?? sevBadge.low}`}>{sev}</span><div className="min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-bold text-zinc-950">{label}</span><span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-500">{items.length}</span></div>{description && <p className="mt-1 truncate text-sm text-zinc-500">{description}</p>}</div><span className="hidden text-center text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Score</span><span className="hidden text-center text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400 md:block">Age</span></button>}{!isCollapsed && <div className="divide-y divide-zinc-100">{items.map((f) => <div key={f.id} onClick={() => setSelected(f)} className="group grid cursor-pointer grid-cols-[minmax(0,1fr)_72px_72px] items-center gap-3 px-5 py-4 transition-colors hover:bg-zinc-50"><div className="min-w-0"><div className="truncate text-sm font-semibold text-zinc-900">{resourceName(f.resource_arn)}</div>{!isGrouped && description && <p className="mt-1.5 truncate text-sm text-zinc-500">{description}</p>}</div><div className="flex justify-center"><span className="inline-flex min-w-10 justify-center rounded-full bg-zinc-100 px-2 py-1 text-sm font-bold tabular-nums text-zinc-800">{f.risk_score}</span></div><div className="text-center"><span className="text-sm tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span></div></div>)}</div>}</div>;
-      })}</div>}
+      {rows.length > 0 && (
+        <div className="space-y-2.5 pb-8">
+          {(grouped ?? [["all", rows] as [string, Finding[]]]).map(([key, items]) => {
+            const isGrouped = grouped !== null;
+            const sev = items[0]?.severity ?? "low";
+            const label = checkLabels[key] ?? key;
+            const description = checkDescriptions[key];
+            const isCollapsed = !!collapsed[key];
+            return (
+              <div
+                key={key}
+                className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04] transition-shadow hover:border-zinc-300 hover:shadow-md"
+              >
+                {isGrouped && (
+                  <button
+                    type="button"
+                    onClick={() => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))}
+                    className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_56px_56px] items-center gap-3 bg-gradient-to-r from-zinc-50/80 to-white px-5 py-3.5 text-left transition-colors hover:from-zinc-100/60"
+                  >
+                    <svg
+                      className={`h-3.5 w-3.5 text-zinc-400 transition-transform duration-150 ${isCollapsed ? "-rotate-90" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${sevBadge[sev] ?? sevBadge.low}`}>
+                      {sev}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-zinc-900">{label}</span>
+                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-500">
+                          {items.length}
+                        </span>
+                      </div>
+                      {description && (
+                        <p className="mt-0.5 truncate text-xs text-zinc-400">{description}</p>
+                      )}
+                    </div>
+                    <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Score</span>
+                    <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Age</span>
+                  </button>
+                )}
+
+                {/* Animated accordion — CSS grid-template-rows transition */}
+                <div
+                  className="grid transition-[grid-template-rows] duration-[140ms] ease-out"
+                  style={{ gridTemplateRows: isCollapsed ? "0fr" : "1fr" }}
+                >
+                  <div className="overflow-hidden">
+                    <div className={`divide-y divide-zinc-100 ${isGrouped ? `border-t border-zinc-100 ${sevExpandedBg[sev] ?? sevExpandedBg.low} ${sevAccent[sev] ?? ""}` : ""}`}>
+                      {items.map((f) => (
+                        <div
+                          key={f.id}
+                          onClick={() => setSelected(f)}
+                          className={`group grid cursor-pointer grid-cols-[minmax(0,1fr)_56px_56px] items-center gap-3 py-2.5 pr-5 transition-colors hover:bg-white ${isGrouped ? "pl-10" : "pl-5"}`}
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-zinc-600 transition-colors group-hover:text-zinc-900">
+                              {resourceName(f.resource_arn)}
+                            </div>
+                            {!isGrouped && description && (
+                              <p className="mt-0.5 truncate text-xs text-zinc-600">{description}</p>
+                            )}
+                          </div>
+                          <div className="flex justify-center">
+                            <span className="text-xs font-semibold tabular-nums text-zinc-700 transition-colors group-hover:text-zinc-900">
+                              {f.risk_score}
+                            </span>
+                          </div>
+                          <div className="text-center">
+                            <span className="text-xs tabular-nums text-zinc-600">{daysAgo(f.first_seen)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <FindingDrawer
         finding={selected}

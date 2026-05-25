@@ -5,9 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.checks.base import FindingDraft, score
 from app.models import AwsAccount
-from app.models.resources import GuardDutyDetector
+from app.models.resources import EbsEncryptionDefault
 
-CHECK_ID = "guardduty.detector.not_enabled"
+CHECK_ID = "ec2.ebs.encryption_not_default"
 
 
 def run(db: Session, account_id) -> list[FindingDraft]:
@@ -16,9 +16,9 @@ def run(db: Session, account_id) -> list[FindingDraft]:
         return []
 
     disabled = db.scalars(
-        select(GuardDutyDetector).where(
-            GuardDutyDetector.account_id == account_id,
-            GuardDutyDetector.status != "ENABLED",
+        select(EbsEncryptionDefault).where(
+            EbsEncryptionDefault.account_id == account_id,
+            EbsEncryptionDefault.enabled == False,  # noqa: E712
         )
     ).all()
 
@@ -26,15 +26,14 @@ def run(db: Session, account_id) -> list[FindingDraft]:
         return []
 
     regions = sorted(d.region for d in disabled)
-    aws_account = acc.account_id or "unknown"
 
     return [
         FindingDraft(
             check_id=CHECK_ID,
-            resource_arn=f"arn:aws:guardduty::{aws_account}:account",
-            title="GuardDuty is not enabled",
-            severity="high",
-            risk_score=score("high"),
+            resource_arn=f"arn:aws:ec2::{acc.account_id or 'unknown'}:ebs-encryption-default",
+            title="EBS encryption by default is not enabled",
+            severity="medium",
+            risk_score=score("medium"),
             evidence={
                 "disabled_regions": regions,
                 "region_count": len(regions),

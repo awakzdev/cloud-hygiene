@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-25 (session 3)_
+_Last updated: 2026-05-25 (session 4)_
 
 ---
 
@@ -65,11 +65,13 @@ _Last updated: 2026-05-25 (session 3)_
 - Finding detail drawer: 3 tabs — Overview (context + evidence), Remediation (Console + AWS CLI), What If?
 - Evidence section: scalars + object arrays rendered as tables (not raw JSON)
 - `unused_services_90d` drawer: unused service pills, removable inline policy statements, **"Generate" button** — shows cleaned vs original policy JSON
-- **What If? tab**: blast radius analysis for all IAM findings — confidence score, service usage pills (active=red/unused=gray), per-attached-policy breakdown (removable vs keep, AWS/Custom badge, detach+replace vs edit action)
+- **What If? tab**: blast radius analysis for IAM role/user/key findings — confidence score, service usage pills (active=red/unused=gray), per-attached-policy breakdown (removable vs keep, AWS/Custom badge, detach+replace vs edit action)
+- **What If? for SG findings (ec2.security_group.*): blocked on EC2 instance collector** — needs `ec2:DescribeInstances` to show which instances are exposed by the open rule. Collector not yet built. Add when EC2 collector lands (same sprint as IMDSv2 + EBS checks).
 - CLI commands auto-interpolate actual role/user/key names from the finding ARN
 - Scan status polling (5s) + auto-refresh findings on completion; Re-scan unlocks after 5 min if stuck
 - Onboarding empty state when no account connected — 3-step guide + link to AWS Accounts
 - CSV export (`GET /v1/exports/findings.csv`)
+- Update role ARN in connected state (expandable panel, reuses verify mutation)
 
 ### Notifications
 - Weekly email digest via Resend (Celery beat, Monday 9am UTC)
@@ -118,13 +120,32 @@ AWS control-plane APIs, reachable via public HTTPS.
 
 - [ ] **Throwaway AWS sandbox** with seeded junk (inactive users, old keys, no-MFA users, wildcard policy, unassumed roles)
 - [x] **Encrypt `role_arn` + `external_id` at rest** (Fernet/AES-128-CBC, migration 0008)
-- [ ] **End-to-end test**: signup → CFN → verify → scan → findings populated
+- [ ] **End-to-end test**: signup → CFN → verify → scan → findings populated (needs sandbox above)
 - [x] **Tighten CFN IAM** — drop `SecurityAudit` + `ViewOnlyAccess`, enumerate exact actions
 - [x] **Scan progress UI** — poll `GET /v1/accounts/:id/scan-runs`, surface errors
 - [x] **Pagination on `/v1/findings`** (cursor + limit, migration 0009 composite index)
 - [x] **CSV export** (`GET /v1/exports/findings.csv`)
 - [x] **pytest skeleton** — botocore Stubber for collectors, unit tests for checks (16 passing)
 - [ ] **Hetzner deploy** — domain, Caddy auto-TLS, nightly pg_dump → B2
+
+## Next unblocked work
+
+**EC2 instance collector** (single sprint, unlocks 3 things):
+- `ec2:DescribeInstances` → store instance id, type, region, vpc, subnet, state, imdsv2 setting, ebs volumes
+- Unlocks: `ec2.instance.imdsv2_not_required` check
+- Unlocks: `ec2.ebs.encryption_by_default` check
+- Unlocks: **SG What If tab** — show which instances are exposed by the open SSH/RDP rule
+
+**Remaining CIS L1 checks (no new collector needed):**
+- `iam.password_policy.*` — min length 14, reuse prevention (uses existing IAM collector)
+- `ec2.security_group.default_allows_traffic` — default SG has no inbound/outbound rules
+- `aws.access_analyzer.not_enabled` — Access Analyzer per region (needs small collector)
+- `aws.config.not_enabled` — Config recorder + delivery channel per region (needs small collector)
+
+**ISO 27001 A.9/A.12 mapping** — 5 min job, just `control_mappings.json` additions, no new checks:
+- A.9.2 (user access management) → IAM user/role checks
+- A.9.4 (system/application access) → MFA checks
+- A.12.4 (logging/monitoring) → CloudTrail + GuardDuty + VPC flow log checks
 
 ---
 
@@ -438,6 +459,15 @@ even with only 6 checks. The evidence layer is the moat. ← ACHIEVED
 Delivered session 3 (2026-05-25). 8 new checks, 5 new collectors, multi-region
 scanning, rate limiting, password policy, What If? blast radius with attached
 policy analysis, onboarding empty state.
+
+**Session 4 additions (2026-05-25):**
+- control_mappings.json: CC6.6 + CC6.8 duplicate entries merged (checks now unified per control)
+- Snooze UI: `POST /v1/findings/:id/snooze` wired with 7/30/90d dropdown
+- Re-verify (update role ARN) panel on connected Accounts page
+- FindingDrawer typography cleanup: no more uppercase tracking labels, ARN in code container, segmented tab control, unified type scale throughout
+- GuardDuty finding consolidated to 1 per account (was 1 per region = 18 findings for a fresh account); `disabled_regions` list in evidence
+- Policy name tooltip in What If attached policy rows
+- Blast radius: overlap fix for Custom badge + action label
 
 **Still open from Phase 2 original scope:**
 

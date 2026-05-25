@@ -37,15 +37,18 @@
   {
     "framework": "soc2",
     "control_id": "CC6.6",
-    "title": "Logical Access — Least Privilege and MFA",
-    "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries, including multi-factor authentication for all users with console access.",
-    "guidance": "Evidence: MFA enabled for root and all IAM console users. No wildcard Action in role policies. No wildcard trust principals. S3 public access blocked.",
+    "title": "Logical Access — External Threat Controls",
+    "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries, including MFA enforcement, least privilege, and network perimeter controls.",
+    "guidance": "Evidence: MFA enabled for root and all IAM console users. No wildcard Action in role policies. No wildcard trust principals. S3 public access blocked. No security groups allow unrestricted SSH or RDP. RDS instances are not publicly accessible.",
     "checks": [
       "iam.root.no_mfa",
       "iam.user.no_mfa",
       "iam.role.wildcard_action",
       "iam.role.trust_wildcard",
-      "s3.bucket.public_access_not_blocked"
+      "s3.bucket.public_access_not_blocked",
+      "ec2.security_group.unrestricted_ssh",
+      "ec2.security_group.unrestricted_rdp",
+      "rds.instance.publicly_accessible"
     ]
   },
   {
@@ -62,11 +65,12 @@
     "framework": "soc2",
     "control_id": "CC6.8",
     "title": "Logical Access — Encryption at Rest",
-    "description": "The entity implements controls to prevent or detect and act upon the introduction of unauthorized or malicious software to meet the entity's objectives.",
-    "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled.",
+    "description": "The entity implements controls to prevent unauthorized access to data at rest through encryption of storage resources.",
+    "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled. RDS instances have storage encryption enabled.",
     "checks": [
       "s3.bucket.no_kms",
-      "kms.key.no_rotation"
+      "kms.key.no_rotation",
+      "rds.instance.no_encryption"
     ]
   },
   {
@@ -230,26 +234,4 @@
       "rds.instance.publicly_accessible"
     ]
   },
-  {
-    "framework": "soc2",
-    "control_id": "CC6.6",
-    "title": "Logical Access — Network Perimeter Controls",
-    "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries.",
-    "guidance": "Evidence: No security groups allow unrestricted SSH or RDP from the internet. RDS instances are not publicly accessible.",
-    "checks": [
-      "ec2.security_group.unrestricted_ssh",
-      "ec2.security_group.unrestricted_rdp",
-      "rds.instance.publicly_accessible"
-    ]
-  },
-  {
-    "framework": "soc2",
-    "control_id": "CC6.8",
-    "title": "Logical Access — Encryption at Rest (Database)",
-    "description": "The entity implements controls to prevent unauthorized access to data at rest.",
-    "guidance": "Evidence: All RDS instances have storage encryption enabled.",
-    "checks": [
-      "rds.instance.no_encryption"
-    ]
-  }
 ]

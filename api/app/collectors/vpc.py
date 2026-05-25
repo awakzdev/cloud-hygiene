@@ -89,24 +89,38 @@ def collect_vpc(db: Session, account: AwsAccount) -> dict:
             for page in paginator.paginate():
                 for sg in page.get("SecurityGroups", []):
                     group_id = sg["GroupId"]
+                    group_name = sg.get("GroupName", "")
                     ingress = sg.get("IpPermissions", [])
+                    egress = sg.get("IpPermissionsEgress", [])
                     unrestricted_ssh = _is_unrestricted(ingress, 22)
                     unrestricted_rdp = _is_unrestricted(ingress, 3389)
+                    is_default = group_name == "default"
+                    has_any_inbound_rules = len(ingress) > 0
+                    has_any_outbound_rules = len(egress) > 0
+                    vpc_id = sg.get("VpcId")
 
                     stmt = pg_insert(SecurityGroup).values(
                         id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{region}:{group_id}"),
                         account_id=account.id,
                         group_id=group_id,
-                        group_name=sg.get("GroupName", ""),
+                        group_name=group_name,
                         region=region,
+                        vpc_id=vpc_id,
+                        is_default=is_default,
                         unrestricted_ssh=unrestricted_ssh,
                         unrestricted_rdp=unrestricted_rdp,
+                        has_any_inbound_rules=has_any_inbound_rules,
+                        has_any_outbound_rules=has_any_outbound_rules,
                         last_seen=_now(),
                     ).on_conflict_do_update(
                         index_elements=["account_id", "group_id", "region"],
                         set_={
+                            "vpc_id": vpc_id,
+                            "is_default": is_default,
                             "unrestricted_ssh": unrestricted_ssh,
                             "unrestricted_rdp": unrestricted_rdp,
+                            "has_any_inbound_rules": has_any_inbound_rules,
+                            "has_any_outbound_rules": has_any_outbound_rules,
                             "last_seen": _now(),
                         },
                     )

@@ -15,6 +15,8 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // Root
   { id: "iam.root.has_access_keys", label: "Root has access keys", severity: "critical", description: "Root account access keys are permanent credentials — delete them." },
   { id: "iam.root.no_mfa", label: "Root MFA not enabled", severity: "critical", description: "Root account without MFA can be compromised with credentials alone." },
+  // IAM account
+  { id: "iam.account.password_policy_weak", label: "Weak password policy", severity: "medium", description: "Strengthen the account password policy to enforce complexity and rotation." },
   // Users
   { id: "iam.user.no_mfa", label: "MFA not enabled", severity: "high", description: "Require MFA for interactive IAM users." },
   { id: "iam.user.inactive_90d", label: "Inactive user", severity: "medium", description: "Disable or remove dormant IAM users." },
@@ -39,11 +41,19 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "cloudtrail.trail.no_log_validation", label: "Log file validation disabled", severity: "medium", description: "Enable log file integrity validation to detect tampering." },
   // GuardDuty
   { id: "guardduty.detector.not_enabled", label: "GuardDuty not enabled", severity: "high", description: "Enable GuardDuty to detect threats and anomalous behavior." },
+  // Access Analyzer
+  { id: "aws.access_analyzer.not_enabled", label: "IAM Access Analyzer not enabled", severity: "medium", description: "Enable IAM Access Analyzer to surface cross-account over-permissive access." },
+  // AWS Config
+  { id: "aws.config.not_enabled", label: "AWS Config not enabled", severity: "low", description: "Enable AWS Config to maintain a continuous configuration change history." },
   // VPC
   { id: "vpc.flow_logs.not_enabled", label: "VPC flow logs disabled", severity: "medium", description: "Enable flow logs on all VPCs for network visibility." },
   // Security Groups
   { id: "ec2.security_group.unrestricted_ssh", label: "Unrestricted SSH (port 22)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 22 — restrict to known IPs." },
   { id: "ec2.security_group.unrestricted_rdp", label: "Unrestricted RDP (port 3389)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 3389 — restrict to known IPs." },
+  { id: "ec2.security_group.default_allows_traffic", label: "Default SG has rules", severity: "medium", description: "Default security groups should have no rules — move traffic to named groups." },
+  // EC2
+  { id: "ec2.instance.imdsv2_not_required", label: "IMDSv2 not required", severity: "medium", description: "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata." },
+  { id: "ec2.ebs.encryption_not_default", label: "EBS encryption not default", severity: "medium", description: "Enable default EBS encryption so all new volumes are encrypted at creation." },
   // RDS
   { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
   { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },
@@ -149,6 +159,7 @@ export default function Settings() {
 
   const grouped = {
     root: ALL_CHECKS.filter((c) => c.id.startsWith("iam.root.")),
+    iam_account: ALL_CHECKS.filter((c) => c.id.startsWith("iam.account.")),
     user: ALL_CHECKS.filter((c) => c.id.startsWith("iam.user.")),
     access_key: ALL_CHECKS.filter((c) => c.id.startsWith("iam.access_key.")),
     role: ALL_CHECKS.filter((c) => c.id.startsWith("iam.role.")),
@@ -156,6 +167,8 @@ export default function Settings() {
     kms: ALL_CHECKS.filter((c) => c.id.startsWith("kms.")),
     cloudtrail: ALL_CHECKS.filter((c) => c.id.startsWith("cloudtrail.")),
     guardduty: ALL_CHECKS.filter((c) => c.id.startsWith("guardduty.")),
+    access_analyzer: ALL_CHECKS.filter((c) => c.id.startsWith("aws.access_analyzer.")),
+    config: ALL_CHECKS.filter((c) => c.id.startsWith("aws.config.")),
     vpc: ALL_CHECKS.filter((c) => c.id.startsWith("vpc.")),
     ec2: ALL_CHECKS.filter((c) => c.id.startsWith("ec2.")),
     rds: ALL_CHECKS.filter((c) => c.id.startsWith("rds.")),
@@ -177,6 +190,7 @@ export default function Settings() {
         {(
           [
             ["Root Account", grouped.root],
+            ["IAM Account Policy", grouped.iam_account],
             ["IAM Users", grouped.user],
             ["Access Keys", grouped.access_key],
             ["IAM Roles", grouped.role],
@@ -184,8 +198,10 @@ export default function Settings() {
             ["KMS Keys", grouped.kms],
             ["CloudTrail", grouped.cloudtrail],
             ["GuardDuty", grouped.guardduty],
+            ["IAM Access Analyzer", grouped.access_analyzer],
+            ["AWS Config", grouped.config],
             ["VPC", grouped.vpc],
-            ["Security Groups", grouped.ec2],
+            ["Security Groups & EC2", grouped.ec2],
             ["RDS", grouped.rds],
           ] as [string, typeof ALL_CHECKS][]
         ).map(([groupLabel, items]) => (
@@ -238,27 +254,29 @@ export default function Settings() {
               <label className="block text-xs font-medium text-zinc-500 mb-1.5 mt-3">
                 Recipient email
               </label>
-              <input
-                type="email"
-                value={digestEmail}
-                onChange={(e) => setDigestEmail(e.target.value)}
-                placeholder="Email address"
-                className="w-full max-w-sm rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              />
-              <p className="mt-1.5 text-xs text-zinc-400">
-                Leave blank to send to your account email.
-              </p>
-              <div className="mt-3 flex items-center gap-3">
+              <div className="flex max-w-xl items-center gap-2">
+                <input
+                  type="email"
+                  value={digestEmail}
+                  onChange={(e) => setDigestEmail(e.target.value)}
+                  placeholder="Email address"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                />
                 <button
                   type="button"
                   onClick={sendTest}
                   disabled={testState === "sending"}
-                  className="rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+                  className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
                 >
-                  {testState === "sending" ? "Sending…" : "Send test email"}
+                  {testState === "sending" ? "Sending…" : "Send report"}
                 </button>
+              </div>
+              <p className="mt-1.5 text-xs text-zinc-400">
+                Leave blank to send to your account email.
+              </p>
+              <div className="mt-2 flex items-center gap-3">
                 {testState === "sent" && (
-                  <span className="text-xs text-emerald-600 font-medium">Sent!</span>
+                  <span className="text-xs text-emerald-600 font-medium">Report sent.</span>
                 )}
                 {testState === "error" && (
                   <span className="text-xs text-red-500">{testError}</span>

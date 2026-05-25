@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
 from app.models import AwsAccount, IamAccessKey, IamRole, IamUser
+from app.models.resources import IamPasswordPolicy
 
 log = structlog.get_logger()
 
@@ -68,8 +69,59 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
     role_count = _collect_roles(db, sess, account)
     db.commit()
 
+    _collect_password_policy(db, iam, account)
+    db.commit()
+
     log.info("collect_iam.done", users=user_count, access_keys=key_count, roles=role_count)
     return {"iam_users": user_count, "iam_access_keys": key_count, "iam_roles": role_count}
+
+
+def _collect_password_policy(db: Session, iam_client, account: AwsAccount) -> None:
+    try:
+        pol = iam_client.get_account_password_policy()["PasswordPolicy"]
+        exists = True
+        min_length = pol.get("MinimumPasswordLength")
+        require_uppercase = pol.get("RequireUppercaseCharacters", False)
+        require_lowercase = pol.get("RequireLowercaseCharacters", False)
+        require_numbers = pol.get("RequireNumbers", False)
+        require_symbols = pol.get("RequireSymbols", False)
+        max_age = pol.get("MaxPasswordAge")
+        reuse = pol.get("PasswordReusePrevention")
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchEntity":
+            exists = False
+            min_length = require_uppercase = require_lowercase = require_numbers = require_symbols = None
+            max_age = reuse = None
+        else:
+            return
+
+    stmt = pg_insert(IamPasswordPolicy).values(
+        id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:password_policy"),
+        account_id=account.id,
+        exists=exists,
+        min_length=min_length,
+        require_uppercase=bool(require_uppercase),
+        require_lowercase=bool(require_lowercase),
+        require_numbers=bool(require_numbers),
+        require_symbols=bool(require_symbols),
+        max_age=max_age,
+        password_reuse_prevention=reuse,
+        last_seen=_now(),
+    ).on_conflict_do_update(
+        index_elements=["account_id"],
+        set_={
+            "exists": exists,
+            "min_length": min_length,
+            "require_uppercase": bool(require_uppercase),
+            "require_lowercase": bool(require_lowercase),
+            "require_numbers": bool(require_numbers),
+            "require_symbols": bool(require_symbols),
+            "max_age": max_age,
+            "password_reuse_prevention": reuse,
+            "last_seen": _now(),
+        },
+    )
+    db.execute(stmt)
 
 
 def _collect_roles(db: Session, sess, account: AwsAccount) -> int:
