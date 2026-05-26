@@ -762,6 +762,83 @@ const confidenceConfig = {
   low: { label: "Active — proceed with caution", color: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500", desc: "Resource was actively used in the last 30 days." },
 };
 
+function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "caution" | "warning" } {
+  const { resource_type, confidence } = data;
+
+  if (resource_type === "iam_role") {
+    const active = data.active_service_count ?? 0;
+    if (confidence === "high") {
+      const never = data.days_since_last_assumed == null;
+      return never
+        ? { text: "Safe to remove — role has never been assumed and no active service usage detected.", type: "safe" }
+        : { text: `Safe to remove — unassumed for ${data.days_since_last_assumed} days with no active service usage.`, type: "safe" };
+    }
+    if (confidence === "medium") {
+      return { text: `Review before removing — ${active} service${active !== 1 ? "s" : ""} show recent activity. Verify the workload before making changes.`, type: "caution" };
+    }
+    return { text: `Do not remove without verification — ${active} service${active !== 1 ? "s" : ""} were actively used in the last 30 days.`, type: "warning" };
+  }
+
+  if (resource_type === "iam_access_key") {
+    const key = data.keys?.[0];
+    if (confidence === "high") {
+      return key?.days_ago != null
+        ? { text: `Safe to delete — key unused for ${key.days_ago} days.`, type: "safe" }
+        : { text: "Safe to delete — key has never been used.", type: "safe" };
+    }
+    if (key?.last_used_service && key?.days_ago != null) {
+      return { text: `Active key — last used ${key.days_ago} days ago via ${key.last_used_service}. Rotate carefully.`, type: "warning" };
+    }
+    return { text: "Active key — verify usage before rotating or deleting.", type: "warning" };
+  }
+
+  if (resource_type === "iam_user") {
+    if (confidence === "high") {
+      return data.days_inactive != null
+        ? { text: `Safe to disable — user inactive for ${data.days_inactive} days.`, type: "safe" }
+        : { text: "Safe to disable — no recorded activity for this user.", type: "safe" };
+    }
+    if (confidence === "low") return { text: "Active user — verify ownership and dependencies before disabling.", type: "warning" };
+    return { text: "Review before disabling — some recent activity detected.", type: "caution" };
+  }
+
+  if (resource_type === "security_group") {
+    const running = data.running_count ?? 0;
+    const total = data.total_count ?? 0;
+    if (running > 0) return { text: `Restrict with care — ${running} running instance${running !== 1 ? "s" : ""} will be affected (${total} total).`, type: "warning" };
+    if (total > 0) return { text: `${total} instance${total !== 1 ? "s" : ""} attached, none running — safe to modify.`, type: "caution" };
+    return { text: "No instances attached to this security group — safe to update.", type: "safe" };
+  }
+
+  if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
+  if (confidence === "medium") return { text: "Some recent activity detected — review before making changes.", type: "caution" };
+  return { text: "Active resource — proceed with caution.", type: "warning" };
+}
+
+const verdictStyle = {
+  safe: { card: "border-emerald-200 bg-emerald-50", text: "text-emerald-900", icon: "text-emerald-500" },
+  caution: { card: "border-amber-200 bg-amber-50", text: "text-amber-900", icon: "text-amber-500" },
+  warning: { card: "border-red-200 bg-red-50", text: "text-red-900", icon: "text-red-500" },
+};
+
+function VerdictIcon({ type }: { type: "safe" | "caution" | "warning" }) {
+  if (type === "safe") return (
+    <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+    </svg>
+  );
+  if (type === "caution") return (
+    <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    </svg>
+  );
+  return (
+    <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+    </svg>
+  );
+}
+
 function BlastRadiusSection({ accountId, finding }: { accountId: string; finding: Finding }) {
   const [enabled, setEnabled] = useState(false);
   const { data, isLoading, error } = useQuery<BlastRadiusData>({
@@ -807,7 +884,16 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
       </div>
 
       <div className="p-4 space-y-4">
-        <p className="text-xs text-zinc-500">{conf.desc}</p>
+        {(() => {
+          const verdict = buildVerdict(data);
+          const vs = verdictStyle[verdict.type];
+          return (
+            <div className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${vs.card}`}>
+              <span className={vs.icon}><VerdictIcon type={verdict.type} /></span>
+              <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
+            </div>
+          );
+        })()}
 
         {/* Warnings */}
         {data.warnings.length > 0 && (
@@ -1019,11 +1105,90 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 type Tab = "overview" | "remediation" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; statements_removed?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
+type PolicyStatement = { Sid?: string; Effect?: string; Action?: string | string[]; Resource?: string | string[]; [k: string]: unknown };
+
+function PolicyDiffView({ original, cleaned }: { original: Record<string, unknown>; cleaned: Record<string, unknown> }) {
+  const sections = Object.entries(original).map(([name, origDoc]) => {
+    const origStmts: PolicyStatement[] = (origDoc as any)?.Statement ?? [];
+    const cleanStmts: PolicyStatement[] = (cleaned as any)?.[name]?.Statement ?? [];
+    const cleanSet = new Set(cleanStmts.map((s) => JSON.stringify(s)));
+    return { name, statements: origStmts.map((stmt) => ({ stmt, removed: !cleanSet.has(JSON.stringify(stmt)) })) };
+  });
+
+  return (
+    <div className="space-y-4">
+      {sections.map(({ name, statements }) => (
+        <div key={name}>
+          {sections.length > 1 && <div className="mb-2 font-mono text-[11px] font-medium text-zinc-400">{name}</div>}
+          <div className="space-y-2">
+            {statements.map((s, i) => {
+              const actions = s.stmt.Action ? (Array.isArray(s.stmt.Action) ? s.stmt.Action : [s.stmt.Action]) : [];
+              const resources = s.stmt.Resource ? (Array.isArray(s.stmt.Resource) ? s.stmt.Resource : [s.stmt.Resource]) : [];
+              return (
+                <div key={i} className={`rounded-lg border px-3 py-2.5 text-xs ${s.removed ? "border-red-200 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
+                  {s.removed && (
+                    <div className="mb-2 flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-red-500">Removed — no usage in 90 days</span>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {s.stmt.Sid && <div><span className="text-zinc-400">Sid: </span><span className={`font-medium ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Sid}</span></div>}
+                    <div><span className="text-zinc-400">Effect: </span><span className={`font-medium ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Effect}</span></div>
+                    {actions.length > 0 && (
+                      <div><span className="text-zinc-400">Actions: </span><span className={`font-mono break-all ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{actions.join(", ")}</span></div>
+                    )}
+                    {resources.length > 0 && (
+                      <div><span className="text-zinc-400">Resource: </span><span className={`font-mono break-all ${s.removed ? "text-red-600 line-through" : "text-zinc-600"}`}>{resources.join(", ")}</span></div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function GeneratePolicySection({ accountId, finding }: { accountId: string; finding: Finding }) {
   const [enabled, setEnabled] = useState(false);
-  const [view, setView] = useState<"cleaned" | "original">("cleaned");
+  const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
   const { data, isLoading, error } = useQuery<GeneratedPolicy>({ queryKey: ["generated-policy", accountId, finding.resource_arn], queryFn: () => api(`/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}`), enabled, staleTime: Infinity });
-  return <div><div className="mb-3 flex items-center justify-between"><div className="text-sm font-semibold text-zinc-700">Suggested policy</div>{!enabled && <button onClick={() => setEnabled(true)} className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900">Generate</button>}</div>{!enabled && <p className="text-xs leading-relaxed text-zinc-400">Vigil will strip unused service statements from inline policies and show you the cleaned version, ready to apply.</p>}{enabled && isLoading && <div className="py-3 text-xs text-zinc-400">Generating...</div>}{enabled && error && <div className="py-2 text-xs text-red-500">{String(error)}</div>}{enabled && data && !data.has_inline_policies && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>}{enabled && data && data.has_inline_policies && data.cleaned_policies && <div className="space-y-3"><div className="flex items-center justify-between"><span className="text-xs text-zinc-500">{data.statements_removed} statement{data.statements_removed !== 1 ? "s" : ""} removed</span><div className="flex gap-1 rounded-lg bg-zinc-100 p-0.5">{(["cleaned", "original"] as const).map((v) => <button key={v} onClick={() => setView(v)} className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}>{v === "cleaned" ? "Cleaned" : "Original"}</button>)}</div></div><CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} /></div>}</div>;
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-sm font-semibold text-zinc-700">Suggested policy</div>
+        {!enabled && <button onClick={() => setEnabled(true)} className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900">Generate</button>}
+      </div>
+      {!enabled && <p className="text-xs leading-relaxed text-zinc-400">Vigil will strip unused service statements from inline policies and show you the cleaned version, ready to apply.</p>}
+      {enabled && isLoading && <div className="py-3 text-xs text-zinc-400">Generating…</div>}
+      {enabled && error && <div className="py-2 text-xs text-red-500">{String(error)}</div>}
+      {enabled && data && !data.has_inline_policies && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
+      )}
+      {enabled && data && data.has_inline_policies && data.original_policies && data.cleaned_policies && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-zinc-500">
+              {data.statements_removed} statement{data.statements_removed !== 1 ? "s" : ""} removed
+            </span>
+            <div className="flex gap-1 rounded-lg bg-zinc-100 p-0.5">
+              {(["diff", "cleaned", "original"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)} className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </div>
+          {view === "diff" && <PolicyDiffView original={data.original_policies} cleaned={data.cleaned_policies} />}
+          {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function CliBlock({ code }: { code: string }) {
