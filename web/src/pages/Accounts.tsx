@@ -9,6 +9,7 @@ type Account = {
   status: string;
   external_id: string;
   cfn_launch_url: string;
+  last_scan_at: string | null;
 };
 
 type Finding = { id: string; severity: string; status: string };
@@ -82,9 +83,10 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const critHigh = findingsData?.items.filter(f => f.severity === "critical" || f.severity === "high").length ?? 0;
   const medium = findingsData?.items.filter(f => f.severity === "medium").length ?? 0;
   const totalOpen = findingsData?.items.length ?? 0;
-  const soc2 = useComplianceScore("soc2", acc.status === "connected");
-  const cis = useComplianceScore("cis_aws_l1", acc.status === "connected");
-  const iso = useComplianceScore("iso27001", acc.status === "connected");
+  const hasScanned = acc.status === "connected" && !!acc.last_scan_at;
+  const soc2 = useComplianceScore("soc2", hasScanned);
+  const cis = useComplianceScore("cis_aws_l1", hasScanned);
+  const iso = useComplianceScore("iso27001", hasScanned);
 
   return (
     <div className="grid grid-cols-[1fr_280px] gap-4 items-stretch">
@@ -272,7 +274,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
       {/* Posture snapshot sidebar */}
       <div ref={snapshotRef} className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5 flex flex-col" style={lockedHeight ? { height: lockedHeight } : undefined}>
         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-3">Posture Snapshot</div>
-        {acc.status === "connected" ? (
+        {hasScanned ? (
           <>
             <div className="grid grid-cols-2 gap-2.5 mb-3">
               <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-4 flex flex-col items-center justify-center text-center">
@@ -316,7 +318,9 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               </div>
             </div>
             <p className="text-[12px] text-zinc-400 leading-relaxed">
-              Awaiting verification — posture data will appear after the first scan.
+              {acc.status === "connected"
+                ? "Run a scan to see posture data."
+                : "Awaiting verification — posture data will appear after the first scan."}
             </p>
           </div>
         )}

@@ -44,6 +44,7 @@ class AccountOut(BaseModel):
     status: str
     external_id: str
     cfn_launch_url: str | None = None
+    last_scan_at: datetime | None = None
 
 
 class VerifyIn(BaseModel):
@@ -81,6 +82,7 @@ def create_account(body: AccountIn, p=Depends(current_principal), db: Session = 
         status=acc.status,
         external_id=ext,
         cfn_launch_url=_launch_url(ext),
+        last_scan_at=acc.last_scan_at,
     )
 
 
@@ -95,6 +97,7 @@ def list_accounts(p=Depends(current_principal), db: Session = Depends(get_db)):
             status=a.status,
             external_id=a.external_id,
             cfn_launch_url=_launch_url(a.external_id),
+            last_scan_at=a.last_scan_at,
         )
         for a in rows
     ]
@@ -128,6 +131,7 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
         status=acc.status,
         external_id=acc.external_id,
         cfn_launch_url=_launch_url(acc.external_id),
+        last_scan_at=acc.last_scan_at,
     )
 
 

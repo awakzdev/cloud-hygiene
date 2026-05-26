@@ -325,7 +325,7 @@ export default function Controls() {
   }
 
   return (
-    <div className="w-full space-y-6">
+    <div className="w-full space-y-6 px-8 py-7">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Compliance</h1>
