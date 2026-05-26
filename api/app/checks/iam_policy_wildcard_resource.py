@@ -83,7 +83,16 @@ def run(db: Session, account_id) -> list[FindingDraft]:
         if not hits:
             continue
 
-        policy_names = [h["policy"] for h in hits]
+        flat_policies = [
+            {
+                "policy": h["policy"],
+                "type": h["type"],
+                "dangerous_actions": ", ".join(
+                    a for stmt in h["statements"] for a in stmt["actions"]
+                ),
+            }
+            for h in hits
+        ]
         out.append(FindingDraft(
             check_id=CHECK_ID,
             resource_arn=r.arn,
@@ -92,8 +101,8 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             risk_score=score("high", admin=True),
             evidence={
                 "role_arn": r.arn,
-                "policies": hits,
-                "policy_names": policy_names,
+                "policy_names": [h["policy"] for h in hits],
+                "policies": flat_policies,
             },
         ))
     return out
