@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-25 (session 4)_
+_Last updated: 2026-05-26 (session 5)_
 
 ---
 
@@ -19,13 +19,18 @@ _Last updated: 2026-05-25 (session 4)_
 - Trigger scan → Celery task
 
 ### Collectors
-- `collectors/iam.py` — IAM users, console password, MFA, access keys + last-used, roles + inline policies + **attached policies** (statements fetched via `GetPolicyVersion`)
+- `collectors/iam.py` — IAM users, console password, MFA, access keys + last-used, roles + inline policies + **attached policies** (statements fetched via `GetPolicyVersion`), account password policy
 - `collectors/last_accessed.py` — service last-accessed per role via AWS async job API (`generate_service_last_accessed_details`)
 - `collectors/account.py` — S3 buckets (encryption, versioning, logging, public access, HTTPS policy) + KMS keys (rotation, state, aliases)
-- `collectors/cloudtrail.py` — trails (multi-region, logging, log validation) — all enabled regions
+- `collectors/s3_account_public_access_block.py` — account-level S3 Block Public Access setting
+- `collectors/cloudtrail.py` — trails (multi-region, logging, log validation, KMS key) — all enabled regions
 - `collectors/guardduty.py` — detectors per region; synthetic "DISABLED" record when none exists
-- `collectors/vpc.py` — VPCs (flow logs), security groups (SSH/RDP ingress rules) — all enabled regions
-- `collectors/rds.py` — RDS instances (encryption, public access, engine) — all enabled regions
+- `collectors/vpc.py` — VPCs (flow logs), security groups (SSH/RDP/default ingress rules, default-group flag) — all enabled regions
+- `collectors/rds.py` — RDS instances (encryption, public access, engine, backup retention) — all enabled regions
+- `collectors/ec2.py` — EC2 instances (type, state, IMDSv2, VPC/subnet, SG ids, tags), EBS volumes (encrypted, state, size, type, attached instances), EBS encryption-by-default — all enabled regions
+- `collectors/access_analyzer.py` — IAM Access Analyzer status per region
+- `collectors/config_service.py` — AWS Config recorder + delivery channel status per region
+- `collectors/securityhub.py` — Security Hub enablement per region
 
 ### Checks
 | Check ID | Severity |
@@ -58,6 +63,13 @@ _Last updated: 2026-05-25 (session 4)_
 | `rds.instance.publicly_accessible` | high |
 | `rds.instance.no_encryption` | high |
 | `rds.instance.no_automated_backup` | medium |
+| `ec2.security_group.default_allows_traffic` | medium |
+| `ec2.instance.imdsv2_not_required` | medium |
+| `ec2.ebs.encryption_not_default` | medium |
+| `ec2.ebs.volume_unencrypted` | high |
+| `iam.account.password_policy_weak` | medium |
+| `aws.access_analyzer.not_enabled` | medium |
+| `aws.config.not_enabled` | low |
 
 ### Findings UI
 - Grouped by check type, sorted by severity
@@ -70,7 +82,7 @@ _Last updated: 2026-05-25 (session 4)_
 - Evidence section: scalars + object arrays rendered as tables (not raw JSON)
 - `unused_services_90d` drawer: unused service pills, removable inline policy statements, **"Generate" button** — shows cleaned vs original policy JSON
 - **What If? tab**: blast radius analysis for IAM role/user/key findings — confidence score, service usage pills (active=red/unused=gray), per-attached-policy breakdown (removable vs keep, AWS/Custom badge, detach+replace vs edit action)
-- **What If? for SG findings (ec2.security_group.*): blocked on EC2 instance collector** — needs `ec2:DescribeInstances` to show which instances are exposed by the open rule. Collector not yet built. Add when EC2 collector lands (same sprint as IMDSv2 + EBS checks).
+- **What If? for SG findings**: shows affected instances list with instance type + state (running=red), running count, VPC/region metadata.
 - CLI commands auto-interpolate actual role/user/key names from the finding ARN
 - Scan status polling (5s) + auto-refresh findings on completion; Re-scan unlocks after 5 min if stuck
 - Onboarding empty state when no account connected — 3-step guide + link to AWS Accounts
@@ -86,12 +98,13 @@ _Last updated: 2026-05-25 (session 4)_
 
 ### Frontend
 - Login page: email/password + GitHub SSO + Google SSO
-- AWS Accounts page
-- Findings page (grouped, severity-aware, multi-tag filter with autocomplete + URL-synced `?checks=` param)
-- Controls/Compliance page (SOC2 + CIS AWS L1, evidence pack download)
+- AWS Accounts page — multi-account support, per-account SOC2 + CIS + ISO 27001 score bars, pending-account UX, remove account
+- Findings page (grouped, severity-aware, multi-tag filter, URL-synced `?checks=`, smooth accordion animation, severity-tinted expanded rows)
+- Controls/Compliance page (SOC2 + CIS AWS L1 + ISO 27001 framework toggle, evidence pack download)
 - Settings page (check enable/disable per group, weekly digest toggle + recipient email)
 - Account settings page (password + GitHub)
-- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Settings, Account, Sign out
+- Reference page (`/reference`) — searchable table of all supported search keys, resource types, check IDs, ARN patterns
+- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Reference, Settings, Account, Sign out
 
 ### Security
 - Rate limiting: signup 5/min, login 10/min (slowapi)
@@ -102,8 +115,9 @@ _Last updated: 2026-05-25 (session 4)_
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
-- Migrations: 0001_init → … → 0010_phase2_checks → 0011_role_attached_policies
-- CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS read permissions
+- Migrations: 0001_init → … → 0017_ebs_volumes (latest)
+- CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS/SecurityHub/Config/AccessAnalyzer/S3Control read permissions
+- pytest: 33 tests (check unit tests + botocore Stubber collector tests)
 
 ---
 
@@ -134,22 +148,18 @@ AWS control-plane APIs, reachable via public HTTPS.
 
 ## Next unblocked work
 
-**EC2 instance collector** (single sprint, unlocks 3 things):
-- `ec2:DescribeInstances` → store instance id, type, region, vpc, subnet, state, imdsv2 setting, ebs volumes
-- Unlocks: `ec2.instance.imdsv2_not_required` check
-- Unlocks: `ec2.ebs.encryption_by_default` check
-- Unlocks: **SG What If tab** — show which instances are exposed by the open SSH/RDP rule
+**`iam.root.usage` check (CIS 1.7)**:
+- Add `cloudtrail:LookupEvents` to CFN role (`infra/cfn/hygiene-readonly-role.yaml`)
+- Extend CloudTrail collector to call `LookupEvents(AttributeKey=Username, AttributeValue=root)` in us-east-1
+- Store most-recent root event timestamp in a new migration or extend `aws_accounts` table
+- Add check + frontend wiring (Settings, Findings, Drawer, Reference, SOC2 CC6.3 mapping)
 
-**Remaining CIS L1 checks (no new collector needed):**
-- `iam.password_policy.*` — min length 14, reuse prevention (uses existing IAM collector)
-- `ec2.security_group.default_allows_traffic` — default SG has no inbound/outbound rules
-- `aws.access_analyzer.not_enabled` — Access Analyzer per region (needs small collector)
-- `aws.config.not_enabled` — Config recorder + delivery channel per region (needs small collector)
+**Hetzner production deploy**:
+- Provision VPS + Cloudflare DNS + Caddy Caddyfile
+- `docker compose --profile prod up -d`
+- Nightly `pg_dump` → Backblaze B2 (`compose.yml` backup service)
 
-**ISO 27001 A.9/A.12 mapping** — 5 min job, just `control_mappings.json` additions, no new checks:
-- A.9.2 (user access management) → IAM user/role checks
-- A.9.4 (system/application access) → MFA checks
-- A.12.4 (logging/monitoring) → CloudTrail + GuardDuty + VPC flow log checks
+**GitHub integration (Phase 3)** — see Phase 3 section for full spec
 
 ---
 
@@ -197,7 +207,7 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 | CORS `*` in dev | locked to `API_PUBLIC_URL` in prod via `APP_ENV` |
 | CFN URL pinned to repo `main` | pin to release tag before beta |
 | No request-id / structured access logging | add before prod |
-| One account per org enforced in route | schema is multi-account ready |
+| Multi-account support | One-account limit removed; schema was already multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
 | `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
 | Digest unsubscribe is a link to `/settings` | no token-based one-click unsubscribe yet |
@@ -476,13 +486,22 @@ policy analysis, onboarding empty state.
 - Individual EBS volume encryption added: `ec2.ebs.volume_unencrypted`, `ebs_volumes` table, `DescribeVolumes` collector, evidence snapshots, SOC2/CIS mappings, Settings/Findings/Drawer copy
 - Daily scan schedule already exists via Celery beat: `scan_all_accounts` at 06:00 UTC
 
-**Remaining gaps after current code:**
+**Session 5 additions (2026-05-26):**
+- SG What If tab: fully functional — shows affected instances list (instance_id, type, state), running count, VPC/region metadata
+- EC2 collector: `DescribeInstances` added (instance type, state, IMDSv2, VPC/subnet/SG ids, tags)
+- EBS volumes: `DescribeVolumes`, `ebs_volumes` table, `ec2.ebs.volume_unencrypted` check
+- Multi-account: removed one-account limit, added DELETE route, rewrote Accounts.tsx with `AccountCard` per-account component
+- ISO 27001 Annex A: 10 controls (A.9.2, A.9.4, A.10.1, A.12.4, A.12.6, A.13.1, A.13.2) mapped to existing checks, wired to Compliance page toggle, evidence pack export, and Account posture score bars
+- Test coverage: expanded to 33 tests (up from 16), new tests cover all Phase 2 checks
+- Reference page (`/reference`): searchable 22-row table of all supported search keys, resource types, check IDs
 
-1. Root recent usage via CloudTrail events (`iam.root.usage`)
-2. S3 default encryption posture, if we want this separate from current SSE-KMS bucket checks
-3. End-to-end AWS sandbox validation: signup → CFN → verify → scan → evidence pack
-4. Stripe/export gating for Free vs paid plans
-5. GitHub integration for identity and change-management evidence
+**Remaining gaps after session 5:**
+
+1. `iam.root.usage` — root account activity check via CloudTrail `LookupEvents` (needs `cloudtrail:LookupEvents` added to CFN role + migration for root_activity table)
+2. End-to-end AWS sandbox validation: signup → CFN → verify → scan → evidence pack
+3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+4. GitHub integration for identity and change-management evidence (Phase 3)
+5. Stripe gating for Free vs paid plan evidence export limits (deferred per founder decision)
 
 ### Phase 3 — GitHub integration (3 weeks)
 
