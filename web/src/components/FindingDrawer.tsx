@@ -1135,6 +1135,19 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     return { text: "Safe to enable — adds security visibility without impacting existing resources or applications.", type: "safe" };
   }
 
+  if (resource_type === "iam_policy_wildcard_resource") {
+    return { text: "Scoping down Resource: * requires knowing which specific ARNs each action needs — test in non-prod before applying to production roles.", type: "caution" };
+  }
+
+  if (resource_type === "iam_policy_unattached") {
+    return { text: "Safe to delete — policy is not attached to any principal and grants no access.", type: "safe" };
+  }
+
+  if (resource_type === "iam_perm_granted_vs_used") {
+    if (confidence === "high") return { text: "No service usage recorded in 90 days — high confidence unused permissions can be removed safely.", type: "safe" };
+    return { text: "Some services were recently used — verify application behaviour before removing unused permission grants.", type: "caution" };
+  }
+
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
   if (confidence === "medium") return { text: "Some recent activity detected — review before making changes.", type: "caution" };
   return { text: "Active resource — proceed with caution.", type: "warning" };
@@ -1902,6 +1915,8 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "aws.config.not_enabled",
     "aws.securityhub.not_enabled",
     "aws.access_analyzer.not_enabled",
+    "iam.policy.wildcard_resource",
+    "iam.policy.unattached",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 

@@ -948,6 +948,72 @@ def blast_radius(
             "warnings": [],
         }
 
+    # ── IAM Policy ───────────────────────────────────────────────────────────
+    if check_id == "iam.policy.wildcard_resource":
+        # resource_arn is the role ARN; we want to show which roles are affected
+        role = db.scalar(
+            select(IamRole).where(IamRole.account_id == acc.id, IamRole.arn == resource_arn)
+        )
+        dangerous_policies: list[str] = []
+        if role:
+            for pol in (role.attached_policies or []):
+                for stmt in pol.get("statements", []):
+                    if stmt.get("Effect") == "Allow" and stmt.get("Resource") in ("*", ["*"]):
+                        actions = stmt.get("Action", [])
+                        if isinstance(actions, str):
+                            actions = [actions]
+                        if actions:
+                            dangerous_policies.append(pol.get("policy_name", "unknown"))
+                            break
+        return {
+            "resource_type": "iam_policy_wildcard_resource",
+            "confidence": "medium",
+            "role_arn": resource_arn,
+            "affected_policies": list(set(dangerous_policies)),
+            "warnings": [
+                "Scoping Resource: * to specific ARNs requires knowing exactly which resources each action needs — verify application behaviour before changing",
+                "If these are AWS-managed policies, detach and replace with customer-managed equivalents scoped to your resources",
+            ],
+        }
+
+    if check_id == "iam.policy.unattached":
+        return {
+            "resource_type": "iam_policy_unattached",
+            "confidence": "high",
+            "warnings": [
+                "Deleting an unattached policy is safe — it is not granting access to anyone. Verify it is not intentionally kept as a spare before deleting.",
+            ],
+        }
+
+    if check_id == "iam.perm.granted_vs_used":
+        role = db.scalar(
+            select(IamRole).where(IamRole.account_id == acc.id, IamRole.arn == resource_arn)
+        )
+        if not role:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "role not found — run a scan first")
+        usages = db.scalars(
+            select(IamPermUsage).where(
+                IamPermUsage.account_id == acc.id,
+                IamPermUsage.principal_arn == resource_arn,
+            )
+        ).all()
+        threshold = now - timedelta(days=90)
+        used_services = sorted({u.service for u in usages if u.last_authenticated and u.last_authenticated >= threshold})
+        unused_services = sorted({u.service for u in usages if not u.last_authenticated or u.last_authenticated < threshold})
+        return {
+            "resource_type": "iam_perm_granted_vs_used",
+            "confidence": "high" if not used_services else "medium",
+            "used_services": used_services,
+            "unused_services": unused_services,
+            "warnings": [
+                f"Services used in last 90 days: {', '.join(used_services) or 'none — high confidence safe to remove unused grants'}",
+                "Use the Generate Policy button to preview the scoped-down policy before applying",
+            ] if used_services else [
+                "No services recorded as used in 90 days — high confidence removal is safe",
+                "Verify application does not use this role before removing",
+            ],
+        }
+
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")
 
 

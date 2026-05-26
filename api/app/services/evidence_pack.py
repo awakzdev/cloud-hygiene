@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Finding, EvidenceSnapshot
+from app.models.cloudtrail import CloudTrailEvent
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
 from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
@@ -70,6 +71,8 @@ def build_evidence_pack(
         ).order_by(EvidenceSnapshot.taken_at.desc())
     ).all()
 
+    generated_at = datetime.now(timezone.utc)
+
     snap_by_type: dict[str, list[dict[str, Any]]] = {}
     for s in snapshots:
         snap_by_type.setdefault(s.entity_type, []).append(
@@ -80,7 +83,8 @@ def build_evidence_pack(
     identity_snaps = _build_identity_snapshots(db, acc.org_id, generated_at)
     snap_by_type.update(identity_snaps)
 
-    generated_at = datetime.now(timezone.utc)
+    # CloudTrail change events — used for CC8.1 change management evidence
+    snap_by_type["cloudtrail_event"] = _build_cloudtrail_event_snapshots(db, account_id, since)
     control_results: list[dict[str, Any]] = []
     for ctrl in controls:
         status, hits = _control_status(open_findings, check_map[ctrl.id])
@@ -183,8 +187,10 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
             types.add("rds_instance")
         elif cid.startswith("github."):
             types.add("github_identity")
+            types.add("cloudtrail_event")
         elif cid.startswith("gitlab."):
             types.add("gitlab_identity")
+            types.add("cloudtrail_event")
     return list(types)
 
 
@@ -269,6 +275,36 @@ def _build_identity_snapshots(
 
         result[snap_key] = snaps
     return result
+
+
+def _build_cloudtrail_event_snapshots(
+    db: Session,
+    account_id: uuid.UUID,
+    since: datetime,
+) -> list[dict[str, Any]]:
+    """Return significant CloudTrail write events as evidence snapshots for CC8.1."""
+    events = db.scalars(
+        select(CloudTrailEvent)
+        .where(CloudTrailEvent.account_id == account_id, CloudTrailEvent.event_time >= since)
+        .order_by(CloudTrailEvent.event_time.desc())
+        .limit(200)
+    ).all()
+    return [
+        {
+            "entity_id": evt.event_id,
+            "taken_at": evt.event_time.isoformat(),
+            "data": {
+                "type": "cloudtrail_event",
+                "event_name": evt.event_name,
+                "event_source": evt.event_source,
+                "event_time": evt.event_time.isoformat(),
+                "actor": evt.actor,
+                "source_ip": evt.source_ip,
+                "resources": evt.resources or [],
+            },
+        }
+        for evt in events
+    ]
 
 
 def _finding_dict(f: Finding) -> dict[str, Any]:
