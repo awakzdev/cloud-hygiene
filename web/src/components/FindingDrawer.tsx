@@ -113,6 +113,22 @@ aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
 aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
     risk: "Broad wildcard permissions increase blast radius if the role is compromised or misused.",
   },
+  "iam.perm.granted_vs_used": {
+    why: "This role has write or mutating actions in its policies that have no recorded usage in the last 90 days (action-level data from IAM last-accessed). Removing unused write permissions reduces the blast radius if the role is compromised.",
+    console: [
+      "Open IAM → Roles → select the role → Permissions tab",
+      "Review the actions listed in the finding evidence",
+      "For each unused action, remove it from the role's inline or attached policies",
+      "Use the 'Generate' button in the What If? tab to produce a least-privilege policy based on recorded usage",
+      "Test the workload after each change to confirm functionality",
+    ],
+    cli: `# View current role policy
+aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
+
+# Update with unused write actions removed
+aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
+    risk: "Roles with unused write actions can modify or delete resources they have no business touching — removing them shrinks the attack surface with no operational impact.",
+  },
   "iam.policy.unattached": {
     why: "Customer-managed policies that are not attached to any user, group, or role are dead weight. They may contain overly permissive statements written for a workload that no longer exists, and they clutter the policy namespace making access reviews harder.",
     console: [
@@ -1817,6 +1833,7 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   const BLAST_RADIUS_CHECKS = new Set([
     "iam.role.unassumed_90d",
     "iam.role.wildcard_action",
+    "iam.perm.granted_vs_used",
     "iam.role.unused_services_90d",
     "iam.role.trust_wildcard",
     "iam.access_key.unused_90d",

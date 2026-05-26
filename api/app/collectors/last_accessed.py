@@ -31,13 +31,13 @@ def collect_perm_usage(db: Session, account: AwsAccount) -> int:
     roles = db.scalars(select(IamRole).where(IamRole.account_id == account.id)).all()
     roles = [r for r in roles if "/aws-service-role/" not in r.arn][:_ROLE_LIMIT]
 
-    # submit all jobs first
+    # submit all jobs first — ACTION_LEVEL is a superset of SERVICE_LEVEL
     jobs: list[tuple[str, str]] = []  # (role_arn, job_id)
     for role in roles:
         try:
             job_id = iam.generate_service_last_accessed_details(
                 Arn=role.arn,
-                Granularity="SERVICE_LEVEL",
+                Granularity="ACTION_LEVEL",
             )["JobId"]
             jobs.append((role.arn, job_id))
         except ClientError as e:
@@ -80,15 +80,23 @@ def _collect_job(db: Session, iam, account_id, role_arn: str, job_id: str) -> in
 
 
 def _upsert(db: Session, account_id, principal_arn: str, svc: dict) -> None:
+    # Extract action names from ACTION_LEVEL response (absent in SERVICE_LEVEL)
+    action_entries = svc.get("ActionLastAccessed", [])
+    actions = [a["ActionName"] for a in action_entries if a.get("ActionName")] if action_entries else None
+
     stmt = pg_insert(IamPermUsage).values(
         id=uuid.uuid4(),
         account_id=account_id,
         principal_arn=principal_arn,
         service=svc["ServiceNamespace"],
         last_authenticated=svc.get("LastAuthenticated"),
+        actions_json=actions,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["account_id", "principal_arn", "service"],
-        set_={"last_authenticated": stmt.excluded.last_authenticated},
+        set_={
+            "last_authenticated": stmt.excluded.last_authenticated,
+            "actions_json": stmt.excluded.actions_json,
+        },
     )
     db.execute(stmt)

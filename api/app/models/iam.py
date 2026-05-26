@@ -74,3 +74,4 @@ class IamPermUsage(Base):
     principal_arn: Mapped[str] = mapped_column(String(400), index=True)
     service: Mapped[str] = mapped_column(String(100))
     last_authenticated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actions_json: Mapped[list | None] = mapped_column(JSON, nullable=True)

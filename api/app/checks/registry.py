@@ -22,6 +22,7 @@ from app.checks import (
     guardduty_not_enabled,
     iam_access_key_unused,
     iam_password_policy_weak,
+    iam_perm_granted_vs_used,
     iam_root_access_keys,
     iam_root_no_mfa,
     iam_root_usage,
@@ -65,6 +66,7 @@ ALL_CHECKS = [
     # IAM roles / policies
     role_unassumed_90d,
     role_wildcard_action,
+    iam_perm_granted_vs_used,
     iam_policy_wildcard_resource,
     iam_policy_unattached,
     role_unused_services,

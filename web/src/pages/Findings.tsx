@@ -69,6 +69,7 @@ const checkLabels: Record<string, string> = {
   // Roles
   "iam.role.unassumed_90d": "Role unassumed",
   "iam.role.wildcard_action": "Wildcard action",
+  "iam.perm.granted_vs_used": "Write actions granted but never used",
   "iam.policy.wildcard_resource": "Wildcard resource in policy",
   "iam.policy.unattached": "Unattached managed policy",
   "iam.role.unused_services_90d": "Unused granted services",
@@ -133,6 +134,7 @@ const checkDescriptions: Record<string, string> = {
   "iam.access_key.multiple_active": "Valid during rotation, but persistent duplicates increase exposure.",
   "iam.role.unassumed_90d": "Confirm ownership, then remove roles that are no longer used.",
   "iam.role.wildcard_action": "Replace wildcard permissions with scoped actions.",
+  "iam.perm.granted_vs_used": "Scope role policies down to the actions actually used — reduce the blast radius if this role is ever compromised.",
   "iam.policy.wildcard_resource": "Scope Resource: '*' to specific ARNs — or remove actions that don't need account-wide access.",
   "iam.policy.unattached": "Delete or archive customer-managed policies that are not attached to any principal.",
   "iam.role.unused_services_90d": "Trim unused service permissions from role policies.",

@@ -51,6 +51,7 @@
       "iam.root.no_mfa",
       "iam.user.no_mfa",
       "iam.role.wildcard_action",
+      "iam.perm.granted_vs_used",
       "iam.policy.wildcard_resource",
       "iam.role.trust_wildcard",
       "s3.account.public_access_not_blocked",
@@ -334,6 +335,7 @@
     "checks": [
       "iam.role.unassumed_90d",
       "iam.role.wildcard_action",
+      "iam.perm.granted_vs_used",
       "iam.policy.wildcard_resource",
       "iam.role.trust_wildcard",
       "iam.role.unused_services_90d",

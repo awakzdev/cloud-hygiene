@@ -205,7 +205,7 @@ AWS control-plane APIs, reachable via public HTTPS.
 - [x] `iam.policy.unattached` — managed policies attached to nothing
 - [x] `iam.policy.wildcard_resource` — `Resource: "*"` on dangerous actions
 - [x] `iam.role.trust_wildcard` — `"Principal": "*"` in trust policy (already existed)
-- [ ] `iam.perm.granted_vs_used` — action-level (requires `Granularity=ACTION_LEVEL`, roles only)
+- [x] `iam.perm.granted_vs_used` — action-level (requires `Granularity=ACTION_LEVEL`, roles only); collector upgraded to ACTION_LEVEL, `actions_json` stored in `iam_perm_usage`, migration 0019
 
 ## Phase 2
 
@@ -558,6 +558,9 @@ policy analysis, onboarding empty state.
 - **GitHub/GitLab human-readable labels**: all 10 identity check IDs mapped to display names in `Findings.tsx` and `FindingDrawer.tsx`; Overview tab shows platform-specific Why/Risk; Remediation tab hides Console/CLI toggle for identity checks
 - **Identity evidence in evidence pack**: `_build_identity_snapshots()` pulls from identity tables and synthesises `github_identity`/`gitlab_identity` snapshot entries for evidence pack ZIP
 - **Auto-scan after identity sync**: GitHub + GitLab sync routes trigger `run_scan.delay()` for all connected AWS accounts in the org
+- **`iam.perm.granted_vs_used` check**: collector upgraded to `ACTION_LEVEL` granularity (superset of SERVICE_LEVEL — existing unused_services check still works); `actions_json` column added to `iam_perm_usage` (migration 0019); check flags roles where ≥40% of granted write/mutating actions have no recorded usage in 90 days
+- **HIBP k-anonymity breach check**: `pwned_count()` in `passwords.py` blocks breached passwords at signup + change-password; network failure non-blocking
+- **Public `/security` page**: documents AWS permissions, data retention, encryption, auth; accessible without login at `/security`
 
 **Remaining gaps after session 8:**
 
