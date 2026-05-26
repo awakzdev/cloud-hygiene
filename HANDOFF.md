@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-26 (session 6)_
+_Last updated: 2026-05-26 (session 7)_
 
 ---
 
@@ -70,6 +70,16 @@ _Last updated: 2026-05-26 (session 6)_
 | `iam.account.password_policy_weak` | medium |
 | `aws.access_analyzer.not_enabled` | medium |
 | `aws.config.not_enabled` | low |
+| `github.org.mfa_not_enforced` | high |
+| `github.org.dormant_members` | medium |
+| `github.repo.no_branch_protection` | high |
+| `github.repo.self_merge_allowed` | high |
+| `github.repo.insufficient_reviews` | high |
+| `gitlab.org.mfa_not_enforced` | high |
+| `gitlab.org.dormant_members` | medium |
+| `gitlab.repo.no_branch_protection` | high |
+| `gitlab.repo.self_merge_allowed` | high |
+| `gitlab.repo.insufficient_reviews` | high |
 
 ### Findings UI
 - Grouped by check type, sorted by severity
@@ -115,9 +125,10 @@ _Last updated: 2026-05-26 (session 6)_
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
-- Migrations: 0001_init → … → 0017_ebs_volumes (latest)
+- Migrations: 0001_init → … → 0018_github_integration (latest)
 - CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS/SecurityHub/Config/AccessAnalyzer/S3Control read permissions
 - pytest: 33 tests (check unit tests + botocore Stubber collector tests)
+- 46 checks total (36 AWS, 5 GitHub, 5 GitLab)
 
 ---
 
@@ -511,6 +522,30 @@ policy analysis, onboarding empty state.
 3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
 4. GitHub integration for identity and change-management evidence (Phase 3)
 5. Stripe gating for Free vs paid plan evidence export limits (deferred per founder decision)
+
+**Session 7 additions (2026-05-26):**
+- **GitLab integration shipped (Phase 3b)**: full OAuth flow, groups/repos API, sync service, scope editor UI, Integrations hub page, GitLabIntegration + GitLabIntegrationEdit pages — orange `#e24329` branding, self-hosted URL support
+- **Integration UI bug fixes** (both GitHub and GitLab pages):
+  - Connect error displayed inline when OAuth not configured (e.g., `GITLAB_CLIENT_ID` not set)
+  - Checklist items (access review / approvals / self-merge / branch protections) show "—" instead of "Collected" before first sync
+  - Branch protection remediation state shows "—" and "No data collected yet." when no repos scanned yet (was incorrectly showing "Complete" when 0/0)
+- **10 GitHub/GitLab compliance checks** — all 46 checks now available:
+  - `github/gitlab.org.mfa_not_enforced` (high) — org members without MFA
+  - `github/gitlab.org.dormant_members` (medium) — members inactive 90+ days
+  - `github/gitlab.repo.no_branch_protection` (high) — repos with no protection on default branch
+  - `github/gitlab.repo.self_merge_allowed` (high) — repos with self-merged PRs in last 90 days
+  - `github/gitlab.repo.insufficient_reviews` (high) — repos with under-reviewed merged PRs
+  - All run as part of existing `run_scan(account_id)` — no new task type needed; checks look up providers via `org_id`
+  - Shared logic in `checks/_identity_helpers.py`, 10 thin wrappers maintain one CHECK_ID per module
+- **SOC2 CC8.1 added** to control_mappings.json — Change Management control mapping all repo checks
+- **Control mappings updated**: CC6.1, CC6.2, CC6.3, CC6.6 now include GitHub + GitLab identity checks
+
+**Remaining gaps after session 7:**
+
+1. `iam.root.usage` — root account activity check (CloudTrail `LookupEvents`)
+2. End-to-end AWS sandbox validation
+3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+4. Stripe gating for evidence export limits
 
 ### Phase 3 — GitHub integration (3 weeks)
 
