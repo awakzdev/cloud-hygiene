@@ -90,9 +90,9 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const iso = useComplianceScore("iso27001", acc.status === "connected");
 
   return (
-    <div className="grid grid-cols-[1fr_280px] gap-4 items-stretch">
+    <div className="grid grid-cols-[1fr_280px] gap-4 items-start">
       {/* Main card */}
-      <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden flex flex-col">
+      <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
         {/* Account header */}
         <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -188,7 +188,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 
         {/* Connected state */}
         {acc.status === "connected" && (
-          <div className="px-6 py-5 flex flex-col flex-1 gap-5">
+          <div className="px-6 py-5 space-y-4">
             {/* Info tiles */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -239,8 +239,8 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               <p className="text-sm text-zinc-500">Scan queued — check Findings in ~30s.</p>
             )}
 
-            {/* Actions — pinned to bottom */}
-            <div className="mt-auto flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
+            {/* Actions */}
+            <div className="flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
               <button
                 onClick={() => { setScanQueued(false); scan.mutate(); }}
                 disabled={scan.isPending}
