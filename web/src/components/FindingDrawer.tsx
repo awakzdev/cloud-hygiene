@@ -903,8 +903,8 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
-      <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between">
-        <span className="text-sm font-semibold text-zinc-700">Blast radius</span>
+      <div className="px-4 py-3.5 border-b border-zinc-100 flex items-center justify-between">
+        <span className="text-[15px] font-semibold text-zinc-900">Blast radius</span>
         <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${conf.color}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${conf.dot}`} />
           {conf.label}
@@ -1011,28 +1011,32 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
                       {pol.action === "detach_and_replace" ? "Detach + replace" : "Edit policy"}
                     </span>
                   </div>
-                  <div className="px-3 py-2.5 space-y-1.5">
+                  <div className="px-3 py-2.5 space-y-2">
                     {pol.unused_services.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        <span className="text-xs font-medium text-zinc-400 w-full mb-0.5">Removable</span>
-                        {pol.unused_services.map((s) => (
-                          <span key={s} className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">{s}</span>
-                        ))}
+                      <div>
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Removable</div>
+                        <div className="flex flex-wrap gap-1">
+                          {pol.unused_services.map((s) => (
+                            <span key={s} className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">{s}</span>
+                          ))}
+                        </div>
                       </div>
                     )}
                     {pol.active_services.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        <span className="text-xs font-medium text-zinc-400 w-full mb-0.5">Keep (active)</span>
-                        {pol.active_services.map((s) => (
-                          <span key={s} className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 font-mono text-[11px] text-red-600">{s}</span>
-                        ))}
+                      <div>
+                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Keep (active)</div>
+                        <div className="flex flex-wrap gap-1">
+                          {pol.active_services.map((s) => (
+                            <span key={s} className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[11px] text-red-600">{s}</span>
+                          ))}
+                        </div>
                       </div>
                     )}
                     {pol.unused_services.length === 0 && pol.active_services.length === 0 && pol.granted_services.length > 0 && (
-                      <span className="text-xs text-zinc-400">No usage data yet — run a scan, then check back in a few minutes once service last-accessed data populates.</span>
+                      <span className="text-xs text-zinc-400">No usage data yet — run a scan, then check back once service last-accessed data populates.</span>
                     )}
                     {pol.granted_services.length === 0 && (
-                      <span className="text-xs text-zinc-400">No parseable service grants found (may use conditions or resource-specific ARNs).</span>
+                      <span className="text-xs text-zinc-400">No parseable service grants found.</span>
                     )}
                   </div>
                 </div>
@@ -1433,11 +1437,6 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
               tab === t.id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             }`}
           >
-            {t.id === "whatif" && (
-              <svg className="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
-              </svg>
-            )}
             {t.label}
           </button>
         ))}
