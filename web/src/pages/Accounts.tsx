@@ -235,7 +235,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
             )}
 
             {scanQueued && (
-              <p className="text-sm text-zinc-500">Scan queued — check Findings in ~30s.</p>
+              <p className="text-sm text-zinc-500">Scan queued — results will appear in Findings shortly.</p>
             )}
 
             {/* Actions */}
