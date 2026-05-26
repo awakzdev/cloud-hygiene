@@ -322,7 +322,7 @@ export default function GitLabIntegration() {
           <div className="mt-auto pt-4 border-t border-zinc-200">
             {/* check IDs below are the planned GitLab check slugs — filter activates automatically once checks ship */}
             <Link
-              to="/findings?checks=gitlab.group.mfa_not_enforced,gitlab.group.dormant_members,gitlab.repo.no_branch_protection,gitlab.repo.self_merge_allowed,gitlab.repo.insufficient_reviews"
+              to="/findings?checks=gitlab.org.mfa_not_enforced,gitlab.org.dormant_members,gitlab.repo.no_branch_protection,gitlab.repo.self_merge_allowed,gitlab.repo.insufficient_reviews"
               className="inline-flex w-full items-center justify-center rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm font-medium text-sky-800 hover:bg-sky-50"
             >
               View findings <ChevronRight className="ml-2 h-4 w-4" />
