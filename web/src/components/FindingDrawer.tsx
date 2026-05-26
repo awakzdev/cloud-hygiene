@@ -952,13 +952,24 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
   const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
   const unusedServices = evidence.unused_services as string[] | undefined;
   const removable = evidence.removable_statements as RemovableStatement[] | undefined;
+  function isIsoDateString(value: string) {
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  }
+  function formatMaybeDate(value: string) {
+    if (!isIsoDateString(value)) return value;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
+    const timePart = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(d);
+    return `${datePart} at ${timePart} UTC`;
+  }
   function renderScalar(k: string, v: unknown): string {
     if (v === null || v === undefined) {
       const isDateField = k.includes("last") || k.includes("date") || k.includes("used") || k.includes("inactive");
       return isDateField ? "Never" : "—";
     }
     if (Array.isArray(v)) return v.join(", ");
-    return String(v);
+    return formatMaybeDate(String(v));
   }
   return (
     <div className="space-y-4">
@@ -976,9 +987,11 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
       {scalars.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-zinc-200">
           {scalars.map(([k, v], i) => (
-            <div key={k} className={`flex gap-4 px-4 py-2.5 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
-              <span className="w-36 flex-shrink-0 text-sm text-zinc-500">{k.replace(/_/g, " ")}</span>
-              <span className="break-all font-mono text-sm text-zinc-700">{renderScalar(k, v)}</span>
+            <div key={k} className={`flex gap-4 px-4 py-3 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
+              <span className="w-36 flex-shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500">{k.replace(/_/g, " ")}</span>
+              <span className={`break-all text-sm leading-6 text-zinc-600 ${/arn|_id$|(^|_)id$|key_id/i.test(k) ? "font-mono text-zinc-700" : "font-normal"}`}>
+                {renderScalar(k, v)}
+              </span>
             </div>
           ))}
         </div>
