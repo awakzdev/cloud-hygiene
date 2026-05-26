@@ -77,11 +77,11 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
             <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">Last sync</div>
             <div className="mt-1 font-medium text-zinc-700">{formatSync(provider.last_synced_at)}</div>
           </div>
-          <div>
+          <div className="text-center">
             <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">Repos</div>
             <div className="mt-1 font-medium text-zinc-700">{provider.repos}</div>
           </div>
-          <div>
+          <div className="text-center">
             <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">MRs / PRs</div>
             <div className="mt-1 font-medium text-zinc-700">{provider.pull_requests}</div>
           </div>
