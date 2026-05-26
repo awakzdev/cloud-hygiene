@@ -234,7 +234,7 @@ export default function GitLabIntegration() {
                 <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
                   <Link
                     to="/integrations/gitlab/edit"
-                    className="rounded-lg border border-transparent px-3 py-2 text-sm font-medium text-zinc-600 hover:border-zinc-200 hover:bg-white hover:text-zinc-950"
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
                   >
                     Edit scope
                   </Link>
