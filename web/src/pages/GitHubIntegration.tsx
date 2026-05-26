@@ -165,6 +165,12 @@ export default function GitHubIntegration() {
         </div>
       )}
 
+      {lastSync && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          Sync complete — {lastSync.identity_users} identity records, {lastSync.repos} repositories, {lastSync.repo_protections} protected branches, {lastSync.pull_requests} merged pull requests.
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[1.18fr_0.82fr]">
         <div className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-5">
@@ -242,11 +248,6 @@ export default function GitHubIntegration() {
           {sync.error && (
             <div className="mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               {(sync.error as Error).message}
-            </div>
-          )}
-          {lastSync && (
-            <div className="mt-5 rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-2.5 text-sm text-emerald-800">
-              Evidence sync completed: {lastSync.identity_users} identity records, {lastSync.repos} repositories, {lastSync.repo_protections} protected branches, and {lastSync.pull_requests} merged pull requests.
             </div>
           )}
 
