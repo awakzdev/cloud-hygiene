@@ -235,38 +235,43 @@ function AccountCard({ acc, findingsData, onRemoved }: {
             )}
 
             {/* Actions */}
-            <div className="relative flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
-              {scanQueued && (
-                <div className="pointer-events-none absolute -top-2 right-0 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                  Scan queued
-                </div>
-              )}
-              <button
-                onClick={() => { setScanQueued(false); scan.mutate(); }}
-                disabled={scan.isPending}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-              >
-                <svg className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                {scan.isPending ? "Triggering…" : "Run scan now"}
-              </button>
-              <button
-                onClick={() => { toggleUpdateArn(); setRoleArn(""); verify.reset(); }}
-                className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
-              >
-                Update role ARN
-                <svg className={`w-3 h-3 transition-transform ${showUpdateArn ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-              <button
-                onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(); }}
-                disabled={remove.isPending}
-                className="ml-auto rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-              >
-                {remove.isPending ? "Removing…" : "Remove account"}
-              </button>
+            <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => { setScanQueued(false); scan.mutate(); }}
+                  disabled={scan.isPending}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  <svg className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  {scan.isPending ? "Triggering…" : "Run scan now"}
+                </button>
+                <button
+                  onClick={() => { toggleUpdateArn(); setRoleArn(""); verify.reset(); }}
+                  className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+                >
+                  Update role ARN
+                  <svg className={`w-3 h-3 transition-transform ${showUpdateArn ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {scanQueued && (
+                  <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                    Scan queued
+                  </div>
+                )}
+                <button
+                  onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(); }}
+                  disabled={remove.isPending}
+                  className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                >
+                  {remove.isPending ? "Removing…" : "Remove account"}
+                </button>
+              </div>
             </div>
           </div>
         )}
