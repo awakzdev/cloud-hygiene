@@ -75,6 +75,7 @@ def build_evidence_pack(
             {"entity_id": s.entity_id, "taken_at": s.taken_at.isoformat(), "data": s.payload_json}
         )
 
+    generated_at = datetime.now(timezone.utc)
     control_results: list[dict[str, Any]] = []
     for ctrl in controls:
         status, hits = _control_status(open_findings, check_map[ctrl.id])
@@ -82,6 +83,18 @@ def build_evidence_pack(
         snaps = []
         for t in relevant_types:
             snaps.extend(snap_by_type.get(t, []))
+
+        # When no snapshots exist (e.g. resource was never present — CloudTrail not enabled),
+        # synthesize entries from finding evidence so auditors see account state rather than [].
+        if not snaps and hits:
+            snaps = [
+                {
+                    "entity_id": f.resource_arn,
+                    "taken_at": generated_at.isoformat(),
+                    "data": {**(f.evidence or {}), "_synthetic": True, "note": "Resource absent — no collected snapshot. Evidence derived from finding."},
+                }
+                for f in hits[:50]
+            ]
 
         control_results.append(
             {
@@ -97,8 +110,6 @@ def build_evidence_pack(
         )
 
     buf = io.BytesIO()
-    generated_at = datetime.now(timezone.utc)
-
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         readme = _build_readme(acc, framework, period_days, generated_at, control_results)
         zf.writestr("README.txt", readme)

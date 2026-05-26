@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-26 (session 5)_
+_Last updated: 2026-05-26 (session 6)_
 
 ---
 
@@ -495,7 +495,16 @@ policy analysis, onboarding empty state.
 - Test coverage: expanded to 33 tests (up from 16), new tests cover all Phase 2 checks
 - Reference page (`/reference`): searchable 22-row table of all supported search keys, resource types, check IDs
 
-**Remaining gaps after session 5:**
+**Session 6 additions (2026-05-26):**
+- **What If? tab — full 38-check coverage**: every check in the product now has a What If? tab. `BLAST_RADIUS_CHECKS` set in FindingDrawer covers all resource types; backend `GET /v1/accounts/{id}/blast-radius` handles all 38 check prefixes
+- **What If? blast radius handlers added**: RDS instance, EC2 instance (IMDSv2), EBS volume (unencrypted + attached instance list), EBS encryption default, CloudTrail trail, VPC flow logs, IAM root (static), IAM password policy, S3 account block, GuardDuty, Security Hub, AWS Config, Access Analyzer
+- **buildVerdict() coverage**: synthesises blast radius data → `{ text, type: "safe"|"caution"|"warning" }` for all 16 resource shapes; displayed as colored callout card in What If? tab
+- **PolicyDiffView**: statement-level diff between original/cleaned inline policies with red strikethrough for removed statements; 3-way toggle (diff / cleaned / original)
+- **PDF report fixes**: ARN truncation bug fixed (`[-45:]` → `[:65]` forward slice); empty "Score" column removed, Title column widened 20pt
+- **Evidence pack synthetic snapshots**: when `snapshots.json` would be empty (resource absent — e.g. CloudTrail not enabled), evidence pack now synthesises snapshot entries from finding evidence with `_synthetic: true` flag + explanatory note. Auditors no longer see `[]`.
+- **What If? tab UI polish**: amber icon (`text-amber-400`) restored, trailing `?` dropped from label; "Blast radius" header weight/size bumped; policy chip borders removed, fill-only chips
+
+**Remaining gaps after session 6:**
 
 1. `iam.root.usage` — root account activity check via CloudTrail `LookupEvents` (needs `cloudtrail:LookupEvents` added to CFN role + migration for root_activity table)
 2. End-to-end AWS sandbox validation: signup → CFN → verify → scan → evidence pack
