@@ -193,7 +193,7 @@ AWS control-plane APIs, reachable via public HTTPS.
 ## P1 — security hardening
 
 - [x] Encrypt `aws_accounts.role_arn` + `external_id` at rest (Fernet, migration 0008)
-- [ ] CSP + secure cookie flags + HSTS on Caddy
+- [x] CSP + secure headers (X-Content-Type-Options, X-Frame-Options, HSTS, CSP) via FastAPI SecurityHeadersMiddleware; HSTS+CSP only in prod APP_ENV
 - [x] Password complexity + breach-check (have-i-been-pwned k-anonymity)
 - [x] Public `/security` page documenting permissions + retention
 
@@ -569,6 +569,13 @@ policy analysis, onboarding empty state.
 3. Stripe gating for evidence export limits (deferred per founder decision)
 4. TOTP MFA (deferred to Phase 1.5 / paying customers ask)
 
+**Session 9 additions (2026-05-26):**
+- **GitHub CODEOWNERS check** (`github.repo.no_codeowners`, medium): GitHub sync now checks for CODEOWNERS in /, .github/, docs/; `has_codeowners` column in repos (migration 0020)
+- **GitHub environment protection check** (`github.repo.no_env_protection`, high): sync collects environments + required_reviewers from GitHub environments API; `protected_envs` JSONB in repos (migration 0020); flags envs with no required reviewers
+- **CSP + security headers**: `SecurityHeadersMiddleware` in FastAPI — X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy; HSTS + CSP only in prod APP_ENV
+- **pg_dump backup service**: `backup` service in compose.yml (prod profile); dumps to Backblaze B2 via S3-compatible API if `B2_KEY_ID`+`B2_APPLICATION_KEY`+`B2_BUCKET` configured; run manually or via host cron
+- 50 total checks (was 48)
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change
@@ -592,13 +599,13 @@ management (CC7.1) in one shot. Most startups use GitHub.
   passes (33 tests), and `npm run build` passes
 
 **Still needed in Phase 3:**
-- CODEOWNERS coverage
-- Team membership
-- Outside collaborators explicitly
-- Protected environments and required reviewers
-- GitHub Actions deployments/workflow runs
-- GitHub-derived controls/checks and evidence-pack wiring
-- AWS CloudTrail event ↔ GitHub PR correlation timeline
+- [x] CODEOWNERS coverage (`github.repo.no_codeowners` check + sync)
+- [x] Protected environments and required reviewers (`github.repo.no_env_protection` check + sync)
+- [ ] Team membership
+- [ ] Outside collaborators explicitly
+- [ ] GitHub Actions deployments/workflow runs
+- [ ] GitHub-derived controls/checks and evidence-pack wiring
+- [ ] AWS CloudTrail event ↔ GitHub PR correlation timeline
 
 **Identity side:**
 - Org members (admins, outside collaborators)

@@ -48,6 +48,8 @@ class Repo(Base):
     external_id: Mapped[str] = mapped_column(String(120), nullable=False)
     name: Mapped[str] = mapped_column(String(320), nullable=False)
     default_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    has_codeowners: Mapped[bool | None] = mapped_column(Boolean(), nullable=True)
+    protected_envs: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     snapshot_taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("provider_id", "external_id", name="uq_repo_provider_external"),)

@@ -99,7 +99,14 @@ def _upsert_identity_user(db: Session, provider_id: uuid.UUID, member: dict[str,
     row.snapshot_taken_at = now
 
 
-def _upsert_repo(db: Session, provider_id: uuid.UUID, gh_repo: dict[str, Any], now: datetime) -> Repo:
+def _upsert_repo(
+    db: Session,
+    provider_id: uuid.UUID,
+    gh_repo: dict[str, Any],
+    now: datetime,
+    has_codeowners: bool | None = None,
+    protected_envs: list | None = None,
+) -> "Repo":
     external_id = str(gh_repo["id"])
     row = db.scalar(select(Repo).where(Repo.provider_id == provider_id, Repo.external_id == external_id))
     if not row:
@@ -107,8 +114,43 @@ def _upsert_repo(db: Session, provider_id: uuid.UUID, gh_repo: dict[str, Any], n
         db.add(row)
     row.name = gh_repo["full_name"]
     row.default_branch = gh_repo.get("default_branch")
+    if has_codeowners is not None:
+        row.has_codeowners = has_codeowners
+    if protected_envs is not None:
+        row.protected_envs = protected_envs
     row.snapshot_taken_at = now
     return row
+
+
+def _check_codeowners(client: httpx.Client, owner: str, repo_name: str) -> bool:
+    """Return True if CODEOWNERS file exists in any standard location."""
+    for path in ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"):
+        resp = client.get(f"{GITHUB_API}/repos/{owner}/{repo_name}/contents/{path}")
+        if resp.status_code == 200:
+            return True
+    return False
+
+
+def _collect_environments(client: httpx.Client, owner: str, repo_name: str) -> list[dict[str, Any]]:
+    """Collect deployment environments with their protection rules."""
+    resp = client.get(f"{GITHUB_API}/repos/{owner}/{repo_name}/environments")
+    if resp.status_code != 200:
+        return []
+    envs = []
+    for env in (resp.json().get("environments") or []):
+        env_name = env.get("name", "")
+        protection_rules = env.get("protection_rules") or []
+        required_reviewers = [
+            r for r in protection_rules if r.get("type") == "required_reviewers"
+        ]
+        envs.append({
+            "name": env_name,
+            "has_required_reviewers": bool(required_reviewers),
+            "reviewer_count": sum(
+                len(r.get("reviewers") or []) for r in required_reviewers
+            ),
+        })
+    return envs
 
 
 def _upsert_protection(db: Session, repo_id: uuid.UUID, branch: str, protection: dict[str, Any], now: datetime) -> None:
@@ -198,14 +240,17 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
             if selected_repos:
                 repos = [r for r in repos if r.get("full_name") in selected_repos]
             for gh_repo in repos:
-                repo = _upsert_repo(db, provider.id, gh_repo, now)
+                owner_name, repo_name = gh_repo["full_name"].split("/", 1)
+                has_codeowners = _check_codeowners(client, owner_name, repo_name)
+                protected_envs = _collect_environments(client, owner_name, repo_name)
+                repo = _upsert_repo(db, provider.id, gh_repo, now,
+                                    has_codeowners=has_codeowners, protected_envs=protected_envs)
                 db.flush()
                 stats.repos += 1
 
                 branch = gh_repo.get("default_branch")
                 if not branch:
                     continue
-                owner_name, repo_name = gh_repo["full_name"].split("/", 1)
                 protection_resp = client.get(f"{GITHUB_API}/repos/{owner_name}/{repo_name}/branches/{branch}/protection")
                 required_reviews = 0
                 if protection_resp.status_code == 200:

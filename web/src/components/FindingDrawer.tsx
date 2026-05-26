@@ -668,6 +668,30 @@ const identityRemediations: Record<string, Remediation> = {
     cli: "",
     risk: "Unprotected branches allow unauthorized commits to reach production without review or audit trail.",
   },
+  "github.repo.no_codeowners": {
+    why: "Without a CODEOWNERS file, GitHub cannot automatically request reviews from the right team when code in a particular area is changed. Code reviews end up assigned ad-hoc, making it easy for sensitive paths (auth, payments, infra) to be reviewed by people unfamiliar with the area — or not reviewed at all.",
+    console: [
+      "Create a file named CODEOWNERS in the repo root, .github/, or docs/",
+      "Map file paths to GitHub teams or individuals, e.g.: /* @org/platform-team",
+      "Add more specific rules for sensitive directories, e.g.: /src/auth/ @org/security",
+      "Commit the file to the default branch",
+      "In branch protection settings, enable 'Require review from Code Owners'",
+    ],
+    cli: "",
+    risk: "Sensitive code paths may be reviewed by people without the context to spot security issues, undermining the control value of required reviews.",
+  },
+  "github.repo.no_env_protection": {
+    why: "GitHub deployment environments without required reviewers allow workflows to deploy to production without any human approval gate. This bypasses the change management control that ensures at least one person signs off before code reaches production.",
+    console: [
+      "Go to the repository → Settings → Environments",
+      "Click on the environment (e.g. 'production', 'staging')",
+      'Enable "Required reviewers" and add the team or individuals who must approve deployments',
+      "Set a wait timer if appropriate to prevent immediate re-runs",
+      "Save the protection rules",
+    ],
+    cli: "",
+    risk: "Without required reviewers on deployment environments, any GitHub Actions workflow can ship to production without human sign-off — violating SOC2 CC8.1 change management controls.",
+  },
   "github.repo.self_merge_allowed": {
     why: "Allowing authors to merge their own pull requests removes the peer review step that catches bugs, backdoors, and security regressions. It is the single most common change-management gap flagged in SOC2 CC8.1 audits.",
     console: [

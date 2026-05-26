@@ -102,6 +102,41 @@ services:
       - api
       - web
 
+  backup:
+    image: postgres:16-alpine
+    profiles: ["prod"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hygiene}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hygiene}
+      POSTGRES_DB: ${POSTGRES_DB:-hygiene}
+      B2_BUCKET: ${B2_BUCKET:-}
+      B2_KEY_ID: ${B2_KEY_ID:-}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Runs once at container start — trigger nightly via cron on the host or
+    # via `docker compose --profile prod run --rm backup`
+    entrypoint: /bin/sh
+    command: >
+      -c "
+        set -e
+        DUMP_FILE=/tmp/vigil_$$(date +%Y%m%d_%H%M%S).dump
+        pg_dump -h db -U $$POSTGRES_USER -Fc $$POSTGRES_DB > $$DUMP_FILE
+        echo \"Dump written: $$DUMP_FILE ($$(du -sh $$DUMP_FILE | cut -f1))\"
+        if [ -n \"$$B2_KEY_ID\" ]; then
+          apk add --no-cache curl >/dev/null 2>&1
+          echo 'Uploading to Backblaze B2...'
+          curl -s -u $$B2_KEY_ID:$$B2_APPLICATION_KEY \\
+            -T $$DUMP_FILE \\
+            https://s3.us-west-004.backblazeb2.com/$$B2_BUCKET/$$(basename $$DUMP_FILE) \\
+            && echo 'Upload complete' || echo 'Upload failed (check B2 credentials)'
+        else
+          echo 'B2 not configured — dump saved locally only (not persisted outside container)'
+        fi
+      "
+    restart: "no"
+
 volumes:
   db_data:
   caddy_data:

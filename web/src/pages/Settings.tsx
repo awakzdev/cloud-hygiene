@@ -72,6 +72,8 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "github.org.mfa_not_enforced", label: "GitHub MFA not enforced", severity: "high", description: "Require two-factor authentication for all organization members." },
   { id: "github.org.dormant_members", label: "GitHub dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
   { id: "github.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable branch protection on the default branch to require reviews and block direct pushes." },
+  { id: "github.repo.no_codeowners", label: "No CODEOWNERS file", severity: "medium", description: "Add a CODEOWNERS file to automatically assign reviewers for code changes." },
+  { id: "github.repo.no_env_protection", label: "Deployment environment unprotected", severity: "high", description: "Add required reviewers to deployment environments to enforce change approval before deploying." },
   { id: "github.repo.self_merge_allowed", label: "Self-merge allowed", severity: "high", description: "Require at least one reviewer other than the PR author before merging." },
   { id: "github.repo.insufficient_reviews", label: "Insufficient PR reviews", severity: "high", description: "Increase required approvals so changes are reviewed by at least one peer." },
   // GitLab

@@ -62,6 +62,8 @@
       "github.org.mfa_not_enforced",
       "gitlab.org.mfa_not_enforced",
       "github.repo.no_branch_protection",
+      "github.repo.no_codeowners",
+      "github.repo.no_env_protection",
       "gitlab.repo.no_branch_protection",
       "github.repo.self_merge_allowed",
       "gitlab.repo.self_merge_allowed",
@@ -124,6 +126,8 @@
     "guidance": "Evidence: All merged pull requests have required approvals. No self-merges by PR authors. Branch protection rules enforced on default branches.",
     "checks": [
       "github.repo.no_branch_protection",
+      "github.repo.no_codeowners",
+      "github.repo.no_env_protection",
       "github.repo.self_merge_allowed",
       "github.repo.insufficient_reviews",
       "gitlab.repo.no_branch_protection",

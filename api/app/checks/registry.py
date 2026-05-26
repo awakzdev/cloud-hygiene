@@ -2,6 +2,8 @@ from app.checks import (
     github_org_mfa,
     github_org_dormant,
     github_repo_no_protection,
+    github_repo_no_codeowners,
+    github_repo_no_env_protection,
     github_repo_self_merge,
     github_repo_insufficient_reviews,
     gitlab_org_mfa,
@@ -109,6 +111,8 @@ ALL_CHECKS = [
     github_org_mfa,
     github_org_dormant,
     github_repo_no_protection,
+    github_repo_no_codeowners,
+    github_repo_no_env_protection,
     github_repo_self_merge,
     github_repo_insufficient_reviews,
     # GitLab identity

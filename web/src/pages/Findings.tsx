@@ -112,6 +112,8 @@ const checkLabels: Record<string, string> = {
   "github.org.mfa_not_enforced": "GitHub MFA not enforced",
   "github.org.dormant_members": "GitHub dormant members",
   "github.repo.no_branch_protection": "No branch protection",
+  "github.repo.no_codeowners": "No CODEOWNERS file",
+  "github.repo.no_env_protection": "Deployment environment unprotected",
   "github.repo.self_merge_allowed": "Self-merge allowed",
   "github.repo.insufficient_reviews": "Insufficient PR reviews",
   // GitLab
@@ -166,6 +168,8 @@ const checkDescriptions: Record<string, string> = {
   "github.org.mfa_not_enforced": "GitHub organization does not require MFA for all members.",
   "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
   "github.repo.no_branch_protection": "Default branch has no protection rules — anyone can push directly.",
+  "github.repo.no_codeowners": "No CODEOWNERS file — code review is not automatically assigned to responsible team members.",
+  "github.repo.no_env_protection": "Deployment environment(s) have no required reviewers — deploys can proceed without human approval.",
   "github.repo.self_merge_allowed": "Pull requests merged by their own author with no peer review.",
   "github.repo.insufficient_reviews": "Pull requests merged with fewer approvals than required.",
   // GitLab
