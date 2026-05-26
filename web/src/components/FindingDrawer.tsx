@@ -1412,7 +1412,7 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "remediation", label: "Remediation" },
-    ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If?" }] : []),
+    ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If" }] : []),
   ];
 
   return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl">
@@ -1437,6 +1437,11 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
               tab === t.id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             }`}
           >
+            {t.id === "whatif" && (
+              <svg className="h-3.5 w-3.5 text-amber-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+              </svg>
+            )}
             {t.label}
           </button>
         ))}

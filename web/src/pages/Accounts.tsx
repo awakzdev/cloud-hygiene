@@ -333,7 +333,7 @@ export default function Accounts() {
 
   return (
     <div className="space-y-6 max-w-5xl">
-      <div className="flex items-start justify-between">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">AWS Accounts</h1>
           <p className="text-sm text-zinc-500 mt-1">Connect your AWS accounts to start scanning.</p>
