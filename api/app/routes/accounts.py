@@ -15,7 +15,7 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.iam import IamAccessKey, IamUser
-from app.models.resources import CloudTrailTrail, Ec2Instance, KmsKey, SecurityGroup
+from app.models.resources import CloudTrailTrail, Ec2Instance, KmsKey, S3Bucket, SecurityGroup
 from app.models.org import Org
 
 router = APIRouter()
@@ -598,6 +598,53 @@ def blast_radius(
             "rotation_enabled": kms_key.rotation_enabled,
             "dependent_trails": trail_data,
             "dependent_trail_count": len(dependent_trails),
+            "warnings": warnings,
+        }
+
+    # ── S3 Bucket ────────────────────────────────────────────────────────────
+    if check_id.startswith("s3.bucket."):
+        bucket = db.scalar(
+            select(S3Bucket).where(S3Bucket.account_id == acc.id, S3Bucket.arn == resource_arn)
+        )
+        if not bucket:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "S3 bucket not found — run a scan first")
+
+        warnings: list[str] = []
+        confidence = "medium"
+
+        if check_id == "s3.bucket.no_kms":
+            warnings.append(
+                "Any IAM principal writing to this bucket must have kms:GenerateDataKey and kms:Decrypt on the chosen key — verify application IAM policies before enabling"
+            )
+            if not bucket.encrypted:
+                warnings.append("Bucket has no default encryption — enabling SSE-KMS will not re-encrypt existing objects")
+
+        elif check_id == "s3.bucket.no_https_policy":
+            warnings.append(
+                "Adds a Deny for aws:SecureTransport=false — any SDK, CLI, or app connecting over plain HTTP will receive 403. Verify all access paths use HTTPS before applying"
+            )
+
+        elif check_id == "s3.bucket.public_access_not_blocked":
+            if not bucket.public_access_blocked:
+                confidence = "low"
+                warnings.append(
+                    "Blocking public access may break static website hosting or presigned-URL workflows that rely on public bucket ACLs or policies"
+                )
+
+        elif check_id == "s3.bucket.no_logging":
+            confidence = "high"
+
+        return {
+            "resource_type": "s3_bucket",
+            "confidence": confidence,
+            "bucket_name": bucket.name,
+            "arn": bucket.arn,
+            "encrypted": bucket.encrypted,
+            "kms_encrypted": bucket.kms_encrypted,
+            "versioning_enabled": bucket.versioning_enabled,
+            "public_access_blocked": bucket.public_access_blocked,
+            "https_only": bucket.https_only,
+            "logging_enabled": bucket.logging_enabled,
             "warnings": warnings,
         }
 

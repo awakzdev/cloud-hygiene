@@ -760,6 +760,14 @@ type BlastRadiusData = {
   rotation_enabled?: boolean;
   dependent_trails?: { name: string; arn: string; region: string; is_multi_region: boolean }[];
   dependent_trail_count?: number;
+  // s3 bucket fields
+  bucket_name?: string;
+  encrypted?: boolean;
+  kms_encrypted?: boolean;
+  versioning_enabled?: boolean;
+  public_access_blocked?: boolean;
+  https_only?: boolean;
+  logging_enabled?: boolean;
   warnings: string[];
 };
 
@@ -822,6 +830,12 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     if (state === "pendingdeletion") return { text: "Key is pending deletion — cancel deletion before enabling rotation.", type: "caution" };
     if (state === "disabled") return { text: "Key is disabled — re-enable the key before enabling rotation.", type: "caution" };
     return { text: "Safe to enable — KMS key rotation is transparent to applications. AWS retains old key material; no application changes required.", type: "safe" };
+  }
+
+  if (resource_type === "s3_bucket") {
+    if (confidence === "high") return { text: "Safe to enable — enabling S3 access logging has no impact on bucket access or application behaviour.", type: "safe" };
+    if (confidence === "low") return { text: "Review before applying — bucket may have public access patterns that depend on current settings.", type: "warning" };
+    return { text: "Verify before applying — this change may affect applications accessing the bucket. See warnings below.", type: "caution" };
   }
 
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
@@ -1058,6 +1072,27 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
             <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
             {data.has_console_password && <div>Has console password</div>}
+          </div>
+        )}
+
+        {/* S3 bucket: posture grid */}
+        {data.resource_type === "s3_bucket" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {([
+                ["Encryption", data.encrypted ? "Enabled" : "None", data.encrypted],
+                ["KMS", data.kms_encrypted ? "Enabled" : "SSE-S3 / None", data.kms_encrypted],
+                ["Public access", data.public_access_blocked ? "Blocked" : "Open", data.public_access_blocked],
+                ["HTTPS-only", data.https_only ? "Enforced" : "Not enforced", data.https_only],
+                ["Versioning", data.versioning_enabled ? "Enabled" : "Off", data.versioning_enabled],
+                ["Logging", data.logging_enabled ? "Enabled" : "Off", data.logging_enabled],
+              ] as [string, string, boolean | undefined][]).map(([label, val, ok]) => (
+                <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                  <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                  <div className={`font-mono font-medium ${ok ? "text-emerald-700" : "text-zinc-500"}`}>{val}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1363,6 +1398,10 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "ec2.security_group.unrestricted_rdp",
     "ec2.security_group.default_allows_traffic",
     "kms.key.no_rotation",
+    "s3.bucket.no_kms",
+    "s3.bucket.no_https_policy",
+    "s3.bucket.public_access_not_blocked",
+    "s3.bucket.no_logging",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
