@@ -15,7 +15,12 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.iam import IamAccessKey, IamUser
-from app.models.resources import CloudTrailTrail, Ec2Instance, EbsEncryptionDefault, EbsVolume, KmsKey, RdsInstance, S3Bucket, SecurityGroup
+from app.models.resources import (
+    AccessAnalyzer, CloudTrailTrail, ConfigRecorder, Ec2Instance,
+    EbsEncryptionDefault, EbsVolume, GuardDutyDetector, IamPasswordPolicy,
+    KmsKey, RdsInstance, S3AccountPublicAccessBlock, S3Bucket, SecurityGroup,
+    SecurityHubStatus, Vpc,
+)
 from app.models.org import Org
 
 router = APIRouter()
@@ -775,6 +780,170 @@ def blast_radius(
             "publicly_accessible": rds.publicly_accessible,
             "backup_retention_period": rds.backup_retention_period,
             "warnings": warnings,
+        }
+
+    # ── CloudTrail ───────────────────────────────────────────────────────────
+    if check_id.startswith("cloudtrail.trail."):
+        trail = db.scalar(
+            select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id, CloudTrailTrail.arn == resource_arn)
+        )
+        if not trail:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "trail not found — run a scan first")
+
+        warnings: list[str] = []
+        if check_id == "cloudtrail.trail.not_enabled":
+            confidence = "high"
+            warnings.append("Creating a trail stores events in S3 — budget ~$2/month per 100k events for typical startup API call volume")
+        elif check_id == "cloudtrail.trail.no_log_validation":
+            confidence = "high"
+        elif check_id == "cloudtrail.trail.no_kms":
+            confidence = "medium"
+            warnings.append("The CloudTrail delivery role must have kms:GenerateDataKey and kms:Decrypt on the chosen key — verify the role policy before applying")
+
+        return {
+            "resource_type": "cloudtrail_trail",
+            "confidence": confidence,
+            "trail_name": trail.name,
+            "home_region": trail.home_region,
+            "is_multi_region": trail.is_multi_region,
+            "is_logging": trail.is_logging,
+            "log_validation_enabled": trail.log_validation_enabled,
+            "kms_key_id": trail.kms_key_id,
+            "warnings": warnings,
+        }
+
+    # ── VPC Flow Logs ────────────────────────────────────────────────────────
+    if check_id == "vpc.flow_logs.not_enabled":
+        # ARN: arn:aws:ec2:{region}:{account}:vpc/{vpc_id}
+        vpc_id = resource_arn.split("/")[-1] if "/" in resource_arn else None
+        vpc = db.scalar(
+            select(Vpc).where(Vpc.account_id == acc.id, Vpc.vpc_id == vpc_id)
+        ) if vpc_id else None
+        if not vpc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "VPC not found — run a scan first")
+
+        # Count instances in this VPC
+        instance_count = db.scalar(
+            select(__import__("sqlalchemy").func.count()).select_from(Ec2Instance).where(
+                Ec2Instance.account_id == acc.id,
+                Ec2Instance.vpc_id == vpc.vpc_id,
+            )
+        ) or 0
+
+        return {
+            "resource_type": "vpc",
+            "confidence": "high",
+            "vpc_id": vpc.vpc_id,
+            "region": vpc.region,
+            "instance_count": instance_count,
+            "warnings": [
+                "Flow logs deliver to CloudWatch Logs or S3 — budget ~$0.50/GB for CloudWatch ingestion in active VPCs"
+            ] if instance_count > 0 else [],
+        }
+
+    # ── IAM Root ─────────────────────────────────────────────────────────────
+    if check_id.startswith("iam.root."):
+        if check_id == "iam.root.has_access_keys":
+            return {
+                "resource_type": "iam_root",
+                "confidence": "low",
+                "warnings": [
+                    "Any process using root access keys will immediately break when the keys are deleted — audit all automation, CI/CD configs, and scripts that may hold root credentials before deleting",
+                    "Root keys bypass all IAM policies and cannot be scoped — there is no legitimate use case for keeping them",
+                ],
+            }
+        if check_id == "iam.root.no_mfa":
+            return {
+                "resource_type": "iam_root",
+                "confidence": "high",
+                "warnings": ["MFA must be configured via the AWS Console — the CLI cannot enable root MFA directly"],
+            }
+        if check_id == "iam.root.usage":
+            return {
+                "resource_type": "iam_root",
+                "confidence": "high",
+                "warnings": ["This is an informational finding — no remediation breaks anything, but recurring root use indicates a process gap"],
+            }
+
+    # ── IAM Password Policy ──────────────────────────────────────────────────
+    if check_id == "iam.account.password_policy_weak":
+        policy = db.scalar(
+            select(IamPasswordPolicy).where(IamPasswordPolicy.account_id == acc.id)
+        )
+        warnings: list[str] = []
+        confidence = "medium"
+        if policy and policy.max_age and policy.max_age > 0:
+            warnings.append(f"Existing policy has max password age of {policy.max_age} days — if you reduce this, users with older passwords will be forced to reset at next login")
+        else:
+            confidence = "high"
+
+        return {
+            "resource_type": "iam_password_policy",
+            "confidence": confidence,
+            "min_length": policy.min_length if policy else None,
+            "max_age": policy.max_age if policy else None,
+            "password_reuse_prevention": policy.password_reuse_prevention if policy else None,
+            "warnings": warnings,
+        }
+
+    # ── S3 Account Public Access Block ───────────────────────────────────────
+    if check_id == "s3.account.public_access_not_blocked":
+        block = db.scalar(
+            select(S3AccountPublicAccessBlock).where(S3AccountPublicAccessBlock.account_id == acc.id)
+        )
+        public_buckets = db.scalars(
+            select(S3Bucket).where(S3Bucket.account_id == acc.id, S3Bucket.public_access_blocked == False)  # noqa: E712
+        ).all() if block else []
+
+        warnings: list[str] = []
+        if public_buckets:
+            warnings.append(
+                f"{len(public_buckets)} bucket(s) not blocking public access at the bucket level — enabling the account-level block overrides these and may break static website hosting or public-read buckets"
+            )
+
+        return {
+            "resource_type": "s3_account_block",
+            "confidence": "low" if public_buckets else "medium",
+            "public_bucket_count": len(public_buckets),
+            "warnings": warnings,
+        }
+
+    # ── Account-level service enables (GuardDuty, Config, SecurityHub, AccessAnalyzer)
+    if check_id == "guardduty.detector.not_enabled":
+        disabled_regions = [
+            r.region for r in db.scalars(
+                select(GuardDutyDetector).where(
+                    GuardDutyDetector.account_id == acc.id,
+                    GuardDutyDetector.status == "DISABLED",
+                )
+            ).all()
+        ]
+        return {
+            "resource_type": "guardduty",
+            "confidence": "high",
+            "disabled_regions": disabled_regions,
+            "warnings": [f"GuardDuty costs ~$4–$8/month per account in active regions — scale with data ingestion volume"],
+        }
+
+    if check_id == "aws.config.not_enabled":
+        return {
+            "resource_type": "aws_config",
+            "confidence": "high",
+            "warnings": ["AWS Config records all configuration changes and stores them in S3 — budget ~$2–$5/month for a typical startup account"],
+        }
+
+    if check_id == "aws.securityhub.not_enabled":
+        return {
+            "resource_type": "securityhub",
+            "confidence": "high",
+            "warnings": ["Security Hub costs ~$0.001 per check per resource — typically $5–$20/month for a startup-scale account"],
+        }
+
+    if check_id == "aws.access_analyzer.not_enabled":
+        return {
+            "resource_type": "access_analyzer",
+            "confidence": "high",
+            "warnings": [],
         }
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")

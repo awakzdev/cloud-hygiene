@@ -786,7 +786,23 @@ type BlastRadiusData = {
   attached_instances?: { instance_id: string; state: string; name: string; instance_type: string | null }[];
   // ebs encryption default fields
   existing_unencrypted_count?: number;
-  // disabled_regions already in evidence; no extra field needed
+  // cloudtrail trail fields
+  trail_name?: string;
+  home_region?: string;
+  is_multi_region?: boolean;
+  is_logging?: boolean;
+  log_validation_enabled?: boolean;
+  kms_key_id?: string | null;
+  // vpc fields (vpc_id and region reused from security_group fields above)
+  instance_count?: number;
+  // iam root / password policy fields
+  min_length?: number | null;
+  max_age?: number | null;
+  password_reuse_prevention?: number | null;
+  // s3 account block fields
+  public_bucket_count?: number;
+  // guardduty fields
+  disabled_regions?: string[];
   warnings: string[];
 };
 
@@ -879,6 +895,38 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     return count > 0
       ? { text: `Safe to enable — only affects new volumes. ${count} existing unencrypted volume(s) must be migrated separately.`, type: "caution" }
       : { text: "Safe to enable — only affects volumes created after this change. No existing volumes are impacted.", type: "safe" };
+  }
+
+  if (resource_type === "cloudtrail_trail") {
+    if (confidence === "high") return { text: "Safe to enable — no application impact. Note: CloudTrail storage in S3 incurs a small ongoing cost.", type: "safe" };
+    return { text: "Verify CloudTrail's delivery role has the required KMS permissions before applying.", type: "caution" };
+  }
+
+  if (resource_type === "vpc") {
+    const count = data.instance_count ?? 0;
+    return count > 0
+      ? { text: `Safe to enable — flow logs add visibility without affecting network traffic. ${count} instance(s) in this VPC will be covered.`, type: "safe" }
+      : { text: "Safe to enable — no instances in this VPC, low traffic cost expected.", type: "safe" };
+  }
+
+  if (resource_type === "iam_root") {
+    if (confidence === "low") return { text: "Check all automation for root credentials before deleting — any process using these keys will immediately break.", type: "warning" };
+    return { text: "Safe to apply — no application impact. This change only affects the root identity itself.", type: "safe" };
+  }
+
+  if (resource_type === "iam_password_policy") {
+    if (confidence === "medium") return { text: "Users with passwords older than the new maximum age will be forced to reset at next login.", type: "caution" };
+    return { text: "Safe to update — no current max age policy set, so no forced password resets will occur.", type: "safe" };
+  }
+
+  if (resource_type === "s3_account_block") {
+    const count = data.public_bucket_count ?? 0;
+    if (count > 0) return { text: `${count} bucket(s) are not yet blocking public access at the bucket level — enabling the account block will override them and may break public-read buckets or static websites.`, type: "warning" };
+    return { text: "Safe to enable — all buckets already block public access at the bucket level. Account-level block adds a belt-and-suspenders guard.", type: "safe" };
+  }
+
+  if (resource_type === "guardduty" || resource_type === "aws_config" || resource_type === "securityhub" || resource_type === "access_analyzer") {
+    return { text: "Safe to enable — adds security visibility without impacting existing resources or applications.", type: "safe" };
   }
 
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
@@ -1210,6 +1258,94 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             </div>
             <p className="mt-1.5 text-zinc-400 leading-relaxed">Enabling default encryption only affects volumes created <em>after</em> this change. Each existing unencrypted volume must be migrated separately via snapshot copy.</p>
           </div>
+        )}
+
+        {/* CloudTrail trail: metadata grid */}
+        {data.resource_type === "cloudtrail_trail" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {([
+              ["Trail", data.trail_name ?? "—", null],
+              ["Region", data.home_region ?? "—", null],
+              ["Logging", data.is_logging ? "Active" : "Stopped", data.is_logging],
+              ["Multi-region", data.is_multi_region ? "Yes" : "No", data.is_multi_region],
+              ["Log validation", data.log_validation_enabled ? "Enabled" : "Off", data.log_validation_enabled],
+              ["KMS encrypted", data.kms_key_id ? "Yes" : "No", !!data.kms_key_id],
+            ] as [string, string, boolean | null][]).map(([label, val, ok]) => (
+              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                <div className={`font-mono font-medium ${ok === true ? "text-emerald-700" : ok === false ? "text-zinc-500" : "text-zinc-700"}`}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* VPC: metadata */}
+        {data.resource_type === "vpc" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">VPC</div>
+              <div className="font-mono font-medium text-zinc-700">{data.vpc_id ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Region</div>
+              <div className="font-mono font-medium text-zinc-700">{data.region ?? "—"}</div>
+            </div>
+            <div className="col-span-2 rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Instances in VPC</div>
+              <div className="text-2xl font-bold tabular-nums text-zinc-700">{data.instance_count ?? 0}</div>
+            </div>
+          </div>
+        )}
+
+        {/* IAM root: static info */}
+        {data.resource_type === "iam_root" && (
+          <p className="text-xs text-zinc-500 leading-relaxed">Root is the most privileged identity in AWS — all IAM policies and SCPs are bypassed. Changes to root identity settings have no effect on workloads or IAM users.</p>
+        )}
+
+        {/* IAM password policy: current settings */}
+        {data.resource_type === "iam_password_policy" && (
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Min length</div>
+              <div className="font-mono font-medium text-zinc-700">{data.min_length ?? "none"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Max age</div>
+              <div className={`font-mono font-medium ${data.max_age ? "text-amber-700" : "text-zinc-400"}`}>{data.max_age ? `${data.max_age}d` : "none"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Reuse prevention</div>
+              <div className="font-mono font-medium text-zinc-700">{data.password_reuse_prevention ?? "none"}</div>
+            </div>
+          </div>
+        )}
+
+        {/* S3 account-level block: bucket count */}
+        {data.resource_type === "s3_account_block" && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-xs">
+            <div className="font-medium text-zinc-400 mb-0.5">Buckets without bucket-level block</div>
+            <div className={`text-2xl font-bold tabular-nums ${(data.public_bucket_count ?? 0) > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+              {data.public_bucket_count ?? 0}
+            </div>
+            <p className="mt-1.5 text-zinc-400 leading-relaxed">These buckets rely on object ACLs or policies alone. Enabling the account-level block overrides both.</p>
+          </div>
+        )}
+
+        {/* GuardDuty: disabled regions */}
+        {data.resource_type === "guardduty" && data.disabled_regions && data.disabled_regions.length > 0 && (
+          <div>
+            <div className="text-sm font-semibold text-zinc-700 mb-2">Disabled in {data.disabled_regions.length} region(s)</div>
+            <div className="flex flex-wrap gap-1.5">
+              {data.disabled_regions.map((r) => (
+                <span key={r} className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-500">{r}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Config / SecurityHub / AccessAnalyzer: simple info */}
+        {(data.resource_type === "aws_config" || data.resource_type === "securityhub" || data.resource_type === "access_analyzer") && (
+          <p className="text-xs text-zinc-500 leading-relaxed">Enabling this service adds security visibility. No existing resources, applications, or IAM policies are affected.</p>
         )}
 
         {/* S3 bucket: posture grid */}
@@ -1545,6 +1681,19 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "ec2.instance.imdsv2_not_required",
     "ec2.ebs.volume_unencrypted",
     "ec2.ebs.encryption_not_default",
+    "cloudtrail.trail.not_enabled",
+    "cloudtrail.trail.no_log_validation",
+    "cloudtrail.trail.no_kms",
+    "vpc.flow_logs.not_enabled",
+    "iam.root.no_mfa",
+    "iam.root.has_access_keys",
+    "iam.root.usage",
+    "iam.account.password_policy_weak",
+    "s3.account.public_access_not_blocked",
+    "guardduty.detector.not_enabled",
+    "aws.config.not_enabled",
+    "aws.securityhub.not_enabled",
+    "aws.access_analyzer.not_enabled",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
