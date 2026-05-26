@@ -106,8 +106,8 @@ def build_pdf(
     pdf.set_fill_color(39, 39, 42)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 9)
-    col_w = [22, 90, 22, 26, 20]
-    headers = ["Control", "Title", "Status", "Findings", "Score"]
+    col_w = [22, 110, 22, 26]
+    headers = ["Control", "Title", "Status", "Findings"]
     for i, h in enumerate(headers):
         pdf.cell(col_w[i], 7, h, border=0, fill=True, align="C" if i > 1 else "L")
     pdf.ln()
@@ -120,10 +120,9 @@ def build_pdf(
         pdf.set_fill_color(*bg)
         pdf.set_text_color(24, 24, 27)
 
-        row_y = pdf.get_y()
         pdf.cell(col_w[0], 6, _s(r["control_id"]), border=0, fill=fill)
         title = _s(r["title"])
-        title = title[:52] + "..." if len(title) > 52 else title
+        title = title[:62] + "..." if len(title) > 62 else title
         pdf.cell(col_w[1], 6, title, border=0, fill=fill)
 
         status = r["status"]
@@ -134,7 +133,6 @@ def build_pdf(
         pdf.set_text_color(24, 24, 27)
         pdf.set_font("Helvetica", "", 9)
         pdf.cell(col_w[3], 6, str(r["finding_count"]), border=0, fill=fill, align="C")
-        pdf.cell(col_w[4], 6, "", border=0, fill=fill)
         pdf.ln()
 
     pdf.ln(6)
@@ -173,7 +171,8 @@ def build_pdf(
                 pdf.set_font("Helvetica", "", 8)
                 pdf.set_text_color(63, 63, 70)
                 for f in r["findings"][:5]:
-                    arn_short = f["resource_arn"][-45:] if len(f["resource_arn"]) > 45 else f["resource_arn"]
+                    arn = f["resource_arn"]
+                    arn_short = arn[:65] + "..." if len(arn) > 65 else arn
                     line = _s(f"[{f['severity'].upper()}] {f['title']} - {arn_short}")
                     pdf.set_x(pdf.l_margin + 4)
                     pdf.multi_cell(pdf.epw - 4, 4.5, line, new_x="LMARGIN", new_y="NEXT")
