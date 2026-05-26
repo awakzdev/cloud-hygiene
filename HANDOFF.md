@@ -517,6 +517,32 @@ policy analysis, onboarding empty state.
 Single highest-leverage integration. Covers both identity (CC6) and change
 management (CC7.1) in one shot. Most startups use GitHub.
 
+**Session 7 kickoff (2026-05-26):**
+- Added migration `0018_github_integration.py` with the locked Phase 3 tables:
+  `identity_providers`, `identity_users`, `repos`, `repo_protections`, `pull_requests`
+- Added SQLAlchemy models for those tables; provider config is encrypted with the
+  existing `EncryptedString` Fernet helper
+- Added OAuth App integration routes under `/v1/integrations/github`:
+  connect URL, callback, provider summary, sync, disconnect
+- Added GitHub sync service for the first vertical slice:
+  org/user identity records, repositories, default-branch protection, merged PRs,
+  approver counts, required review counts, and self-merge detection
+- Added `/integrations/github` UI page and sidebar entry
+- Fixed integration OAuth redirect handling to reuse the existing GitHub login
+  callback path (`/v1/auth/github/callback`) by default, so one OAuth App
+  callback registration can handle both login and evidence integration states
+- Applied migration to the running dev DB; `docker compose exec -T api python -m pytest -q`
+  passes (33 tests), and `npm run build` passes
+
+**Still needed in Phase 3:**
+- CODEOWNERS coverage
+- Team membership
+- Outside collaborators explicitly
+- Protected environments and required reviewers
+- GitHub Actions deployments/workflow runs
+- GitHub-derived controls/checks and evidence-pack wiring
+- AWS CloudTrail event ↔ GitHub PR correlation timeline
+
 **Identity side:**
 - Org members (admins, outside collaborators)
 - MFA enforced at org level + per-user MFA state
@@ -552,6 +578,36 @@ fine-grained per-repo permissions, but takes longer to ship).
 0.0.0.0/0 at 14:32 (CloudTrail). Matched to PR #347 merged 14:28 by alice.
 Approved by bob via required-review branch protection. Deployment workflow
 xyz ran at 14:30." Few compliance platforms present these systems as a correlated engineering timeline with this level of technical depth.
+
+### Phase 3b — GitLab integration (2–3 weeks, after GitHub ships)
+
+Same evidence surface as GitHub — covers teams that use GitLab exclusively (common in EU + enterprise).
+
+**Schema reuse:** `identity_providers` already has `type` column. Add `type = "gitlab"`. All existing tables (`identity_users`, `repos`, `repo_protections`, `pull_requests`) map 1:1 — no new migrations needed.
+
+**API mapping:**
+| GitHub | GitLab equivalent |
+|---|---|
+| Orgs | Groups (`/groups`) |
+| Repos | Projects (`/groups/:id/projects`) |
+| Branch protection rules | Protected branches (`/projects/:id/protected_branches`) + push rules |
+| PR reviews + approvals | MR approvals (`approvals_before_merge`, `/merge_requests/:id/approvals`) |
+| Self-merge detection | MR `author.id == merged_by.id` |
+| Org MFA enforcement | Group `require_two_factor_authentication` |
+| Dormant members | Group members `last_activity_on` |
+
+**Auth:** Personal access token or OAuth app (`read_api` scope). GitLab OAuth flow mirrors GitHub — add `GITLAB_CLIENT_ID` + `GITLAB_CLIENT_SECRET` to `.env`.
+
+**Checks to add** (same slugs pattern as GitHub):
+- `gitlab.group.mfa_not_enforced`
+- `gitlab.group.dormant_members`
+- `gitlab.repo.no_branch_protection`
+- `gitlab.repo.self_merge_allowed`
+- `gitlab.repo.insufficient_reviews`
+
+**UI:** Reuse the GitHub integration page component — parameterise by provider type, swap GitLab logo. "View findings" filter pre-wire: `?checks=gitlab.group.*,gitlab.repo.*`.
+
+**Note:** GitLab self-hosted instances need a `base_url` field in `config_json_encrypted` — account for this in the OAuth connect flow.
 
 ### Phase 4 — Google Workspace (2–3 weeks)
 
