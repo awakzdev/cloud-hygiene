@@ -8,6 +8,7 @@ type SettingsData = {
   notifications: {
     email_digest_enabled: boolean;
     digest_email: string | null;
+    slack_webhook_url: string | null;
   };
 };
 
@@ -29,6 +30,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "iam.role.unassumed_90d", label: "Role unassumed", severity: "medium", description: "Remove or deactivate roles that have never been assumed." },
   { id: "iam.role.wildcard_action", label: "Wildcard action in inline policy", severity: "high", description: "Replace Action: '*' with explicit action lists." },
   { id: "iam.policy.wildcard_resource", label: "Wildcard resource in policy", severity: "high", description: "Policy grants dangerous actions on Resource: '*' — scope to specific ARNs." },
+  { id: "iam.policy.unattached", label: "Unattached managed policy", severity: "low", description: "Customer-managed policies not attached to any user, group, or role." },
   { id: "iam.role.unused_services_90d", label: "Unused granted services", severity: "medium", description: "Scope role policies down to services actually used." },
   { id: "iam.role.trust_wildcard", label: "Wildcard trust policy", severity: "critical", description: "Roles that trust '*' can be assumed by anyone." },
   // S3
@@ -116,9 +118,12 @@ export default function Settings() {
   const [checks, setChecks] = useState<Record<string, boolean>>({});
   const [emailDigestEnabled, setEmailDigestEnabled] = useState(false);
   const [digestEmail, setDigestEmail] = useState("");
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
   const [saved, setSaved] = useState(false);
   const [testState, setTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [testError, setTestError] = useState("");
+  const [slackTestState, setSlackTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [slackTestError, setSlackTestError] = useState("");
 
   useEffect(() => {
     if (!data) return;
@@ -129,6 +134,7 @@ export default function Settings() {
     setChecks(map);
     setEmailDigestEnabled(data.notifications.email_digest_enabled ?? false);
     setDigestEmail(data.notifications.digest_email ?? "");
+    setSlackWebhookUrl(data.notifications.slack_webhook_url ?? "");
   }, [data]);
 
   const mutation = useMutation({
@@ -140,6 +146,20 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 2000);
     },
   });
+
+  async function sendSlackTest() {
+    setSlackTestState("sending");
+    setSlackTestError("");
+    try {
+      await api("/v1/settings/test-slack", { method: "POST" });
+      setSlackTestState("sent");
+      setTimeout(() => setSlackTestState("idle"), 3000);
+    } catch (e) {
+      setSlackTestState("error");
+      setSlackTestError((e as Error).message);
+      setTimeout(() => setSlackTestState("idle"), 4000);
+    }
+  }
 
   async function sendTest() {
     setTestState("sending");
@@ -165,6 +185,7 @@ export default function Settings() {
       notifications: {
         email_digest_enabled: emailDigestEnabled,
         digest_email: digestEmail.trim() || null,
+        slack_webhook_url: slackWebhookUrl.trim() || null,
       },
     });
   }
@@ -310,6 +331,42 @@ export default function Settings() {
               </div>
             </div>
           )}
+        </div>
+      </section>
+
+      {/* Slack */}
+      <section className="space-y-4">
+        <h2 className="text-base font-semibold text-zinc-800">Slack</h2>
+        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
+          <div className="px-5 py-4">
+            <p className="text-sm font-medium text-zinc-900 mb-0.5">Slack webhook</p>
+            <p className="text-xs text-zinc-500 mb-3">Post the weekly digest to a Slack channel. Create an Incoming Webhook in your Slack workspace and paste the URL below.</p>
+            <div className="flex max-w-xl items-center gap-2">
+              <input
+                type="url"
+                value={slackWebhookUrl}
+                onChange={(e) => setSlackWebhookUrl(e.target.value)}
+                placeholder="https://hooks.slack.com/services/…"
+                className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+              />
+              <button
+                type="button"
+                onClick={sendSlackTest}
+                disabled={slackTestState === "sending" || !slackWebhookUrl.trim()}
+                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
+              >
+                {slackTestState === "sending" ? "Sending…" : "Test"}
+              </button>
+            </div>
+            <div className="mt-1.5 flex items-center gap-3">
+              {slackTestState === "sent" && (
+                <span className="text-xs text-emerald-600 font-medium">Message sent to Slack.</span>
+              )}
+              {slackTestState === "error" && (
+                <span className="text-xs text-red-500">{slackTestError}</span>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 

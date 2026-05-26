@@ -105,6 +105,7 @@ _Last updated: 2026-05-26 (session 7)_
 - Fallback: sends to account email if no recipient configured
 - "Send test email" button fires immediately from Settings UI
 - Unsubscribe link in email → `/settings`
+- Slack webhook: configurable per-org incoming webhook URL, test button, weekly digest also posts to Slack
 
 ### Frontend
 - Login page: email/password + GitHub SSO + Google SSO
@@ -121,6 +122,7 @@ _Last updated: 2026-05-26 (session 7)_
 - Password minimum 12 chars enforced at signup + change password
 - Fernet encryption for `role_arn` + `external_id` at rest
 - Auto-scan triggered on role verify (no manual trigger needed)
+- Refresh tokens: 30-day signed JWT, auto-retry on 401, OAuth callbacks store both tokens
 
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
@@ -181,9 +183,9 @@ AWS control-plane APIs, reachable via public HTTPS.
 - [x] Finding detail drawer — evidence, Console/CLI remediation, auto-interpolated resource names
 - [ ] **Generate Least-Privilege Policy** — `GET /v1/accounts/:id/roles/generated-policy` strips unused service statements from inline policies and returns cleaned JSON; Access Analyzer CloudTrail-based generation is future work (requires `accessRole` setup)
 - [x] PDF compliance report (fpdf2, bundled in evidence pack ZIP)
-- [ ] Slack webhook
-- [ ] TOTP MFA (pyotp already in requirements)
-- [ ] Refresh tokens (currently 24h JWT, no refresh)
+- [x] Slack webhook (settings + `POST /v1/settings/test-slack` + weekly digest integration)
+- [ ] TOTP MFA (pyotp already in requirements) — deferred to Phase 1.5
+- [x] Refresh tokens (30-day JWT, auto-retry on 401, OAuth callbacks updated)
 - [ ] Account deletion + role re-verify button
 
 ---
@@ -199,10 +201,10 @@ AWS control-plane APIs, reachable via public HTTPS.
 
 ## P2 — next checks
 
-- [ ] `iam.root.usage` — CloudTrail root events
-- [ ] `iam.policy.unattached` — managed policies attached to nothing
-- [ ] `iam.policy.wildcard_resource` — `Resource: "*"` on dangerous actions
-- [ ] `iam.role.trust_wildcard` — `"Principal": "*"` in trust policy
+- [x] `iam.root.usage` — CloudTrail root events
+- [x] `iam.policy.unattached` — managed policies attached to nothing
+- [x] `iam.policy.wildcard_resource` — `Resource: "*"` on dangerous actions
+- [x] `iam.role.trust_wildcard` — `"Principal": "*"` in trust policy (already existed)
 - [ ] `iam.perm.granted_vs_used` — action-level (requires `Granularity=ACTION_LEVEL`, roles only)
 
 ## Phase 2
@@ -546,6 +548,23 @@ policy analysis, onboarding empty state.
 2. End-to-end AWS sandbox validation
 3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
 4. Stripe gating for evidence export limits
+
+**Session 8 additions (2026-05-26):**
+- **`iam.policy.wildcard_resource` check**: scans attached + inline policies on IAM roles for dangerous write actions on `Resource: "*"`; skips AWS managed policies and read-only prefixes; evidence includes `role_arn`, `policy_names`, per-policy dangerous actions; mapped to CC6.3/CC6.6/SOC2
+- **`iam.policy.unattached` check**: flags customer-managed IAM policies with `attachment_count == 0`; collector extension to `collectors/iam.py` via `_collect_managed_policies()` using `list_policies(Scope=Local)` + `get_policy_version`; `iam:ListPolicies` added to CFN role
+- **`iam.root.usage` check**: already implemented — calls `cloudtrail:LookupEvents` for root events in last 90 days; `cloudtrail:LookupEvents` already in CFN role
+- **Refresh tokens**: 30-day signed JWT (`type: refresh`); `POST /v1/auth/refresh` endpoint; `api.ts` auto-retries 401 with refreshed token before redirecting; OAuth callbacks (Google + GitHub) now include `refresh_token` in redirect URL; `AuthCallback.tsx` stores both tokens via `storeTokens()`
+- **Slack webhook**: `notifications.slack_webhook_url` in org settings; `POST /v1/settings/test-slack` fires test message; weekly digest task (`send_weekly_digests`) also POSTs to Slack if configured; Settings page has Slack webhook URL field + Test button
+- **GitHub/GitLab human-readable labels**: all 10 identity check IDs mapped to display names in `Findings.tsx` and `FindingDrawer.tsx`; Overview tab shows platform-specific Why/Risk; Remediation tab hides Console/CLI toggle for identity checks
+- **Identity evidence in evidence pack**: `_build_identity_snapshots()` pulls from identity tables and synthesises `github_identity`/`gitlab_identity` snapshot entries for evidence pack ZIP
+- **Auto-scan after identity sync**: GitHub + GitLab sync routes trigger `run_scan.delay()` for all connected AWS accounts in the org
+
+**Remaining gaps after session 8:**
+
+1. End-to-end AWS sandbox validation (needs throwaway AWS account with seeded junk)
+2. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+3. Stripe gating for evidence export limits (deferred per founder decision)
+4. TOTP MFA (deferred to Phase 1.5 / paying customers ask)
 
 ### Phase 3 — GitHub integration (3 weeks)
 

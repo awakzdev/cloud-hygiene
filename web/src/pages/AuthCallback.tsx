@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { storeTokens } from "../api";
 
 export default function AuthCallback() {
   const nav = useNavigate();
@@ -11,10 +12,11 @@ export default function AuthCallback() {
     handled.current = true;
 
     const token = params.get("token");
+    const refreshToken = params.get("refresh_token");
     const error = params.get("error");
 
     if (token) {
-      localStorage.setItem("token", token);
+      storeTokens(token, refreshToken ?? "");
       nav("/accounts", { replace: true });
     } else {
       nav(`/login?error=${error ?? "unknown"}`, { replace: true });

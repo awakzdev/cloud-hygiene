@@ -624,6 +624,21 @@ def send_weekly_digests() -> dict:
                 if ok:
                     sent += 1
 
+            slack_url = org_settings.get("notifications", {}).get("slack_webhook_url")
+            if slack_url:
+                try:
+                    import httpx as _httpx
+                    critical_count = sum(1 for f in open_findings if f.severity in ("critical", "high"))
+                    _httpx.post(slack_url, json={
+                        "text": (
+                            f":shield: *Vigil weekly digest — {acc.label}*\n"
+                            f"Open findings: {len(open_findings)} ({critical_count} critical/high) · "
+                            f"New this week: {len(new_this_week)} · Resolved: {resolved_count}"
+                        )
+                    }, timeout=10)
+                except Exception:  # noqa: BLE001
+                    pass
+
         log.info("digests.complete", sent=sent, skipped=skipped)
         return {"sent": sent, "skipped": skipped}
     except Exception as e:  # noqa: BLE001

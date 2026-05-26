@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.passwords import hash_password, verify_password
 from app.core.ratelimit import limiter
-from app.core.security import current_principal, issue_mfa_challenge_token, issue_token
+from app.core.security import current_principal, decode_refresh_token, issue_mfa_challenge_token, issue_refresh_token, issue_token
 from app.models import Org, User
 
 router = APIRouter()
@@ -34,7 +34,12 @@ class LoginIn(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
+    refresh_token: str
     org_id: str
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str
 
 
 @router.post("/signup", response_model=TokenOut)
@@ -51,7 +56,8 @@ def signup(request: Request, body: SignupIn, db: Session = Depends(get_db)):
     )
     db.add_all([org, user])
     db.commit()
-    return TokenOut(access_token=issue_token(str(user.id), str(org.id)), org_id=str(org.id))
+    uid, oid = str(user.id), str(org.id)
+    return TokenOut(access_token=issue_token(uid, oid), refresh_token=issue_refresh_token(uid, oid), org_id=oid)
 
 
 @router.post("/login", response_model=TokenOut)
@@ -60,7 +66,22 @@ def login(request: Request, body: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
-    return TokenOut(access_token=issue_token(str(user.id), str(user.org_id)), org_id=str(user.org_id))
+    uid, oid = str(user.id), str(user.org_id)
+    return TokenOut(access_token=issue_token(uid, oid), refresh_token=issue_refresh_token(uid, oid), org_id=oid)
+
+
+@router.post("/refresh", response_model=TokenOut)
+def refresh(body: RefreshIn, db: Session = Depends(get_db)):
+    payload = decode_refresh_token(body.refresh_token)
+    user = db.get(User, uuid.UUID(payload["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user not found")
+    uid, oid = str(user.id), str(user.org_id)
+    return TokenOut(
+        access_token=issue_token(uid, oid),
+        refresh_token=issue_refresh_token(uid, oid),
+        org_id=oid,
+    )
 
 
 class MeOut(BaseModel):

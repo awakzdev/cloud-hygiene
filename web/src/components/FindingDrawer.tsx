@@ -113,6 +113,21 @@ aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
 aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
     risk: "Broad wildcard permissions increase blast radius if the role is compromised or misused.",
   },
+  "iam.policy.unattached": {
+    why: "Customer-managed policies that are not attached to any user, group, or role are dead weight. They may contain overly permissive statements written for a workload that no longer exists, and they clutter the policy namespace making access reviews harder.",
+    console: [
+      "Open IAM → Policies → filter to Customer managed",
+      "Sort by Attached entities to find policies with 0 attachments",
+      "Review each policy — confirm it is no longer needed",
+      'Click the policy → "Delete" (IAM will block deletion if it has any attachments)',
+    ],
+    cli: `# List customer-managed policies with 0 attachments
+aws iam list-policies --scope Local --query 'Policies[?AttachmentCount==\`0\`].[PolicyName,Arn]' --output table
+
+# Delete a specific unattached policy (fails if still attached)
+aws iam delete-policy --policy-arn <policy-arn>`,
+    risk: "Stale policies are low-risk but add noise to access reviews and may be accidentally re-attached with broad permissions later.",
+  },
   "iam.policy.wildcard_resource": {
     why: "This policy grants write or sensitive actions on Resource: \"*\" — meaning they apply to every resource in the account. Even when the action list is explicit, a wildcard resource makes the permission unreasonably broad and hard to audit.",
     console: [

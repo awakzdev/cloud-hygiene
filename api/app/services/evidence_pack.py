@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import Finding, EvidenceSnapshot
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
+from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
 from app.services.pdf_report import build_pdf
 
 
@@ -74,6 +75,10 @@ def build_evidence_pack(
         snap_by_type.setdefault(s.entity_type, []).append(
             {"entity_id": s.entity_id, "taken_at": s.taken_at.isoformat(), "data": s.payload_json}
         )
+
+    # Identity evidence (GitHub / GitLab) — keyed by provider type
+    identity_snaps = _build_identity_snapshots(db, acc.org_id, generated_at)
+    snap_by_type.update(identity_snaps)
 
     generated_at = datetime.now(timezone.utc)
     control_results: list[dict[str, Any]] = []
@@ -176,7 +181,92 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
             types.add("ebs_encryption_default")
         elif cid.startswith("rds."):
             types.add("rds_instance")
+        elif cid.startswith("github."):
+            types.add("github_identity")
+        elif cid.startswith("gitlab."):
+            types.add("gitlab_identity")
     return list(types)
+
+
+def _build_identity_snapshots(
+    db: Session,
+    org_id: uuid.UUID,
+    generated_at: datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build evidence snapshots from identity tables for GitHub and GitLab providers."""
+    result: dict[str, list[dict[str, Any]]] = {}
+    providers = db.scalars(
+        select(IdentityProvider).where(IdentityProvider.org_id == org_id)
+    ).all()
+
+    for provider in providers:
+        ptype = provider.type  # "github" or "gitlab"
+        snap_key = f"{ptype}_identity"
+        snaps: list[dict[str, Any]] = []
+
+        users = db.scalars(
+            select(IdentityUser).where(IdentityUser.provider_id == provider.id)
+        ).all()
+        for u in users:
+            snaps.append({
+                "entity_id": u.external_id,
+                "taken_at": u.snapshot_taken_at.isoformat(),
+                "data": {
+                    "type": "identity_user",
+                    "provider": ptype,
+                    "external_id": u.external_id,
+                    "name": u.name,
+                    "email": u.email,
+                    "mfa_enabled": u.mfa_enabled,
+                    "status": u.status,
+                    "last_active_at": u.last_active_at.isoformat() if u.last_active_at else None,
+                },
+            })
+
+        repos = db.scalars(
+            select(Repo).where(Repo.provider_id == provider.id)
+        ).all()
+        for repo in repos:
+            protection = db.scalars(
+                select(RepoProtection).where(RepoProtection.repo_id == repo.id)
+            ).first()
+            prs = db.scalars(
+                select(PullRequest)
+                .where(PullRequest.repo_id == repo.id)
+                .order_by(PullRequest.merged_at.desc())
+                .limit(10)
+            ).all()
+            snaps.append({
+                "entity_id": repo.name,
+                "taken_at": repo.snapshot_taken_at.isoformat(),
+                "data": {
+                    "type": "repo",
+                    "provider": ptype,
+                    "name": repo.name,
+                    "default_branch": repo.default_branch,
+                    "branch_protection": {
+                        "required_reviews": protection.required_reviews if protection else None,
+                        "dismiss_stale": protection.dismiss_stale if protection else None,
+                        "require_code_owners": protection.require_code_owners if protection else None,
+                        "allow_force_push": protection.allow_force_push if protection else None,
+                    } if protection else None,
+                    "recent_prs": [
+                        {
+                            "number": pr.number,
+                            "author": pr.author,
+                            "merged_by": pr.merged_by,
+                            "merged_at": pr.merged_at.isoformat() if pr.merged_at else None,
+                            "approval_count": pr.approval_count,
+                            "required_review_count": pr.required_review_count,
+                            "self_merge": pr.self_merge,
+                        }
+                        for pr in prs
+                    ],
+                },
+            })
+
+        result[snap_key] = snaps
+    return result
 
 
 def _finding_dict(f: Finding) -> dict[str, Any]:

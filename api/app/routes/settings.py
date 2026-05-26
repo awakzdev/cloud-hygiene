@@ -20,6 +20,7 @@ DEFAULT_SETTINGS: dict = {
     "notifications": {
         "email_digest_enabled": False,
         "digest_email": None,
+        "slack_webhook_url": None,
     },
 }
 
@@ -38,6 +39,7 @@ class CheckSettingIn(BaseModel):
 class NotificationsIn(BaseModel):
     email_digest_enabled: bool = False
     digest_email: str | None = None
+    slack_webhook_url: str | None = None
 
 
 class SettingsPatch(BaseModel):
@@ -153,3 +155,27 @@ def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Failed to send email — check RESEND_API_KEY")
 
     return {"sent_to": digest_email}
+
+
+@router.post("/test-slack", status_code=200)
+def test_slack(p=Depends(current_principal), db: Session = Depends(get_db)):
+    """POST a test message to the configured Slack webhook URL."""
+    import httpx
+
+    org = _get_org(p, db)
+    webhook_url = (org.settings or {}).get("notifications", {}).get("slack_webhook_url")
+    if not webhook_url:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No Slack webhook URL configured")
+
+    try:
+        resp = httpx.post(
+            webhook_url,
+            json={"text": ":white_check_mark: *Vigil* — Slack notifications are working."},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Slack returned {resp.status_code}: {resp.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Slack request failed: {e}")
+
+    return {"ok": True}

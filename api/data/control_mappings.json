@@ -207,7 +207,8 @@
     "guidance": "Replace Action: '*' or Resource: '*' with scoped action lists and specific resource ARNs.",
     "checks": [
       "iam.role.wildcard_action",
-      "iam.policy.wildcard_resource"
+      "iam.policy.wildcard_resource",
+      "iam.policy.unattached"
     ]
   },
   {

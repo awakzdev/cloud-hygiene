@@ -60,6 +60,7 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:GetPolicy
                   - iam:GetPolicyVersion
+                  - iam:ListPolicies
                 Resource: "*"
 
               - Sid: IamServiceLastAccessed

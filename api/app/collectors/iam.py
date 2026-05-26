@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
-from app.models import AwsAccount, IamAccessKey, IamRole, IamUser
+from app.models import AwsAccount, IamAccessKey, IamPolicy, IamRole, IamUser
 from app.models.resources import IamPasswordPolicy
 
 log = structlog.get_logger()
@@ -72,7 +72,10 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
     _collect_password_policy(db, iam, account)
     db.commit()
 
-    log.info("collect_iam.done", users=user_count, access_keys=key_count, roles=role_count)
+    policy_count = _collect_managed_policies(db, iam, account)
+    db.commit()
+
+    log.info("collect_iam.done", users=user_count, access_keys=key_count, roles=role_count, policies=policy_count)
     return {"iam_users": user_count, "iam_access_keys": key_count, "iam_roles": role_count}
 
 
@@ -274,3 +277,38 @@ def _upsert_key(db: Session, account_id, *, user_arn, key_id, status, created, l
         },
     )
     db.execute(stmt)
+
+
+def _collect_managed_policies(db: Session, iam_client, account: AwsAccount) -> int:
+    """Collect customer-managed IAM policies with attachment count and policy document."""
+    count = 0
+    paginator = iam_client.get_paginator("list_policies")
+    for page in paginator.paginate(Scope="Local"):
+        for pol in page.get("Policies", []):
+            arn = pol["Arn"]
+            name = pol["PolicyName"]
+            attachment_count = pol.get("AttachmentCount", 0)
+            version_id = pol.get("DefaultVersionId", "v1")
+            document: dict = {}
+            try:
+                doc_resp = iam_client.get_policy_version(PolicyArn=arn, VersionId=version_id)
+                document = doc_resp["PolicyVersion"].get("Document", {})
+            except ClientError:
+                pass
+            stmt = pg_insert(IamPolicy).values(
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{arn}"),
+                account_id=account.id,
+                arn=arn,
+                name=name,
+                attachment_count=attachment_count,
+                document=document,
+            ).on_conflict_do_update(
+                index_elements=["account_id", "arn"],
+                set_={
+                    "attachment_count": attachment_count,
+                    "document": document,
+                },
+            )
+            db.execute(stmt)
+            count += 1
+    return count

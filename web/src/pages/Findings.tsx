@@ -70,6 +70,7 @@ const checkLabels: Record<string, string> = {
   "iam.role.unassumed_90d": "Role unassumed",
   "iam.role.wildcard_action": "Wildcard action",
   "iam.policy.wildcard_resource": "Wildcard resource in policy",
+  "iam.policy.unattached": "Unattached managed policy",
   "iam.role.unused_services_90d": "Unused granted services",
   "iam.role.trust_wildcard": "Wildcard trust policy",
   // S3
@@ -133,6 +134,7 @@ const checkDescriptions: Record<string, string> = {
   "iam.role.unassumed_90d": "Confirm ownership, then remove roles that are no longer used.",
   "iam.role.wildcard_action": "Replace wildcard permissions with scoped actions.",
   "iam.policy.wildcard_resource": "Scope Resource: '*' to specific ARNs — or remove actions that don't need account-wide access.",
+  "iam.policy.unattached": "Delete or archive customer-managed policies that are not attached to any principal.",
   "iam.role.unused_services_90d": "Trim unused service permissions from role policies.",
   "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
   "s3.account.public_access_not_blocked": "Enable account-level S3 Block Public Access to guard every bucket by default.",

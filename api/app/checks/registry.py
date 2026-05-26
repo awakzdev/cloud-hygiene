@@ -36,6 +36,7 @@ from app.checks import (
     role_unused_services,
     role_wildcard_action,
     iam_policy_wildcard_resource,
+    iam_policy_unattached,
     s3_account_public_access,
     s3_no_https_policy,
     s3_no_kms,
@@ -61,10 +62,11 @@ ALL_CHECKS = [
     access_key_no_rotation,
     access_key_multiple_active,
     iam_user_no_mfa,
-    # IAM roles
+    # IAM roles / policies
     role_unassumed_90d,
     role_wildcard_action,
     iam_policy_wildcard_resource,
+    iam_policy_unattached,
     role_unused_services,
     role_trust_wildcard,
     # S3

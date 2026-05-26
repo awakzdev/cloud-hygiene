@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.security import current_principal, issue_token
+from app.core.security import current_principal, issue_refresh_token, issue_token
 from app.models import Org, User
 from app.routes.github_integration import handle_github_integration_callback, is_github_integration_state
 
@@ -97,8 +97,10 @@ def google_callback(code: str | None = None, error: str | None = None, db: Sessi
             db.add_all([org, user])
             db.commit()
 
-        token = issue_token(str(user.id), str(user.org_id))
-        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}")
+        uid, oid = str(user.id), str(user.org_id)
+        token = issue_token(uid, oid)
+        refresh = issue_refresh_token(uid, oid)
+        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
 
     except Exception as e:
         log.exception("google.callback_error", error=str(e))
@@ -211,8 +213,10 @@ def github_callback(
             user.github_id = github_id
 
         db.commit()
-        token = issue_token(str(user.id), str(user.org_id))
-        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}")
+        uid, oid = str(user.id), str(user.org_id)
+        token = issue_token(uid, oid)
+        refresh = issue_refresh_token(uid, oid)
+        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
 
     except Exception as e:
         log.exception("github.callback_error", error=str(e))

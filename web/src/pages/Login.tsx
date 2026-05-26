@@ -18,8 +18,9 @@ export default function Login() {
     try {
       const path = mode === "login" ? "/v1/auth/login" : "/v1/auth/signup";
       const body = mode === "login" ? { email, password } : { email, password, org_name: orgName };
-      const res = await api<{ access_token: string }>(path, { method: "POST", body: JSON.stringify(body) });
+      const res = await api<{ access_token: string; refresh_token: string }>(path, { method: "POST", body: JSON.stringify(body) });
       localStorage.setItem("token", res.access_token);
+      if (res.refresh_token) localStorage.setItem("refresh_token", res.refresh_token);
       nav("/findings");
     } catch (e) {
       setErr((e as Error).message);
