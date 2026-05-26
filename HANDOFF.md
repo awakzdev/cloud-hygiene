@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-26 (session 7)_
+_Last updated: 2026-05-26 (session 10)_
 
 ---
 
@@ -72,9 +72,15 @@ _Last updated: 2026-05-26 (session 7)_
 | `aws.config.not_enabled` | low |
 | `github.org.mfa_not_enforced` | high |
 | `github.org.dormant_members` | medium |
+| `github.org.outside_collaborators` | medium |
 | `github.repo.no_branch_protection` | high |
+| `github.repo.no_codeowners` | medium |
+| `github.repo.no_env_protection` | high |
 | `github.repo.self_merge_allowed` | high |
 | `github.repo.insufficient_reviews` | high |
+| `iam.perm.granted_vs_used` | medium |
+| `iam.policy.wildcard_resource` | high |
+| `iam.policy.unattached` | low |
 | `gitlab.org.mfa_not_enforced` | high |
 | `gitlab.org.dormant_members` | medium |
 | `gitlab.repo.no_branch_protection` | high |
@@ -576,6 +582,25 @@ policy analysis, onboarding empty state.
 - **pg_dump backup service**: `backup` service in compose.yml (prod profile); dumps to Backblaze B2 via S3-compatible API if `B2_KEY_ID`+`B2_APPLICATION_KEY`+`B2_BUCKET` configured; run manually or via host cron
 - 50 total checks (was 48)
 
+**Session 10 additions (2026-05-26):**
+- **`github.org.outside_collaborators` check** (medium): non-org members with direct repo access; collected via GitHub `/orgs/{owner}/outside_collaborators` API; stored in provider `config_json_encrypted`; finder drawer has full remediation copy; Settings + Findings + FindingDrawer all wired
+- **CloudTrail write-event collector** (`collectors/cloudtrail_events.py`): 50 tracked event names across IAM/SG/S3/EC2/KMS/CloudTrail/Config/GuardDuty; uses `LookupEvents` paginator for last 90 days (max 1000/run); upserts into `cloudtrail_events` table (migration 0021); runs as part of every scan
+- **`cloudtrail_events` table** (migration 0021): `id`, `account_id` FK, `event_id`, `event_name`, `event_source`, `event_time`, `actor`, `source_ip`, `resources` JSONB, `raw` JSONB, `last_seen`; unique on `(account_id, event_id)`; index on `(account_id, event_time)`
+- **`GET /v1/accounts/{id}/timeline`**: CloudTrail events correlated with GitHub PR merges within ±60 minutes; returns `event_id`, `event_name`, `actor`, `source_ip`, `resources`, `correlated_prs[]` (number, repo, merged_at, merged_by, author, approval_count, self_merge, delta_seconds); filters by `?days=30&limit=200`
+- **Timeline page** (`/timeline`): expandable event rows (click to reveal detail); sky-blue badge + highlight for events with correlated PRs; PR detail cards show before/after delta, self-merge badge, approval counts; correlation banner when matches exist; 7d/30d/90d toggle; added to sidebar nav
+- **control_mappings**: `outside_collaborators` → CC6.2; `no_codeowners` + `no_env_protection` → CC6.6 + CC8.1; `iam.perm.granted_vs_used` → CC6.6 + ISO A.9.2.5
+- 53 total checks (was 50)
+
+**Remaining gaps after session 10:**
+
+1. `alembic upgrade head` needed to apply migrations 0019 (actions_json), 0020 (has_codeowners/protected_envs), 0021 (cloudtrail_events)
+2. End-to-end AWS sandbox validation (needs throwaway AWS account with seeded junk)
+3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2 (deferred per founder decision)
+4. Stripe gating for evidence export limits (deferred per founder decision)
+5. TOTP MFA (deferred to Phase 1.5)
+6. GitHub team membership collection (Phase 3 item — teams → user mappings for access review evidence)
+7. GitHub Actions deployments/workflow runs (Phase 3 item)
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change
@@ -601,11 +626,11 @@ management (CC7.1) in one shot. Most startups use GitHub.
 **Still needed in Phase 3:**
 - [x] CODEOWNERS coverage (`github.repo.no_codeowners` check + sync)
 - [x] Protected environments and required reviewers (`github.repo.no_env_protection` check + sync)
+- [x] Outside collaborators (`github.org.outside_collaborators` check + sync)
+- [x] AWS CloudTrail event ↔ GitHub PR correlation timeline (`GET /v1/accounts/{id}/timeline` + `/timeline` UI page)
 - [ ] Team membership
-- [ ] Outside collaborators explicitly
 - [ ] GitHub Actions deployments/workflow runs
-- [ ] GitHub-derived controls/checks and evidence-pack wiring
-- [ ] AWS CloudTrail event ↔ GitHub PR correlation timeline
+- [ ] GitHub-derived controls/checks and evidence-pack wiring (partially done — checks exist, evidence-pack wired for identity snapshots)
 
 **Identity side:**
 - Org members (admins, outside collaborators)
