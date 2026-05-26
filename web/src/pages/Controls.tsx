@@ -1,9 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { api, token } from "../api";
-
-const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
+import { api } from "../api";
 
 type Account = { id: string; label: string; account_id: string | null; status: string; last_scan_at: string | null };
 
@@ -25,13 +23,6 @@ const FRAMEWORKS = [
   { id: "soc2", label: "SOC 2", fullLabel: "SOC 2 Trust Services Criteria" },
   { id: "cis_aws_l1", label: "CIS AWS L1", fullLabel: "CIS AWS Foundations Benchmark L1" },
   { id: "iso27001", label: "ISO 27001", fullLabel: "ISO 27001 Annex A" },
-];
-
-const AUDIT_WINDOWS = [
-  { value: 30, label: "Last 30 days" },
-  { value: 90, label: "Last 90 days" },
-  { value: 180, label: "Last 180 days" },
-  { value: 365, label: "Last 365 days" },
 ];
 
 type ControlGroup = { key: string; label: string; rows: ControlRow[]; passed: number; failed: number; noData: number };
@@ -172,8 +163,6 @@ export default function Controls() {
   const [framework, setFramework] = useState("soc2");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [downloading, setDownloading] = useState(false);
-  const [period, setPeriod] = useState(90);
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
   const connectedAccount = accounts.data?.find((a) => a.status === "connected");
@@ -199,30 +188,6 @@ export default function Controls() {
     setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
-  async function downloadPack() {
-    if (!connectedAccount) return;
-    setDownloading(true);
-    try {
-      const tok = token();
-      const res = await fetch(
-        `${BASE}/v1/exports/evidence-pack?framework=${framework}&account_id=${connectedAccount.id}&period=${period}`,
-        { headers: { Authorization: `Bearer ${tok}` } }
-      );
-      if (!res.ok) throw new Error(await res.text());
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `vigil-evidence-${framework}-${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert("Download failed: " + String(e));
-    } finally {
-      setDownloading(false);
-    }
-  }
-
   const summaryCards = [
     { label: "Assessed", value: assessed, hint: assessed > 0 ? `${assessedPassRate}% passing` : "no evidence yet", dot: assessed > 0 ? "bg-zinc-700" : "bg-zinc-300", tone: assessed > 0 ? "text-zinc-900" : "text-zinc-400" },
     { label: "Passing", value: passed, hint: assessed > 0 ? `${assessedPassRate}% of assessed` : "—", dot: "bg-emerald-500", tone: passed > 0 ? "text-emerald-700" : "text-zinc-400" },
@@ -241,28 +206,6 @@ export default function Controls() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <select
-            value={period}
-            onChange={(e) => setPeriod(Number(e.target.value))}
-            className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 focus:outline-none"
-          >
-            {AUDIT_WINDOWS.map((w) => (
-              <option key={w.value} value={w.value}>{w.label}</option>
-            ))}
-          </select>
-          <button
-            onClick={downloadPack}
-            disabled={downloading || !connectedAccount}
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {downloading && (
-              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            )}
-            {downloading ? "Generating…" : "Evidence pack"}
-          </button>
           <div className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
             {FRAMEWORKS.map((fw) => (
               <button
@@ -353,13 +296,7 @@ export default function Controls() {
                   >
                     Connect evidence sources
                   </button>
-                  <button
-                    onClick={downloadPack}
-                    disabled={downloading || !connectedAccount}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Export evidence package
-                  </button>
+
                 </div>
               </div>
             </div>
