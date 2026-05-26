@@ -155,7 +155,7 @@ export default function Settings() {
     setSlackTestState("sending");
     setSlackTestError("");
     try {
-      await api("/v1/settings/test-slack", { method: "POST" });
+      await api("/v1/settings/test-slack", { method: "POST", body: JSON.stringify({ url: slackWebhookUrl.trim() }) });
       setSlackTestState("sent");
       setTimeout(() => setSlackTestState("idle"), 3000);
     } catch (e) {

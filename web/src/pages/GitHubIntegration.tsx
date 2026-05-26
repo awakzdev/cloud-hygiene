@@ -273,9 +273,17 @@ export default function GitHubIntegration() {
             <p className="text-sm font-medium text-zinc-800">Evidence health</p>
             <span className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${syncStateClass}`}>{syncState}</span>
           </div>
-          <div className="mt-5">
-            <div className="text-xl font-semibold text-zinc-950">{evidenceItems}</div>
-            <div className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Evidence records</div>
+          <div className="mt-5 grid grid-cols-3 gap-3">
+            {[
+              { label: "Members", value: p?.identity_users ?? "—" },
+              { label: "Repos", value: p?.repos ?? "—" },
+              { label: "PRs", value: p?.pull_requests ?? "—" },
+            ].map((s) => (
+              <div key={s.label} className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2.5 text-center">
+                <div className="text-lg font-semibold tabular-nums text-zinc-900">{s.value}</div>
+                <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-500">{s.label}</div>
+              </div>
+            ))}
           </div>
           <div className="mt-5 space-y-3 border-y border-zinc-200 py-3 text-sm">
             <div className="flex items-center justify-between gap-4">

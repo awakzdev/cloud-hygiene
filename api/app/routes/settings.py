@@ -157,13 +157,17 @@ def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
     return {"sent_to": digest_email}
 
 
+class SlackTestBody(BaseModel):
+    url: str | None = None
+
+
 @router.post("/test-slack", status_code=200)
-def test_slack(p=Depends(current_principal), db: Session = Depends(get_db)):
+def test_slack(body: SlackTestBody = SlackTestBody(), p=Depends(current_principal), db: Session = Depends(get_db)):
     """POST a test message to the configured Slack webhook URL."""
     import httpx
 
     org = _get_org(p, db)
-    webhook_url = (org.settings or {}).get("notifications", {}).get("slack_webhook_url")
+    webhook_url = body.url or (org.settings or {}).get("notifications", {}).get("slack_webhook_url")
     if not webhook_url:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No Slack webhook URL configured")
 
