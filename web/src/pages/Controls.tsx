@@ -83,14 +83,25 @@ function totalFindings(g: ControlGroup) {
 
 function groupBadgeClass(g: ControlGroup) {
   if (g.failed > 0) return "border-red-200 bg-red-50 text-red-600";
-  if (g.noData === g.rows.length) return "border-zinc-200 bg-zinc-100 text-zinc-400";
+  if (g.noData === g.rows.length) return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-emerald-200 bg-emerald-50 text-emerald-700";
 }
 
 function groupBadgeLabel(g: ControlGroup) {
   if (g.failed > 0) return `${g.failed} failing`;
-  if (g.noData === g.rows.length) return "No data";
+  if (g.noData === g.rows.length) return "No evidence";
   return "All clear";
+}
+
+function groupSubtitle(g: ControlGroup) {
+  if (g.noData === g.rows.length)
+    return `${g.rows.length} control${g.rows.length !== 1 ? "s" : ""} · evidence missing`;
+  const findings = g.rows.reduce((s, r) => s + r.finding_count, 0);
+  const parts = [];
+  if (g.failed > 0) parts.push(`${g.failed} failing`);
+  if (g.passed > 0) parts.push(`${g.passed} passing`);
+  if (findings > 0) parts.push(`${findings} findings`);
+  return `${g.rows.length} control${g.rows.length !== 1 ? "s" : ""} · ${parts.join(" · ") || "evaluated"}`;
 }
 
 function controlBadgeClass(status: string) {
@@ -178,7 +189,9 @@ export default function Controls() {
   const failed = rows.filter((r) => r.status === "fail").length;
   const noData = rows.filter((r) => r.status === "no_data").length;
   const total = rows.length;
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const assessed = passed + failed;
+  const assessedPassRate = assessed > 0 ? Math.round((passed / assessed) * 100) : 0;
+  const isFullyUnassessed = total > 0 && noData === total;
   const groupedRows = useMemo(() => groupControls(rows, framework), [rows, framework]);
   const selectedFramework = FRAMEWORKS.find((fw) => fw.id === framework) ?? FRAMEWORKS[0];
 
@@ -211,10 +224,10 @@ export default function Controls() {
   }
 
   const summaryCards = [
-    { label: "Failing", value: failed, hint: `${total > 0 ? Math.round((failed / total) * 100) : 0}% of controls`, dot: "bg-red-500", tone: "text-red-600" },
-    { label: "Passing", value: passed, hint: `${passRate}% pass rate`, dot: "bg-emerald-500", tone: "text-emerald-700" },
-    { label: "No data", value: noData, hint: "awaiting scan data", dot: "bg-zinc-300", tone: "text-zinc-700" },
-    { label: "Total", value: total, hint: selectedFramework.fullLabel, dot: "bg-zinc-400", tone: "text-zinc-900" },
+    { label: "Assessed", value: assessed, hint: assessed > 0 ? `${assessedPassRate}% passing` : "no evidence yet", dot: assessed > 0 ? "bg-zinc-700" : "bg-zinc-300", tone: assessed > 0 ? "text-zinc-900" : "text-zinc-400" },
+    { label: "Passing", value: passed, hint: assessed > 0 ? `${assessedPassRate}% of assessed` : "—", dot: "bg-emerald-500", tone: passed > 0 ? "text-emerald-700" : "text-zinc-400" },
+    { label: "Needs evidence", value: noData, hint: noData > 0 ? "no scan data collected" : "all controls evaluated", dot: noData > 0 ? "bg-amber-400" : "bg-zinc-300", tone: noData > 0 ? "text-amber-600" : "text-zinc-400" },
+    { label: "Total controls", value: total, hint: selectedFramework.fullLabel, dot: "bg-zinc-400", tone: "text-zinc-900" },
   ];
 
   return (
@@ -298,11 +311,66 @@ export default function Controls() {
         </div>
       )}
 
+      {/* No-evidence state — all controls unassessed */}
+      {!controls.isLoading && isFullyUnassessed && (
+        <div className="mb-4 overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/60 shadow-sm">
+          <div className="px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-amber-200 bg-amber-100">
+                <svg className="h-4 w-4 text-amber-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-amber-900">
+                  {selectedFramework.label} has not been evaluated yet
+                </p>
+                <p className="mt-1 text-sm text-amber-800">
+                  {total} control{total !== 1 ? "s" : ""} are in scope, but no evidence has been collected for this framework.
+                  {!connectedAccount?.last_scan_at
+                    ? " Connect an AWS account and run a scan to start collecting evidence."
+                    : " Run a scan or connect additional evidence sources to begin evaluation."}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {connectedAccount ? (
+                    <button
+                      onClick={() => navigate("/accounts")}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
+                    >
+                      Run scan
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => navigate("/accounts")}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-700 px-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800"
+                    >
+                      Connect AWS account
+                    </button>
+                  )}
+                  <button
+                    onClick={() => navigate("/integrations")}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-50"
+                  >
+                    Connect evidence sources
+                  </button>
+                  <button
+                    onClick={downloadPack}
+                    disabled={downloading || !connectedAccount}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 text-sm font-medium text-amber-800 transition-colors hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Export evidence package
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!controls.isLoading && groupedRows.length > 0 && (
         <div className="space-y-2.5 pb-8">
           {groupedRows.map((group) => {
             const isCollapsed = !!collapsed[group.key];
-            const findings = totalFindings(group);
             return (
               <div
                 key={group.key}
@@ -330,9 +398,7 @@ export default function Controls() {
                         {group.rows.length}
                       </span>
                     </div>
-                    <p className="mt-0.5 text-xs font-medium text-zinc-500">
-                      {group.passed} passing · {group.failed} failing{findings > 0 ? ` · ${findings} findings` : ""}
-                    </p>
+                    <p className="mt-0.5 text-xs font-medium text-zinc-500">{groupSubtitle(group)}</p>
                   </div>
                   <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Controls</span>
                   <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Findings</span>
