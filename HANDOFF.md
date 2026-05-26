@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-26 (session 10)_
+_Last updated: 2026-05-26 (session 13)_
 
 ---
 
@@ -133,7 +133,7 @@ _Last updated: 2026-05-26 (session 10)_
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
-- Migrations: 0001_init → … → 0018_github_integration (latest)
+- Migrations: 0001_init → … → 0024_ci_pipelines (latest)
 - CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS/SecurityHub/Config/AccessAnalyzer/S3Control read permissions
 - pytest: 33 tests (check unit tests + botocore Stubber collector tests)
 - 46 checks total (36 AWS, 5 GitHub, 5 GitLab)
@@ -644,6 +644,22 @@ policy analysis, onboarding empty state.
 5. TOTP MFA (deferred to Phase 1.5)
 6. GitHub Actions deployments/workflow runs (Phase 3 last item — tracks workflow runs to environments for CC8.1)
 
+**Session 13 additions (2026-05-26):**
+- **GitHub Actions workflow run collection**: `_collect_workflow_runs()` in `github_sync.py` — fetches last 50 runs on default branch + last 20 deployment-event runs; correlates SHA→environment via `/repos/{owner}/{repo}/deployments`; stores in `workflow_runs` table (migration 0023, `WorkflowRun` model); `workflow_runs: int` counter in `GitHubSyncStats`
+- **GitLab CI/CD pipeline collection**: `_collect_ci_pipelines()` in `gitlab_sync.py` — fetches last 50 pipelines on default branch; stores in `ci_pipelines` table (migration 0024, `CiPipeline` model); `ci_pipelines: int` counter in `GitLabSyncStats`
+- **Models**: `WorkflowRun` (repo_id, run_id unique — name, workflow_path, event, status, conclusion, branch, actor, environment, run_started_at, run_completed_at) and `CiPipeline` (repo_id, pipeline_id unique — ref, status, source, actor, created_at, finished_at, duration) added to `github.py` + exported from `models/__init__.py`
+- **Evidence pack CC8.1 wired**: `_build_cicd_snapshots(db, org_id, since)` queries `WorkflowRun` (github providers) and `CiPipeline` (gitlab providers) and returns `{"workflow_run": [...], "ci_pipeline": [...]}`; called in `build_evidence_pack()` after identity + CloudTrail snapshots; `_entity_types_for_checks()` updated to emit `workflow_run` for `github.*` checks and `ci_pipeline` for `gitlab.*` checks
+- **Period selector UI redesign**: moved from header toolbar (was crammed next to SOC2/CIS/ISO tabs) to a dedicated "Evidence Pack" row below the summary bar; period buttons (30d/90d/180d/365d) sit inline with the Download button; header now has framework tabs only
+
+**Remaining gaps after session 13:**
+
+1. `alembic upgrade head` — migrations 0019–0024 (run on next deploy)
+2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+3. Hetzner deploy (deferred)
+4. Stripe (deferred)
+5. TOTP MFA (deferred to Phase 1.5)
+6. Phase 3 is now **complete** — all GitHub/GitLab checks, identity evidence, change management evidence, timeline correlation, and CI/CD pipeline collection are shipped
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change
@@ -672,8 +688,8 @@ management (CC7.1) in one shot. Most startups use GitHub.
 - [x] Outside collaborators (`github.org.outside_collaborators` check + sync)
 - [x] AWS CloudTrail event ↔ GitHub PR correlation timeline (`GET /v1/accounts/{id}/timeline` + `/timeline` UI page)
 - [x] Team membership (`_collect_team_memberships()` in github_sync; stored in `roles_json["teams"]`)
-- [ ] GitHub Actions deployments/workflow runs
-- [ ] GitHub-derived controls/checks and evidence-pack wiring (partially done — checks exist, evidence-pack wired for identity snapshots + CloudTrail events)
+- [x] GitHub Actions deployments/workflow runs (migrations 0023/0024, WorkflowRun + CiPipeline models, _build_cicd_snapshots in evidence_pack)
+- [x] GitHub-derived controls/checks and evidence-pack wiring (checks exist, evidence-pack wired for identity snapshots + CloudTrail events + workflow_run/ci_pipeline)
 
 **Identity side:**
 - Org members (admins, outside collaborators)

@@ -72,19 +72,17 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
       </div>
 
       {connected && provider && (
-        <div className="mt-5 grid grid-cols-3 gap-4 border-t border-zinc-100 pt-4 text-sm">
-          <div>
-            <div className="text-xs font-medium text-zinc-400">Last sync</div>
-            <div className="mt-1 font-medium text-zinc-700">{formatSync(provider.last_synced_at)}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs font-medium text-zinc-400">Repos</div>
-            <div className="mt-1 font-medium text-zinc-700">{provider.repos}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs font-medium text-zinc-400">MRs / PRs</div>
-            <div className="mt-1 font-medium text-zinc-700">{provider.pull_requests}</div>
-          </div>
+        <div className="mt-5 grid grid-cols-[minmax(0,1.35fr)_minmax(72px,0.65fr)_minmax(72px,0.65fr)] gap-4 border-t border-zinc-100 pt-4 text-sm">
+          {[
+            { label: "Last sync", value: formatSync(provider.last_synced_at) },
+            { label: "Repos", value: provider.repos },
+            { label: "MRs / PRs", value: provider.pull_requests },
+          ].map((metric) => (
+            <div key={metric.label} className="flex min-w-0 flex-col items-start">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{metric.label}</div>
+              <div className="mt-1 max-w-full truncate font-medium tabular-nums text-zinc-700">{metric.value}</div>
+            </div>
+          ))}
         </div>
       )}
 
