@@ -234,16 +234,13 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               </div>
             )}
 
-            {scanQueued && (
-              <div className="pointer-events-none absolute right-6 top-5 z-10">
-                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-sm">
-                  Scan queued
-                </div>
-              </div>
-            )}
-
             {/* Actions */}
             <div className="flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
+              {scanQueued && (
+                <div className="order-last ml-auto inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                  Scan queued
+                </div>
+              )}
               <button
                 onClick={() => { setScanQueued(false); scan.mutate(); }}
                 disabled={scan.isPending}
