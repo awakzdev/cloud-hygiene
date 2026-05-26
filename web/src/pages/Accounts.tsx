@@ -235,9 +235,9 @@ function AccountCard({ acc, findingsData, onRemoved }: {
             )}
 
             {/* Actions */}
-            <div className="flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
+            <div className="relative flex items-center gap-2 flex-wrap border-t border-zinc-100 pt-4">
               {scanQueued && (
-                <div className="order-last ml-auto inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                <div className="pointer-events-none absolute -top-2 right-0 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
                   Scan queued
                 </div>
               )}
