@@ -611,6 +611,25 @@ policy analysis, onboarding empty state.
 5. TOTP MFA (deferred to Phase 1.5)
 6. GitHub Actions deployments/workflow runs (Phase 3 item — tracks workflow runs to environments for CC8.1)
 
+**Session 11 additions (2026-05-26):**
+- **Exception workflow**: formal documented exceptions separate from snooze — `POST /v1/findings/{id}/exception` with `{reason, approved_by, expires_at}`; status `excepted` added to Finding model; migration 0022 adds `exception_reason`, `exception_approved_by`, `exception_expires_at` columns; `ExceptionButton` in FindingDrawer opens modal form (reason textarea, approver, optional expiry date); `excepted` tab added to Findings page status filter
+- **Exception in evidence packs**: excepted findings included alongside open findings in evidence pack ZIP; per-control `exceptions.json` file lists approved exceptions with reason/approver/expiry; `finding_count` = open only, `exception_count` tracked separately; evidence pack query now fetches `status IN ('open', 'excepted')`
+- **Sample evidence pack**: `GET /v1/exports/sample-evidence-pack?framework=soc2|cis_aws_l1` — no auth required; returns synthetic ZIP with realistic SOC2/CIS sample data including one excepted finding with approver; designed for landing page "Download sample" CTA
+- **README rewrite**: full rewrite with current positioning ("Continuous SOC2 CC6/CC7 and CIS evidence automation"), current check count (53), all three integrations (AWS/GitHub/GitLab), exception workflow, sample pack endpoint, pricing table, architecture layout
+- **Product repositioning (note for next sessions)**: Vigil is NOT a CSPM. Primary surface = Controls/Evidence, not Findings. The buyer problem is "prove CC6/CC7 controls operated continuously across the audit period." Evidence pack + exceptions + timeline are the moat.
+
+**Remaining gaps after session 11:**
+
+1. `alembic upgrade head` — migrations 0019–0022 (run on next deploy)
+2. Nav reorder: Controls before Findings (sidebar order change — 10 min, high demo value)
+3. Audit period selector on evidence pack UI (currently hardcoded 90d in the frontend)
+4. Control narrative text per control (copy-paste paragraph for questionnaire responses)
+5. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+6. Hetzner deploy (deferred)
+7. Stripe (deferred)
+8. TOTP MFA (deferred to Phase 1.5)
+9. GitHub Actions deployments/workflow runs (Phase 3 last item)
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change

@@ -1,22 +1,26 @@
 # Vigil
 
-**AWS security evidence for SOC2 Type 2.**
+**Continuous SOC2 CC6/CC7 and CIS evidence automation for engineering teams.**
 
-Connect your AWS account read-only. Vigil scans daily, produces continuous evidence for CC6 (Logical & Physical Access) and CC7 (System Operations), maps every finding to CIS AWS Benchmark controls, and gives you an auditor-ready PDF on demand.
+Connect AWS, GitHub, or GitLab. Vigil scans daily, maps every finding to SOC2 CC6/CC7, CIS AWS L1, and ISO 27001 controls, and produces auditor-ready evidence packs — JSON, CSV, and PDF — on demand.
 
-Aimed at engineering teams of 5–30 who are heading into their first SOC2 audit and don't have $1,500/mo for Vanta or $50k/yr for Wiz.
+Built for engineering-led startups heading into their first SOC2 Type 2 audit who don't want to pay $10k–80k/yr for Vanta or spend weeks doing it manually with Prowler screenshots.
+
+**One-line:** Connect your AWS account → first downloadable SOC2 evidence pack in under 10 minutes.
 
 ---
 
-## Positioning
+## What it is
 
-Vigil is **not** a CSPM. It does not try to match Wiz, Prisma, or Orca on coverage breadth.
+Vigil is a **continuous compliance evidence platform** — not a CSPM, not a compliance suite.
 
-Vigil is **not** a compliance platform. It does not replace Vanta or Drata — those are evidence aggregators that integrate HR, MDM, GitHub, Slack, and shallow AWS.
-
-Vigil is the **AWS depth layer**. The part where Vanta is shallow and where auditors actually look — IAM, encryption at rest, CloudTrail, network exposure, access reviews. Vigil produces continuous, date-stamped evidence and a PDF the auditor will accept.
-
-You can run Vigil alongside Vanta (recommended for full SOC2 coverage), or standalone if you're pre-Vanta and only need the AWS controls evidenced.
+| What Vigil does | What Vigil does not do |
+|---|---|
+| Automates SOC2 CC6/CC7, CIS AWS L1, ISO 27001 evidence | Replace Vanta/Drata (no HR/MDM/vendor/policy) |
+| Produces timestamped, auditor-ready evidence packs | Compete with Wiz/Prisma on scan breadth |
+| Correlates AWS + GitHub/GitLab into a change timeline | Write to your AWS account (read-only, always) |
+| Shows blast radius before you remediate a finding | Generate AI summaries in evidence outputs |
+| Documents exceptions with approver + reason + expiry | Run agents or auto-remediate |
 
 ---
 
@@ -32,17 +36,17 @@ Your browser
                                        ▲
                                   Worker (Celery + beat)
                                        │
-                                  sts:AssumeRole
+                                  sts:AssumeRole (ExternalId)
                                        │
                                        ▼
                               Customer AWS account
-                          (read-only role, ExternalId,
+                          (read-only role, exact actions,
                            deployed via CloudFormation)
 ```
 
 Single VPS · Docker Compose · No Kubernetes · No microservices.
 
-The worker runs in Vigil's control-plane account (Account A) and assumes a customer-provided role in their account (Account B). Nothing runs inside the customer's VPC. IAM and STS are AWS control-plane APIs reachable over public HTTPS.
+The worker runs in Vigil's control-plane account and assumes a customer-provided read-only role. Nothing runs inside the customer's VPC. IAM and STS are AWS control-plane APIs reachable over public HTTPS.
 
 ---
 
@@ -50,9 +54,11 @@ The worker runs in Vigil's control-plane account (Account A) and assumes a custo
 
 ```bash
 cp .env.example .env
-# Required: set TRUST_PRINCIPAL_ARN to the ARN allowed to assume customer roles
-# Required: set JWT_SECRET to a long random string
-# Optional: AWS_PROFILE if running against a real AWS account locally
+# Required: TRUST_PRINCIPAL_ARN — ARN allowed to assume customer roles
+# Required: JWT_SECRET — long random string
+# Optional: GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+# Optional: GITLAB_CLIENT_ID / GITLAB_CLIENT_SECRET
+# Optional: RESEND_API_KEY (weekly digest email)
 
 docker compose up -d db redis
 docker compose run --rm api alembic upgrade head
@@ -61,76 +67,145 @@ docker compose up api worker web
 
 Open **http://localhost:5173**.
 
-AWS credentials in dev: mount `~/.aws` (already wired in `compose.yml`) and set `AWS_PROFILE` in `.env`. The SDK re-reads the file on every call, so `aws sso login` on the host refreshes the container immediately — no restart needed.
+AWS in dev: mount `~/.aws` (already in `compose.yml`) and set `AWS_PROFILE` in `.env`.
 
 ---
 
-## Onboarding a customer account
+## Onboarding a customer account (AWS)
 
-1. Sign up — email + password, or GitHub / Google SSO.
-2. **AWS Accounts** → name it (e.g. `prod`) → **Create**.
-3. Click **Launch CloudFormation stack**. The template URL, `ExternalId`, and your control-plane principal are pre-filled.
-4. In the customer's AWS Console: deploy the stack → copy the `RoleArn` output.
-5. Paste the ARN → **Verify**. Vigil calls `sts:AssumeRole` to confirm the trust + ExternalId are correct.
-6. **Run scan** → ~1–3 min → findings appear, grouped by check, ranked by risk score.
-
----
-
-## Checks today
-
-| Check ID | Severity | What it finds |
-|---|---|---|
-| `iam.user.no_mfa` | high | Console user with no MFA device |
-| `iam.user.inactive_90d` | medium | Console user with no console or API activity in 90+ days |
-| `iam.access_key.unused_90d` | high | Active access key unused for 90+ days |
-| `iam.role.unassumed_90d` | medium | Role not assumed in 90+ days |
-| `iam.role.wildcard_action` | high | Inline policy grants `Action: "*"` |
-| `iam.role.unused_services_90d` | medium | Role has permissions to services it never calls (Access Analyzer + service-last-accessed) |
-
-Service-linked roles (`/aws-service-role/`) are excluded from all checks.
-
-Risk score = severity base + age multiplier + admin flag. See [`api/app/checks/base.py`](api/app/checks/base.py). The score is documented and hand-verifiable — no ML, no opaque ranking.
-
-Findings are **diff-aware**: existing open findings are refreshed; findings that disappear are auto-resolved; previously-resolved findings that reappear are auto-reopened with full history.
+1. Sign up — email/password or GitHub/Google SSO.
+2. **AWS Accounts** → name it → **Create**.
+3. Click **Launch CloudFormation stack** — template URL, ExternalId, and trust principal are pre-filled.
+4. Deploy the stack in the customer's AWS console → copy `RoleArn` output.
+5. Paste ARN → **Verify**. Vigil calls `sts:AssumeRole` to confirm trust + ExternalId.
+6. First scan triggers automatically. Findings appear in ~1–3 min.
 
 ---
 
-## IAM permissions requested
+## Evidence pack
+
+`GET /v1/exports/evidence-pack?framework=soc2&account_id=<id>&period=90`
+
+Returns a ZIP bundle:
+
+```
+vigil-evidence-soc2-2026-05-26.zip
+  README.txt
+  INDEX.csv
+  controls/
+    CC6.1/
+      summary.json       ← status, finding count, exception count
+      findings.json      ← open findings with evidence
+      exceptions.json    ← approved exceptions (reason, approver, expiry)
+    CC6.2/ …
+    CC7.1/ …
+```
+
+**Sample pack** (no auth, no account needed):
+
+`GET /v1/exports/sample-evidence-pack?framework=soc2`
+
+---
+
+## Checks (53 total)
+
+### AWS (36 checks)
+
+| Category | Checks |
+|---|---|
+| IAM root | no MFA, has access keys, root activity |
+| IAM users | no MFA, inactive 90d |
+| IAM access keys | unused 90d, no rotation 90d, multiple active |
+| IAM roles | unassumed 90d, wildcard action, unused services 90d, trust wildcard, granted vs used |
+| IAM policies | wildcard resource, unattached managed policies |
+| S3 | public access (bucket + account), no HTTPS policy, no KMS, no logging |
+| KMS | no rotation |
+| CloudTrail | not enabled, no log validation, no KMS |
+| GuardDuty | not enabled |
+| EC2 / VPC | unrestricted SSH/RDP, default SG allows traffic, no flow logs, IMDSv2, EBS unencrypted, EBS default encryption |
+| RDS | publicly accessible, no encryption, no automated backup |
+| AWS services | Config not enabled, Security Hub not enabled, Access Analyzer not enabled, weak password policy |
+
+### GitHub (8 checks)
+
+`github.org.mfa_not_enforced` · `github.org.dormant_members` · `github.org.outside_collaborators` ·
+`github.repo.no_branch_protection` · `github.repo.self_merge_allowed` · `github.repo.insufficient_reviews` ·
+`github.repo.no_codeowners` · `github.repo.no_env_protection`
+
+### GitLab (5 checks)
+
+`gitlab.org.mfa_not_enforced` · `gitlab.org.dormant_members` ·
+`gitlab.repo.no_branch_protection` · `gitlab.repo.self_merge_allowed` · `gitlab.repo.insufficient_reviews`
+
+---
+
+## Frameworks covered
+
+| Framework | Controls |
+|---|---|
+| SOC2 TSC (CC6, CC7, CC8) | CC6.1 – CC6.8, CC7.1 – CC7.2, CC8.1 |
+| CIS AWS Foundations L1 | 1.4 – 3.8 |
+| ISO 27001 Annex A | A.9, A.10, A.12, A.13 |
+
+---
+
+## Key features
+
+**"What If?" / Control Impact tab**
+Before remediating, see what depends on a resource: service usage, last-accessed data, blast radius, policy diff (before/after). Confidence score based on 90-day activity window. Available for all 53 checks.
+
+**Exception workflow**
+Flag a finding as a formal documented exception: reason, approver, expiry date. Exceptions appear in evidence packs — auditors see them alongside open findings. Separate from snooze (which is operational deferral, not formal approval).
+
+**Change timeline**
+CloudTrail infrastructure events correlated with GitHub PR merges within ±60 minutes. Supports the killer SOC2 CC8.1 story: "Security group opened at 14:32 → PR #347 merged at 14:28 by alice, approved by bob."
+
+**Evidence freshness**
+Every evidence item is timestamped with collection time and source API. Evidence packs include raw JSON from AWS/GitHub/GitLab APIs.
+
+---
+
+## AWS permissions
 
 Deployed via [`infra/cfn/hygiene-readonly-role.yaml`](infra/cfn/hygiene-readonly-role.yaml).
 
-**Managed (will be tightened before public beta):**
-- `SecurityAudit`
-- `ViewOnlyAccess`
+**Read-only. No write permissions. Ever.**
 
-**Custom additions:**
-- `iam:GenerateServiceLastAccessedDetails` / `iam:GetServiceLastAccessedDetails`
-- `iam:GenerateCredentialReport` / `iam:GetCredentialReport`
-- `iam:GetAccountAuthorizationDetails`
-- `access-analyzer:List*` / `access-analyzer:Get*`
-- `sts:GetCallerIdentity`
-- `organizations:Describe*` / `organizations:List*` (for account alias resolution)
+Key actions: `iam:Get*` / `iam:List*` · `iam:GenerateServiceLastAccessedDetails` · `s3:GetBucket*` · `s3:ListAllMyBuckets` · `kms:Describe*` / `kms:List*` · `cloudtrail:Describe*` / `cloudtrail:LookupEvents` · `guardduty:List*` / `guardduty:Get*` · `ec2:Describe*` · `rds:Describe*` · `access-analyzer:List*` · `config:Describe*` · `securityhub:Describe*` · `sts:GetCallerIdentity`
 
-**No write permissions. Ever.** The role uses an `ExternalId` condition (confused-deputy protection) and only `TRUST_PRINCIPAL_ARN` can assume it.
+The role uses `ExternalId` (confused-deputy protection). Only `TRUST_PRINCIPAL_ARN` can assume it.
 
 ---
 
-## Project layout
+## Pricing
+
+| Tier | Price | Includes |
+|---|---|---|
+| Free | $0 | 1 account, weekly scan, no exports, 30d retention |
+| Starter | $99/mo | All AWS checks, evidence exports (JSON+CSV+PDF), 90d snapshots |
+| Team | $249/mo | + GitHub + GitLab, 365d snapshots, ZIP bundle, up to 5 accounts |
+| Growth | $499/mo | + multi-account orgs, Slack, custom controls |
+
+7-day trial. No credit card required to start. SOC2 Type 2 requires continuous evidence across the audit period — one scan is one day of evidence. Daily scanning = 365 date-stamped evidence points per year.
+
+---
+
+## Architecture
 
 ```
 api/
   app/
-    core/         config, db, security, aws (sts), passwords
-    models/       SQLAlchemy 2.0 tables (org, user, aws_account,
-                  iam, finding, scan_run)
-    routes/       auth, auth_oauth, accounts, findings
-    collectors/   boto3 → DB upserts (iam.py, last_accessed.py)
-    checks/       pure functions → FindingDraft (base, registry, persist)
-    worker/       celery_app + tasks (run_scan, scan_all_accounts)
-  migrations/     Alembic
+    core/         config, db, security, aws (sts), passwords, encryption
+    models/       SQLAlchemy 2.0 tables
+    routes/       auth, auth_oauth, accounts, findings, controls, exports, settings, integrations
+    collectors/   boto3 → DB upserts (iam, s3, kms, ec2, rds, vpc, cloudtrail, cloudtrail_events, ...)
+    checks/       pure functions → FindingDraft (53 checks, registry, persist)
+    services/     evidence_pack, pdf_report, github_sync, gitlab_sync
+    worker/       celery_app + tasks (run_scan, scan_all_accounts, send_weekly_digests)
+  migrations/     Alembic (0001 → 0022)
 web/              React + Vite + Tailwind + TanStack Query
 infra/cfn/        hygiene-readonly-role.yaml
-caddy/            Caddyfile (prod profile only)
+caddy/            Caddyfile (prod profile)
 compose.yml
 ```
 
@@ -138,92 +213,13 @@ compose.yml
 
 ## Auth
 
-- Email + password (bcrypt with sha256 prehash — passlib removed due to bcrypt 4.x compat bug)
-- GitHub OAuth — sign-in or connect from Account settings
-- Google OAuth
-- JWT (24h). Refresh tokens planned.
-
----
-
-## Pricing (planned)
-
-| Tier | Price | What's included |
-|---|---|---|
-| Diagnostic | $299 one-time | Single scan, full PDF report, no continuous monitoring |
-| Pro | $129 / mo | Continuous scanning, 1 AWS account, weekly digest, on-demand PDF, 90 days of evidence history |
-| Pro annual | $999 / yr | Same as Pro, ~35% off |
-| Team | $299 / mo | Multi-account (up to 10), SOC2 evidence pack, audit-window historic export, priority support |
-
-Free 14-day trial on all tiers. No sales call. Stripe checkout, customer portal for management.
-
-Why monthly / annual rather than one-shot: SOC2 Type 2 requires **continuous evidence** across the audit window (typically 3–12 months). Auditors sample random dates from the window and ask for proof the control was in effect on that date. A one-time scan produces one date of evidence and fails Type 2. The scanner running daily produces 365 date-stamped evidence points per year.
-
----
-
-## Roadmap
-
-### P0 — make it sellable
-
-1. **CIS AWS Benchmark Level 1 mapping** — every check + finding tagged with control IDs (`CIS 1.4`, `CIS 1.10`, …). Many-to-many table, seeded from JSON.
-2. **TSC CC6 / CC7 mapping** — same finding rows, additional control framework tags for SOC2.
-3. **PDF compliance report** — one button, "AWS Security Posture & SOC2 CC6/CC7 Evidence." Account ID, scan date, posture score, control coverage matrix, open findings grouped by control, remediation steps. Auditor-acceptable formatting.
-4. **Weekly digest email** (Resend) — Monday 9am org TZ, top findings, delta vs last week, link to dashboard.
-5. **Posture score over time** — single number 0–100, trend graph. Lets customers see improvement and justifies renewal.
-6. **EC2 security group checks** — open to `0.0.0.0/0` on 22/3389/all. Highest insurance-questionnaire frequency.
-7. **RDS public access check** — instances with `PubliclyAccessible: true`. Direct insurance question.
-8. **CloudTrail enabled + multi-region + log validation** — required by SOC2 CC7.
-9. **Encryption at rest checks** — EBS volumes, RDS instances, S3 default encryption.
-10. **Stripe billing** — Checkout + customer portal + webhook → org plan transitions.
-
-### P1 — operational maturity
-
-- pytest skeleton with botocore Stubber + unit tests for checks
-- Encrypt `aws_accounts.role_arn` and `external_id` at rest (pgcrypto)
-- Pagination + filtering on `/v1/findings`
-- CSV export
-- Scan progress + error surface in UI
-- TOTP MFA on user accounts
-- Refresh tokens
-- Audit log of all assume-role operations
-- Tighten CFN policy — drop `SecurityAudit` + `ViewOnlyAccess`, list exact actions
-- Hetzner deploy + Caddy auto-TLS + nightly `pg_dump` to B2
-
-### P1.5 — coverage that closes more deals
-
-- S3 lifecycle, versioning, block-public-access account-level setting
-- KMS key rotation, key policy review
-- Secrets Manager / SSM Parameter Store rotation status
-- Lambda function URL exposure
-- Access key age cap (e.g. 90 days regardless of usage)
-- Root account usage detection (CloudTrail)
-
-### Phase 2 — beyond AWS-only
-
-- Multi-account via AWS Organizations StackSet (one click → role in every member account)
-- Quarterly access review export (auditor-ready CSV: who-had-what-when)
-- Custom controls (customer-defined checks)
-- Vanta / Drata / Secureframe webhook integration (push findings as evidence)
-- Slack delivery for digest + critical findings
-
-### Explicitly out of scope
-
-- Multi-cloud (Azure / GCP). Different scanner, different buyer journey.
-- Kubernetes RBAC. Different product.
-- Repository scanning (Gitleaks / Semgrep / Snyk territory). Different buyer.
-- Write actions / auto-remediation. Different trust model — read-only is the entire safety story.
-- LLM-generated findings or summaries unless they pass auditor review.
-
----
-
-## What this is not
-
-- Not a CSPM. We do not chase coverage parity with Wiz or Prisma. ~25 checks at depth beats 1,500 shallow ones for the target buyer.
-- Not a compliance suite. We map only to controls AWS data can actually evidence (CC6, CC7, partial CC4 / CC8). Vanta covers the people / process / policy controls Vigil cannot.
-- Not a SIEM. We do not store CloudTrail events or do log analytics. We read summarized AWS state.
-- Not an agent. Nothing installs inside the customer environment. STS + IAM control-plane only.
+- Email + password (bcrypt + sha256 prehash)
+- GitHub OAuth (login + connect for evidence)
+- Google OAuth (login)
+- JWT access tokens (24h) + refresh tokens (30d, auto-retry on 401)
 
 ---
 
 ## License
 
-TBD. Source closed for now.
+Source closed.

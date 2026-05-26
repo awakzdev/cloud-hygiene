@@ -25,6 +25,9 @@ class FindingOut(BaseModel):
     evidence: dict
     first_seen: datetime
     last_seen: datetime
+    exception_reason: str | None = None
+    exception_approved_by: str | None = None
+    exception_expires_at: datetime | None = None
 
     class Config:
         from_attributes = True
@@ -55,6 +58,12 @@ class ResolveIn(BaseModel):
     note: str | None = None
 
 
+class ExceptionIn(BaseModel):
+    reason: str
+    approved_by: str
+    expires_at: datetime | None = None
+
+
 def _to_out(f: Finding) -> FindingOut:
     return FindingOut(
         id=str(f.id),
@@ -67,6 +76,9 @@ def _to_out(f: Finding) -> FindingOut:
         evidence=f.evidence,
         first_seen=f.first_seen,
         last_seen=f.last_seen,
+        exception_reason=f.exception_reason,
+        exception_approved_by=f.exception_approved_by,
+        exception_expires_at=f.exception_expires_at,
     )
 
 
@@ -142,6 +154,24 @@ def ignore(finding_id: str, p=Depends(current_principal), db: Session = Depends(
     f = _get_owned(db, p, finding_id)
     f.status = "ignored"
     db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="ignored", actor=p["sub"]))
+    db.commit()
+    return _to_out(f)
+
+
+@router.post("/{finding_id}/exception", response_model=FindingOut)
+def create_exception(finding_id: str, body: ExceptionIn, p=Depends(current_principal), db: Session = Depends(get_db)):
+    f = _get_owned(db, p, finding_id)
+    f.status = "excepted"
+    f.exception_reason = body.reason
+    f.exception_approved_by = body.approved_by
+    f.exception_expires_at = body.expires_at
+    db.add(FindingEvent(
+        id=uuid.uuid4(),
+        finding_id=f.id,
+        action="excepted",
+        actor=p["sub"],
+        note=f"Approved by {body.approved_by}: {body.reason}",
+    ))
     db.commit()
     return _to_out(f)
 

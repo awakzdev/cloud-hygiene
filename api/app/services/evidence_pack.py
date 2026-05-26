@@ -60,7 +60,7 @@ def build_evidence_pack(
     open_findings = db.scalars(
         select(Finding).where(
             Finding.account_id == account_id,
-            Finding.status == "open",
+            Finding.status.in_(["open", "excepted"]),
         )
     ).all()
 
@@ -105,6 +105,7 @@ def build_evidence_pack(
                 for f in hits[:50]
             ]
 
+        exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
         control_results.append(
             {
                 "control_id": ctrl.control_id,
@@ -112,8 +113,10 @@ def build_evidence_pack(
                 "description": ctrl.description,
                 "guidance": ctrl.guidance or "",
                 "status": status,
-                "finding_count": len(hits),
-                "findings": [_finding_dict(f) for f in hits],
+                "finding_count": len([f for f in hits if f.status == "open"]),
+                "exception_count": len(exceptions),
+                "findings": [_finding_dict(f) for f in hits if f.status == "open"],
+                "exceptions": exceptions,
                 "snapshots": snaps[:50],
             }
         )
@@ -308,7 +311,7 @@ def _build_cloudtrail_event_snapshots(
 
 
 def _finding_dict(f: Finding) -> dict[str, Any]:
-    return {
+    d: dict[str, Any] = {
         "id": str(f.id),
         "check_id": f.check_id,
         "resource_arn": f.resource_arn,
@@ -320,6 +323,13 @@ def _finding_dict(f: Finding) -> dict[str, Any]:
         "last_seen": f.last_seen.isoformat(),
         "evidence": f.evidence,
     }
+    if f.status == "excepted":
+        d["exception"] = {
+            "reason": f.exception_reason,
+            "approved_by": f.exception_approved_by,
+            "expires_at": f.exception_expires_at.isoformat() if f.exception_expires_at else None,
+        }
+    return d
 
 
 def _build_readme(

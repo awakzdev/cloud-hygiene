@@ -16,6 +16,9 @@ type Finding = {
   evidence: Record<string, unknown>;
   first_seen: string;
   last_seen: string;
+  exception_reason?: string | null;
+  exception_approved_by?: string | null;
+  exception_expires_at?: string | null;
 };
 
 type FindingPage = {
@@ -182,7 +185,7 @@ const checkDescriptions: Record<string, string> = {
   "gitlab.repo.insufficient_reviews": "Merge requests merged with fewer approvals than required.",
 };
 
-const statusTabs = ["open", "ignored", "resolved", "all"] as const;
+const statusTabs = ["open", "excepted", "ignored", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
 type SeverityFilter = "all" | "critical_high" | "medium" | "low";
 type SortKey = "severity" | "score" | "first_seen";

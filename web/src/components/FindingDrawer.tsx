@@ -13,6 +13,9 @@ type Finding = {
   evidence: Record<string, unknown>;
   first_seen: string;
   last_seen: string;
+  exception_reason?: string | null;
+  exception_approved_by?: string | null;
+  exception_expires_at?: string | null;
 };
 
 const sevHeaderBadge: Record<string, string> = {
@@ -1846,6 +1849,109 @@ function SnoozeButton({ findingId, onDone }: { findingId: string; onDone: () => 
   );
 }
 
+function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [approvedBy, setApprovedBy] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reason.trim() || !approvedBy.trim()) return;
+    setSubmitting(true);
+    try {
+      await api(`/v1/findings/${findingId}/exception`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: reason.trim(),
+          approved_by: approvedBy.trim(),
+          expires_at: expiresAt || null,
+        }),
+      });
+      setDone(true);
+      setTimeout(() => { setOpen(false); onDone(); }, 800);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${done ? "border-violet-200 bg-violet-50 text-violet-700" : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"}`}
+      >
+        {done ? "Excepted" : "Exception"}
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-end">
+          <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
+          <div className="relative w-full max-w-[560px] rounded-t-2xl bg-white shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-zinc-900">Document exception</h3>
+              <button onClick={() => setOpen(false)} className="text-zinc-400 hover:text-zinc-600">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-zinc-500">
+              Exceptions are retained in the evidence pack. Auditors can review the reason, approver, and expiry.
+            </p>
+            <form onSubmit={submit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">Reason <span className="text-red-500">*</span></label>
+                <textarea
+                  value={reason}
+                  onChange={e => setReason(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Internal sandbox repo — no production code. Risk accepted by CTO."
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">Approved by <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={approvedBy}
+                  onChange={e => setApprovedBy(e.target.value)}
+                  placeholder="e.g. Alice Smith (CTO)"
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">Expires (optional)</label>
+                <input
+                  type="date"
+                  value={expiresAt}
+                  onChange={e => setExpiresAt(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={submitting || !reason.trim() || !approvedBy.trim()}
+                  className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:opacity-50"
+                >
+                  {submitting ? "Saving…" : "Save exception"}
+                </button>
+                <button type="button" onClick={() => setOpen(false)} className="flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function FindingDrawer({ finding, accountId, onClose, onAction, resolved, verifying }: { finding: Finding | null; accountId: string | null; onClose: () => void; onAction: (id: string, action: "recheck" | "resolve" | "ignore") => void; resolved?: boolean; verifying?: boolean }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [remTab, setRemTab] = useState<"console" | "cli">("console");
@@ -1998,7 +2104,8 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     <div className="flex gap-2 border-t border-stone-200 bg-stone-50 px-7 py-5">
       <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700">Resolve</button>
       <button disabled={verifying} onClick={() => onAction(finding.id, "recheck")} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50">{verifying && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{verifying ? "Verifying…" : "Verify"}</button>
-      <button onClick={() => { onAction(finding.id, "ignore"); onClose(); }} className="flex-1 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100">Ignore</button>
+      <SnoozeButton findingId={finding.id} onDone={onClose} />
+      <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
     {resolved && (
       <div className="fixed right-0 top-0 z-[60] flex h-full w-full max-w-[560px] flex-col items-center justify-center bg-white/85 backdrop-blur-md">

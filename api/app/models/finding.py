@@ -21,11 +21,14 @@ class Finding(Base):
     severity: Mapped[str] = mapped_column(String(20))  # low|medium|high|critical
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
     evidence: Mapped[dict] = mapped_column(JSON, default=dict)
-    status: Mapped[str] = mapped_column(String(20), default="open")  # open|snoozed|resolved|ignored
+    status: Mapped[str] = mapped_column(String(20), default="open")  # open|snoozed|resolved|ignored|excepted
     snooze_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exception_reason: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    exception_approved_by: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    exception_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class FindingEvent(Base):
