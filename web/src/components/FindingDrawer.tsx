@@ -1331,7 +1331,13 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   }
   const verdictKey = warningKey(normalizedVerdict);
   const seen = new Set<string>();
-  const warningRows = (data.resource_type === "iam_access_key" ? [] : data.warnings).filter((warning) => {
+  const baseWarnings = data.resource_type === "iam_access_key" ? [] : data.warnings;
+  const keyUsageWarnings = data.resource_type === "iam_user" && data.keys
+    ? data.keys
+        .filter((k) => k.last_used && k.days_ago != null)
+        .map((k) => `Access key ${k.key_id} shows API activity ${k.days_ago} days ago via ${k.last_used_service ?? "unknown service"}${k.last_used_region ? ` (${k.last_used_region})` : ""} — deactivate keys before disabling user`)
+    : [];
+  const warningRows = [...baseWarnings, ...keyUsageWarnings].filter((warning) => {
     const key = warningKey(warning);
     if (key === verdictKey) return false;
     if (seen.has(key)) return false;
@@ -1498,20 +1504,19 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {/* User: summary */}
         {data.resource_type === "iam_user" && (
           <div className="space-y-2">
-            <div className="text-xs text-zinc-500">
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
               {data.days_inactive != null && data.days_inactive > 0
                 ? `Inactive for ${data.days_inactive} days`
                 : finding.check_id === "iam.user.inactive_90d"
                   ? "Inactive for 90+ days"
                   : "No recorded activity"}
             </div>
-            <div className="text-xs text-zinc-500">{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
-            {data.has_console_password && <div className="text-xs text-zinc-500">Has console password</div>}
-            {data.keys && data.keys.length > 0 && (
-              <div className="space-y-2 pt-1">
-                {data.keys.map((k) => (
-                  <KeyActivityCard key={k.key_id} keyData={k} />
-                ))}
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+              {data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}
+            </div>
+            {data.has_console_password && (
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+                Has console password
               </div>
             )}
           </div>
