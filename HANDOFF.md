@@ -591,6 +591,17 @@ policy analysis, onboarding empty state.
 - **control_mappings**: `outside_collaborators` → CC6.2; `no_codeowners` + `no_env_protection` → CC6.6 + CC8.1; `iam.perm.granted_vs_used` → CC6.6 + ISO A.9.2.5
 - 53 total checks (was 50)
 
+**Session 10 continued — additional work:**
+- **GitHub team membership**: `_collect_team_memberships()` in github_sync — calls `/orgs/{owner}/teams` + `/orgs/{owner}/teams/{slug}/members`; stores as `roles_json["teams"]` on each `IdentityUser`; no schema change needed
+- **control_mappings gaps closed**: `ec2.instance.imdsv2_not_required` added to CC6.6 + A.12.6.1; `s3.bucket.no_logging` added to CC7.2 + A.12.4.1; all 53 checks now mapped
+- **Reference page updated**: github.org/github.repo descriptions include outside_collaborators/no_codeowners/no_env_protection; new `iam.perm` entry added
+- **evidence_pack bug fixed**: `generated_at` was used before assignment (NameError in production); moved to before first use
+- **evidence_pack CC8.1 enhancement**: CloudTrail write events (last 200 within evidence period) now included in snapshots for all `github.*` and `gitlab.*` controls — auditors see infra changes alongside change-management evidence
+- **blast radius: iam.policy.wildcard_resource**: shows `affected_policies` list with scoping warnings
+- **blast radius: iam.policy.unattached**: high-confidence safe-to-delete
+- **blast radius: iam.perm.granted_vs_used**: shows used_services vs unused_services from `iam_perm_usage` with 90-day window; `buildVerdict` cases added for all 3
+- **42 tests passing** (was 33, then 2 stubs broken; 9 new tests + 2 fixes)
+
 **Remaining gaps after session 10:**
 
 1. `alembic upgrade head` needed to apply migrations 0019 (actions_json), 0020 (has_codeowners/protected_envs), 0021 (cloudtrail_events)
@@ -598,8 +609,7 @@ policy analysis, onboarding empty state.
 3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2 (deferred per founder decision)
 4. Stripe gating for evidence export limits (deferred per founder decision)
 5. TOTP MFA (deferred to Phase 1.5)
-6. GitHub team membership collection (Phase 3 item — teams → user mappings for access review evidence)
-7. GitHub Actions deployments/workflow runs (Phase 3 item)
+6. GitHub Actions deployments/workflow runs (Phase 3 item — tracks workflow runs to environments for CC8.1)
 
 ### Phase 3 — GitHub integration (3 weeks)
 
@@ -628,9 +638,9 @@ management (CC7.1) in one shot. Most startups use GitHub.
 - [x] Protected environments and required reviewers (`github.repo.no_env_protection` check + sync)
 - [x] Outside collaborators (`github.org.outside_collaborators` check + sync)
 - [x] AWS CloudTrail event ↔ GitHub PR correlation timeline (`GET /v1/accounts/{id}/timeline` + `/timeline` UI page)
-- [ ] Team membership
+- [x] Team membership (`_collect_team_memberships()` in github_sync; stored in `roles_json["teams"]`)
 - [ ] GitHub Actions deployments/workflow runs
-- [ ] GitHub-derived controls/checks and evidence-pack wiring (partially done — checks exist, evidence-pack wired for identity snapshots)
+- [ ] GitHub-derived controls/checks and evidence-pack wiring (partially done — checks exist, evidence-pack wired for identity snapshots + CloudTrail events)
 
 **Identity side:**
 - Org members (admins, outside collaborators)
