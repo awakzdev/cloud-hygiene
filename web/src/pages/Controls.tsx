@@ -146,7 +146,7 @@ function findingBadgeClass(count: number) {
 function familyCardClass(active: boolean, group: ControlGroup) {
   const activeClass = active ? "border-zinc-400 bg-white shadow-sm ring-1 ring-zinc-900/5" : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50/50";
   const accentClass = group.failed > 0 ? "border-l-red-200" : group.noData === group.rows.length ? "border-l-zinc-300" : "border-l-emerald-200";
-  return `flex min-h-[13rem] flex-col rounded-xl border border-l-4 ${activeClass} ${accentClass} p-4 text-left transition-colors`;
+  return `flex min-h-[10rem] flex-col rounded-xl border border-l-4 ${activeClass} ${accentClass} p-3.5 text-left transition-colors`;
 }
 
 function findingLabel(count: number) {
@@ -449,7 +449,7 @@ export default function Controls() {
         </div>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-3">
         <div>
           <div>
             <h2 className="text-base font-semibold text-zinc-950">Control families</h2>
@@ -468,7 +468,7 @@ export default function Controls() {
 
         {!controls.isLoading && groupedRows.length > 0 && (
           <>
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-3 xl:grid-cols-3">
               {groupedRows.map((group) => {
                 const isSelected = selectedGroup?.key === group.key;
                 const findings = totalFindings(group);
@@ -499,7 +499,7 @@ export default function Controls() {
                       </span>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-3 gap-2 text-left">
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-left">
                       <div>
                         <div className="text-lg font-semibold tabular-nums text-red-600">{group.failed}</div>
                         <div className="text-xs text-zinc-500">failing</div>
@@ -514,9 +514,9 @@ export default function Controls() {
                       </div>
                     </div>
 
-                    <div className="mt-4 space-y-2">
+                    <div className="mt-3 space-y-1.5">
                       {previewRows.map((ctrl) => (
-                        <div key={ctrl.id} className="flex items-center justify-between gap-3 text-sm">
+                        <div key={ctrl.id} className="flex items-center justify-between gap-3 text-xs">
                           <span className="truncate text-zinc-700">
                             <span className="font-mono text-xs font-semibold text-zinc-500">{ctrl.control_id}</span>{" "}
                             {shortControlTitle(ctrl.title)}
@@ -536,7 +536,7 @@ export default function Controls() {
 
             {selectedGroup && (
               <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-                <div className="flex items-start justify-between gap-4 border-b border-zinc-100 bg-white px-5 py-4">
+                <div className="flex items-start justify-between gap-4 border-b border-zinc-100 bg-white px-4 py-3">
                   <div>
                     <h3 className="text-base font-semibold text-zinc-950">Selected family: {selectedGroup.label}</h3>
                     <p className="mt-1 text-sm text-zinc-500">
@@ -555,18 +555,18 @@ export default function Controls() {
                             setExpanded(isExpanded ? null : ctrl.id);
                             setDetailsOpen(null);
                           }}
-                          className={`grid w-full grid-cols-[2rem_5.25rem_minmax(0,1fr)_8rem_1.25rem] items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-zinc-50 group ${
+                          className={`grid w-full grid-cols-[1.75rem_4.75rem_minmax(0,1fr)_7rem_1.25rem] items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-zinc-50 group ${
                             isExpanded ? "bg-zinc-50/70" : "bg-white"
                           }`}
                         >
-                          <div className={`flex h-8 w-8 items-center justify-center rounded-full border ${statusBadge[ctrl.status]}`}>
+                          <div className={`flex h-7 w-7 items-center justify-center rounded-full border ${statusBadge[ctrl.status]}`}>
                             <StatusIcon status={ctrl.status} />
                           </div>
 
-                          <span className="font-mono text-[13px] font-semibold text-zinc-500">{ctrl.control_id}</span>
+                          <span className="font-mono text-xs font-semibold text-zinc-500">{ctrl.control_id}</span>
 
                           <div className="min-w-0">
-                            <div className="truncate text-[15px] font-medium leading-6 text-zinc-950">{shortControlTitle(ctrl.title)}</div>
+                            <div className="truncate text-sm font-medium leading-6 text-zinc-950">{shortControlTitle(ctrl.title)}</div>
                             <div className="text-xs text-zinc-400">{statusLabel[ctrl.status]}</div>
                           </div>
 
@@ -595,9 +595,9 @@ export default function Controls() {
                         </button>
 
                         {isExpanded && (
-                          <div className="border-t border-zinc-100 bg-zinc-50/60 px-5 pb-5 pt-4">
-                            <div className={`grid gap-5 ${detailsOpen === ctrl.id ? "xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]" : ""}`}>
-                              <div className="space-y-4 md:pl-[8.75rem]">
+                          <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 pb-4 pt-3">
+                            <div className={`grid gap-4 ${detailsOpen === ctrl.id ? "2xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]" : ""}`}>
+                              <div className="space-y-3 md:pl-[6.75rem]">
                                 <div>
                                   <p className="text-[15px] font-medium leading-6 text-zinc-950">{failureSummary(ctrl)}</p>
                                   <p className="mt-1 text-sm leading-6 text-zinc-600">{nextStep(ctrl)}</p>
@@ -616,7 +616,7 @@ export default function Controls() {
                                   </div>
                                 )}
 
-                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-500">
+                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
                                   <span>
                                     <span className="font-medium text-zinc-700">Evidence expected:</span>{" "}
                                     {compactSentence(ctrl.guidance, ctrl.description)}
@@ -631,7 +631,7 @@ export default function Controls() {
                                   {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
                                     <button
                                       onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
-                                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-zinc-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-zinc-800"
+                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-zinc-800"
                                     >
                                       View {findingLabel(ctrl.finding_count)}
                                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -642,14 +642,14 @@ export default function Controls() {
                                   {ctrl.narrative && (
                                     <button
                                       onClick={() => copyAuditResponse(ctrl)}
-                                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
+                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
                                     >
                                       {copiedControlId === ctrl.id ? "Copied response" : "Copy audit response"}
                                     </button>
                                   )}
                                   <button
                                     onClick={() => setDetailsOpen(detailsOpen === ctrl.id ? null : ctrl.id)}
-                                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
                                   >
                                     {detailsOpen === ctrl.id ? "Hide details" : "Show details"}
                                     <svg
@@ -663,7 +663,7 @@ export default function Controls() {
                               </div>
 
                               {detailsOpen === ctrl.id && (
-                                <aside className="space-y-3 border-t border-zinc-200 pt-4 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
+                                <aside className="space-y-3 border-t border-zinc-200 pt-4 2xl:border-l 2xl:border-t-0 2xl:pl-5 2xl:pt-0">
                                   <p className="text-sm leading-6 text-zinc-600">{ctrl.description}</p>
 
                                   {ctrl.guidance && (
