@@ -412,14 +412,6 @@ export default function Controls() {
                                         </svg>
                                       </button>
                                     )}
-                                    {ctrl.narrative && (
-                                      <button
-                                        onClick={() => { navigator.clipboard.writeText(ctrl.narrative!); }}
-                                        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
-                                      >
-                                        Copy audit response
-                                      </button>
-                                    )}
                                   </div>
                                 </div>
                               </div>
