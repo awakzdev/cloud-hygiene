@@ -74,7 +74,7 @@ export const checkLabels: Record<string, string> = {
   "github.org.dormant_members": "GitHub dormant members",
   "github.org.outside_collaborators": "Outside collaborators",
   "github.repo.no_branch_protection": "No branch protection",
-  "github.repo.no_codeowners": "No CODEOWNERS file",
+  "github.repo.no_codeowners": "Code-owner review required, no CODEOWNERS",
   "github.repo.no_env_protection": "Deployment environment unprotected",
   "github.repo.self_merge_allowed": "Self-merge allowed",
   "github.repo.insufficient_reviews": "Insufficient PR reviews",

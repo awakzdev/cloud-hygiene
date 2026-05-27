@@ -151,24 +151,42 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
     for ctrl_id, title, desc, ctrl_status, open_ct, exc_ct in sample_controls:
         checks_for_ctrl = [c for c, ctrls in check_to_control.items() if ctrl_id in ctrls]
         open_findings = [f for c in checks_for_ctrl for f in finding_by_check.get(c, []) if f["status"] == "open"]
+        ev_status = "complete" if ctrl_status == "pass" else ("partial" if open_findings else "missing")
+        reason = (
+            f"{open_ct} open finding(s) mapped to this control require remediation or documented exception."
+            if ctrl_status == "fail"
+            else "No open findings mapped to this control."
+        )
         control_results.append({
             "control_id": ctrl_id,
             "title": title,
             "description": desc,
             "guidance": "",
             "status": ctrl_status,
+            "evidence_status": ev_status,
             "finding_count": open_ct,
             "findings": open_findings,
+            "review_reason": reason,
         })
 
     from types import SimpleNamespace
     from app.services.pdf_report import build_pdf
 
     sample_acc = SimpleNamespace(label="ACME Corp Demo", account_id="123456789012")
+    since = now - timedelta(days=90)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        pdf_bytes = build_pdf(sample_acc, framework, 90, now, control_results)
+        pdf_bytes = build_pdf(
+            sample_acc,
+            framework,
+            90,
+            now,
+            control_results,
+            since=since,
+            evidence_sources=["AWS IAM", "AWS CloudTrail", "AWS Config", "GitHub"],
+            report_id="SAMPLE000001",
+        )
         zf.writestr("report.pdf", pdf_bytes)
 
         # README

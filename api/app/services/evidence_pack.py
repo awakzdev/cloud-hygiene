@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import uuid
@@ -94,6 +95,18 @@ def build_evidence_pack(
     cicd_snaps = _build_cicd_snapshots(db, acc.org_id, since)
     snap_by_type.update(cicd_snaps)
 
+    providers = db.scalars(
+        select(IdentityProvider).where(IdentityProvider.org_id == org_id)
+    ).all()
+    has_successful_scan = bool(
+        db.scalars(
+            select(ScanRun)
+            .where(ScanRun.account_id == account_id, ScanRun.status == "ok")
+            .limit(1)
+        ).first()
+    )
+    evidence_sources = _evidence_sources(providers)
+
     control_results: list[dict[str, Any]] = []
     for ctrl in controls:
         status, hits = _control_status(open_findings, check_map[ctrl.id])
@@ -116,6 +129,7 @@ def build_evidence_pack(
 
         exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
         open_count = len([f for f in hits if f.status == "open"])
+        open_findings = [_finding_dict(f) for f in hits if f.status == "open"]
         control_results.append(
             {
                 "control_id": ctrl.control_id,
@@ -123,19 +137,18 @@ def build_evidence_pack(
                 "description": ctrl.description,
                 "guidance": ctrl.guidance or "",
                 "status": status,
+                "evidence_status": _evidence_status(check_map[ctrl.id], snaps, has_successful_scan),
                 "finding_count": open_count,
                 "exception_count": len(exceptions),
-                "findings": [_finding_dict(f) for f in hits if f.status == "open"],
+                "findings": open_findings,
                 "exceptions": exceptions,
                 "snapshots": snaps[:50],
                 "status_note": _control_status_note(status, open_count, exceptions),
                 "exception_narratives": _exception_narratives(exceptions),
+                "review_reason": _review_reason(status, open_count, open_findings, check_map[ctrl.id]),
             }
         )
 
-    providers = db.scalars(
-        select(IdentityProvider).where(IdentityProvider.org_id == org_id)
-    ).all()
     scan_runs = db.scalars(
         select(ScanRun)
         .where(ScanRun.account_id == account_id, ScanRun.started_at >= since)
@@ -185,7 +198,16 @@ def build_evidence_pack(
             zf.writestr(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
             zf.writestr(folder + "snapshots.json", json.dumps(cr["snapshots"], indent=2, default=str))
 
-        pdf_bytes = build_pdf(acc, framework, period_days, generated_at, control_results)
+        pdf_bytes = build_pdf(
+            acc,
+            framework,
+            period_days,
+            generated_at,
+            control_results,
+            since=since,
+            evidence_sources=evidence_sources,
+            report_id=_report_id(account_id, framework, generated_at),
+        )
         zf.writestr("report.pdf", pdf_bytes)
 
     return buf.getvalue()
@@ -472,6 +494,49 @@ def _finding_dict(f: Finding) -> dict[str, Any]:
             "expires_at": f.exception_expires_at.isoformat() if f.exception_expires_at else None,
         }
     return d
+
+
+def _report_id(account_id: uuid.UUID, framework: str, generated_at: datetime) -> str:
+    raw = f"{account_id}:{framework}:{generated_at.isoformat()}".encode()
+    return hashlib.sha256(raw).hexdigest()[:12].upper()
+
+
+def _evidence_sources(providers: list[IdentityProvider]) -> list[str]:
+    sources = ["AWS IAM", "AWS CloudTrail", "AWS Config"]
+    for p in providers:
+        if p.status == "connected":
+            if p.type == "github":
+                sources.append("GitHub")
+            elif p.type == "gitlab":
+                sources.append("GitLab")
+    return sources
+
+
+def _evidence_status(check_ids: list[str], snaps: list[dict[str, Any]], has_scan: bool) -> str:
+    if not check_ids:
+        return "missing"
+    if not snaps:
+        return "partial" if has_scan else "missing"
+    if all((s.get("data") or {}).get("_synthetic") for s in snaps):
+        return "partial"
+    return "complete"
+
+
+def _review_reason(
+    status: str,
+    open_count: int,
+    findings: list[dict[str, Any]],
+    check_ids: list[str],
+) -> str:
+    if status == "pass":
+        return "No open findings mapped to this control."
+    if status == "no_data":
+        if not check_ids:
+            return "No automated checks mapped — manual attestation required."
+        return "No scan evidence collected yet for mapped checks."
+    if open_count == 1 and findings:
+        return findings[0].get("title", "One open finding requires remediation or documented exception.")
+    return f"{open_count} open finding(s) mapped to this control require remediation or documented exception."
 
 
 def _control_status_note(status: str, open_count: int, exceptions: list[dict[str, Any]]) -> str:

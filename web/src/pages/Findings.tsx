@@ -124,7 +124,7 @@ const checkDescriptions: Record<string, string> = {
   "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
   "github.org.outside_collaborators": "Non-organization members with direct access to one or more repositories.",
   "github.repo.no_branch_protection": "Default branch has no protection rules — anyone can push directly.",
-  "github.repo.no_codeowners": "No CODEOWNERS file — code review is not automatically assigned to responsible team members.",
+  "github.repo.no_codeowners": "Branch protection requires code-owner review but no CODEOWNERS file is present.",
   "github.repo.no_env_protection": "Deployment environment(s) have no required reviewers — deploys can proceed without human approval.",
   "github.repo.self_merge_allowed": "Pull requests merged by their own author with no peer review.",
   "github.repo.insufficient_reviews": "Pull requests merged with fewer approvals than required.",
