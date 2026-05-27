@@ -47,126 +47,33 @@ function readStoredMfaToken(): string | null {
   return sessionStorage.getItem(MFA_STORAGE_KEY);
 }
 
-const CONTROL_STATUS_MOCK = (
-  <div className="mt-1.5 space-y-1 rounded-lg border border-white/10 bg-black/20 p-2">
-    {[
-      { id: "CC6.1", status: "Pass", tone: "text-emerald-400 bg-emerald-500/15" },
-      { id: "CC6.3", status: "Review", tone: "text-amber-400 bg-amber-500/15" },
-      { id: "CC7.2", status: "Review", tone: "text-amber-400 bg-amber-500/15" },
-    ].map((row) => (
-      <div key={row.id} className="flex items-center justify-between gap-2 text-[10px]">
-        <span className="font-mono text-zinc-300">{row.id}</span>
-        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${row.tone}`}>{row.status}</span>
-      </div>
-    ))}
-  </div>
-);
-
-const TIMELINE_EXCEPTIONS_MOCK = (
-  <div className="mt-1.5 space-y-1.5 rounded-lg border border-white/10 bg-black/20 p-2">
-    {[
-      { time: "Apr 18", event: "Finding opened · IAM wildcard" },
-      { time: "May 02", event: "Exception approved until Q3" },
-    ].map((row) => (
-      <div key={row.time} className="flex gap-2 text-[10px]">
-        <span className="shrink-0 font-mono text-zinc-500">{row.time}</span>
-        <span className="text-zinc-300">{row.event}</span>
-      </div>
-    ))}
-    <div className="rounded border border-amber-500/15 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-100/80">
-      CC6.6 exception · approver on file until Aug 2026
-    </div>
-  </div>
-);
-
-function LoginBrand({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`flex items-center gap-2.5 ${compact ? "mb-6" : "mb-8 lg:mb-10"}`}>
-      <img
-        src="/favicon.png"
-        alt="Vigil"
-        className={compact ? "w-10 h-10 object-contain" : "w-11 h-11 object-contain lg:w-12 lg:h-12"}
-      />
-      <span className="text-white text-lg font-semibold tracking-tight lg:text-xl">Vigil</span>
-    </div>
-  );
-}
-
-function SampleEvidencePanel({
+function SamplePackCta({
   loading,
   error,
   onDownload,
-  compact = false,
 }: {
   loading: boolean;
   error: string | null;
   onDownload: () => void;
-  compact?: boolean;
 }) {
-  if (compact) {
-    return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-        <p className="text-sm font-medium text-zinc-200">Sample SOC 2 evidence pack</p>
-        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-          Preview control status, timeline, and exceptions before you sign in.
-        </p>
-        {error && (
-          <p className="mt-2 text-xs text-red-400">{error}</p>
-        )}
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={loading}
-          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-400/30 bg-transparent px-3 py-2 text-xs font-medium text-indigo-200/90 transition hover:border-indigo-400/50 hover:bg-indigo-500/5 disabled:opacity-60"
-        >
-          {loading ? "Preparing…" : "Preview sample evidence pack"}
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] p-4 shadow-lg shadow-black/20 backdrop-blur-sm lg:p-5">
-      <div className="relative">
-        <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Product preview</p>
-        <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-100">
-          See what Vigil generates
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-          Sample SOC 2 pack with control status, timeline, exceptions, and evidence references.
-        </p>
-
-        <div className="mt-3 space-y-2.5">
-          <div className="rounded-lg border border-white/10 bg-black/15 p-2.5">
-            <p className="text-xs font-medium text-zinc-200">Control status summary</p>
-            {CONTROL_STATUS_MOCK}
-          </div>
-          <div className="rounded-lg border border-white/10 bg-black/15 p-2.5">
-            <p className="text-xs font-medium text-zinc-200">Timeline and exceptions</p>
-            {TIMELINE_EXCEPTIONS_MOCK}
-          </div>
-        </div>
-
-        {error && (
-          <div className="mt-2.5 rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-2 text-xs text-red-300">
-            {error}
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={onDownload}
-          disabled={loading}
-          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-400/35 bg-indigo-500/5 px-3 py-2 text-xs font-medium text-indigo-200 transition hover:border-indigo-400/55 hover:bg-indigo-500/10 disabled:opacity-60"
-        >
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3" />
-          </svg>
-          {loading ? "Preparing…" : "Preview sample evidence pack"}
-        </button>
-
-        <p className="mt-2 text-center text-[10px] text-zinc-600">No account required · synthetic demo data</p>
-      </div>
+    <div className="mt-6 rounded-xl border border-white/[0.08] bg-white/[0.02] px-5 py-4 text-center">
+      <p className="text-sm font-medium text-zinc-300">Preview before connecting AWS</p>
+      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+        Download a sample SOC 2 evidence pack with control status, timeline, exceptions, and raw
+        evidence references.
+      </p>
+      {error && (
+        <p className="mt-2 text-xs text-red-400">{error}</p>
+      )}
+      <button
+        type="button"
+        onClick={onDownload}
+        disabled={loading}
+        className="mt-3 inline-flex items-center justify-center rounded-lg border border-zinc-600/60 bg-transparent px-4 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:bg-white/[0.03] disabled:opacity-60"
+      >
+        {loading ? "Preparing…" : "Download sample pack"}
+      </button>
     </div>
   );
 }
@@ -383,22 +290,22 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 lg:p-8">
-      <div className="w-full max-w-4xl">
-        <LoginBrand />
+    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="flex items-center justify-center gap-3 mb-8">
+          <img src="/favicon.png" alt="Vigil" className="w-12 h-12 object-contain" />
+          <span className="text-white text-xl font-semibold tracking-tight">Vigil</span>
+        </div>
 
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.82fr)] lg:gap-7">
-          {/* Login — primary surface */}
-          <div className="w-full max-w-md mx-auto lg:mx-0 lg:max-w-none">
-            <div className="rounded-2xl bg-white p-8 shadow-2xl shadow-black/25 ring-1 ring-white/10">
-              <h1 className="text-lg font-semibold text-zinc-900 mb-1">
-                {mode === "login" ? "Welcome back" : "Create your account"}
-              </h1>
-              <p className="text-sm text-zinc-500 mb-6">
-                {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
-              </p>
+        <div className="rounded-2xl bg-white p-8 shadow-2xl shadow-black/25">
+          <h1 className="text-lg font-semibold text-zinc-900 mb-1">
+            {mode === "login" ? "Welcome back" : "Create your account"}
+          </h1>
+          <p className="text-sm text-zinc-500 mb-6">
+            {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
+          </p>
 
-              <form noValidate onSubmit={submit} className="space-y-4">
+          <form noValidate onSubmit={submit} className="space-y-4">
             {mode === "signup" && (
               <div>
                 <label className="block text-xs font-medium text-zinc-700 mb-1.5">Organization name</label>
@@ -448,7 +355,7 @@ export default function Login() {
             )}
 
             <button
-              className="w-full rounded-lg bg-zinc-900 py-3 text-sm font-semibold text-white shadow-md shadow-zinc-900/20 transition hover:bg-zinc-800 disabled:opacity-60"
+              className="w-full rounded-lg bg-zinc-900 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:opacity-60"
               disabled={loading}
             >
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
@@ -504,28 +411,13 @@ export default function Login() {
               </button>
             </div>
           </div>
-          </div>
-          </div>
-
-          {/* Sample preview — secondary, desktop only inline */}
-          <div className="hidden lg:block lg:pt-0">
-            <SampleEvidencePanel
-              loading={sampleLoading}
-              error={sampleError}
-              onDownload={downloadSamplePack}
-            />
-          </div>
         </div>
 
-        {/* Mobile / tablet: compact sample below login */}
-        <div className="mt-6 lg:hidden max-w-md mx-auto">
-          <SampleEvidencePanel
-            compact
-            loading={sampleLoading}
-            error={sampleError}
-            onDownload={downloadSamplePack}
-          />
-        </div>
+        <SamplePackCta
+          loading={sampleLoading}
+          error={sampleError}
+          onDownload={downloadSamplePack}
+        />
       </div>
     </div>
   );

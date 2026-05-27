@@ -40,6 +40,25 @@ def test_control_status_fails_when_open_findings_exist():
     assert status == "fail"
 
 
+def test_control_status_across_multiple_controls_uses_orm_list():
+    """Regression: build_evidence_pack must not shadow the ORM open_findings list with dicts."""
+    from app.services.evidence_pack import _control_status, _finding_dict
+
+    orm_findings = [
+        _finding(check_id="iam.user.no_mfa", status="open"),
+        _finding(check_id="s3.bucket.no_default_encryption", status="open"),
+    ]
+    for check_ids in (["iam.user.no_mfa"], ["s3.bucket.no_default_encryption"]):
+        status, hits = _control_status(orm_findings, check_ids)
+        assert status == "fail"
+        # Same pattern as build_evidence_pack — must not reassign orm_findings here
+        finding_dicts = [_finding_dict(f) for f in hits if f.status == "open"]
+        assert finding_dicts[0]["check_id"] in check_ids
+
+    status, hits = _control_status(orm_findings, ["s3.bucket.no_default_encryption"])
+    assert hits[0].check_id == "s3.bucket.no_default_encryption"
+
+
 def test_index_csv_includes_exception_count():
     from app.services.evidence_pack import _build_index_csv
 

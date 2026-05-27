@@ -129,7 +129,7 @@ def build_evidence_pack(
 
         exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
         open_count = len([f for f in hits if f.status == "open"])
-        open_findings = [_finding_dict(f) for f in hits if f.status == "open"]
+        open_finding_dicts = [_finding_dict(f) for f in hits if f.status == "open"]
         control_results.append(
             {
                 "control_id": ctrl.control_id,
@@ -140,12 +140,12 @@ def build_evidence_pack(
                 "evidence_status": _evidence_status(check_map[ctrl.id], snaps, has_successful_scan),
                 "finding_count": open_count,
                 "exception_count": len(exceptions),
-                "findings": open_findings,
+                "findings": open_finding_dicts,
                 "exceptions": exceptions,
                 "snapshots": snaps[:50],
                 "status_note": _control_status_note(status, open_count, exceptions),
                 "exception_narratives": _exception_narratives(exceptions),
-                "review_reason": _review_reason(status, open_count, open_findings, check_map[ctrl.id]),
+                "review_reason": _review_reason(status, open_count, open_finding_dicts, check_map[ctrl.id]),
             }
         )
 

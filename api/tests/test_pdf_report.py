@@ -5,6 +5,18 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 
+def test_key_controls_for_review_sorted_by_finding_count():
+    from app.services.pdf_report import _key_controls_for_review
+
+    controls = [
+        {"control_id": "CC6.1", "status": "fail", "finding_count": 10, "findings": []},
+        {"control_id": "CC6.6", "status": "fail", "finding_count": 112, "findings": [{"severity": "critical"}]},
+        {"control_id": "CC6.3", "status": "pass", "finding_count": 99, "findings": []},
+    ]
+    top = _key_controls_for_review(controls, limit=5)
+    assert [c["control_id"] for c in top] == ["CC6.6", "CC6.1"]
+
+
 def test_build_pdf_generates_bytes_with_review_section():
     from app.services.pdf_report import build_pdf
 
@@ -54,3 +66,4 @@ def test_build_pdf_generates_bytes_with_review_section():
     )
     assert pdf[:4] == b"%PDF"
     assert len(pdf) > 3000
+    assert pdf.count(b"/Type /Page") >= 2
