@@ -550,6 +550,7 @@ def run_scan(account_id: str) -> dict:
             run = db.get(ScanRun, run.id) if run is not None else None
         except Exception:  # noqa: BLE001
             run = None
+        error_persisted = False
         if run is not None:
             run.status = "error"
             run.finished_at = datetime.now(timezone.utc)
@@ -561,6 +562,7 @@ def run_scan(account_id: str) -> dict:
             }
             try:
                 db.commit()
+                error_persisted = True
             except Exception:  # noqa: BLE001
                 db.rollback()
                 log.exception("scan.error_persist_failed", account_id=str(acc.id) if acc else None)
@@ -570,6 +572,13 @@ def run_scan(account_id: str) -> dict:
             step=step,
             error_type=type(e).__name__,
         )
+        if error_persisted and run is not None and acc is not None:
+            try:
+                from app.services.scan_alert import notify_scan_failure
+
+                notify_scan_failure(db, acc.id, run.id)
+            except Exception:  # noqa: BLE001
+                log.exception("scan.failure_notify_failed", account_id=str(acc.id))
         return {"ok": False, "error": str(e), "step": step}
     finally:
         db.close()
@@ -646,12 +655,27 @@ def recheck_finding(account_id: str, check_id: str) -> dict:
 
 @celery_app.task(name="app.worker.tasks.scan_all_accounts")
 def scan_all_accounts() -> dict:
+    """Queue scans for connected accounts whose org schedule says they're due."""
+    from app.services.scan_schedule import get_scanning_settings, should_queue_automated_scan
+
     db = SessionLocal()
+    queued = 0
+    skipped = 0
     try:
-        rows = db.scalars(select(AwsAccount).where(AwsAccount.status == "connected")).all()
-        for acc in rows:
+        accounts = db.scalars(select(AwsAccount).where(AwsAccount.status == "connected")).all()
+        now = datetime.now(timezone.utc)
+        for acc in accounts:
+            org = db.get(Org, acc.org_id)
+            if not org:
+                skipped += 1
+                continue
+            scanning = get_scanning_settings(org.settings or {})
+            if not should_queue_automated_scan(acc, scanning, db, now):
+                skipped += 1
+                continue
             run_scan.delay(str(acc.id))
-        return {"queued": len(rows)}
+            queued += 1
+        return {"queued": queued, "skipped": skipped}
     finally:
         db.close()
 

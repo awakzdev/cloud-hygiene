@@ -6,7 +6,7 @@ import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
 import { checkLabels } from "../data/checkLabels";
-import { saveScanDurationMs, useScanProgress } from "../hooks/useScanProgress";
+import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Finding = {
   id: string;
@@ -97,6 +97,27 @@ const checkDescriptions: Record<string, string> = {
   "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
   "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
   "rds.instance.no_automated_backup": "Enable automated backups with a retention period that matches your recovery objective.",
+  "dynamodb.table.no_encryption": "Enable encryption at rest — DynamoDB supports in-place updates with no downtime.",
+  "dynamodb.table.no_pitr": "Enable point-in-time recovery for continuous backups and restore to any second in the last 35 days.",
+  "s3.bucket.no_default_encryption": "Enable default bucket encryption (SSE-S3 or SSE-KMS) for all new uploads.",
+  "s3.bucket.no_mfa_delete": "Enable MFA Delete on versioned buckets — requires root credentials.",
+  "ec2.ebs.snapshot_public": "Remove public snapshot permissions — audit logs may have been exposed.",
+  "ec2.ebs.snapshot_unencrypted": "Copy snapshot with encryption enabled, then delete the original.",
+  "ec2.ami.public": "Set AMI visibility to private — rotate secrets if the image was public.",
+  "cloudtrail.trail.s3_bucket_public": "Block public access on the CloudTrail log bucket immediately.",
+  "cloudtrail.trail.no_cloudwatch_logs": "Enable CloudWatch Logs integration for real-time alerting.",
+  "cloudtrail.trail.s3_bucket_no_logging": "Enable server access logging on the CloudTrail log bucket.",
+  "acm.certificate.expiring": "Renew or replace the certificate before expiry breaks HTTPS.",
+  "lambda.function.deprecated_runtime": "Upgrade to a supported runtime and test in staging first.",
+  "lambda.function.no_dlq": "Attach a dead-letter queue to capture failed async invocations.",
+  "rds.instance.no_deletion_protection": "Enable deletion protection to prevent accidental database destruction.",
+  "rds.instance.no_multi_az": "Enable Multi-AZ for automatic failover — plan a brief maintenance window.",
+  "secretsmanager.secret.no_rotation": "Enable automatic rotation on a regular interval.",
+  "ssm.parameter.plaintext_secret": "Migrate to SecureString and update applications to decrypt via KMS.",
+  "elb.load_balancer.no_access_logs": "Enable access logs to an S3 bucket for request-level visibility.",
+  "elb.load_balancer.weak_tls_policy": "Upgrade listener to TLS 1.2+ security policy.",
+  "sns.topic.no_encryption": "Enable KMS encryption on the SNS topic.",
+  "sqs.queue.no_encryption": "Enable KMS encryption on the SQS queue.",
   // GitHub
   "github.org.mfa_not_enforced": "GitHub organization does not require MFA for all members.",
   "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
@@ -424,7 +445,6 @@ function TagSearchInput({
 export default function Findings() {
   const qc = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [scanTriggered, setScanTriggered] = useState(false);
   const [drawerResolved, setDrawerResolved] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -447,8 +467,6 @@ export default function Findings() {
       setSearchParams({}, { replace: true });
     }
   }
-  const prevScanStatus = useRef<string | null>(null);
-
   useEffect(() => {
     localStorage.setItem(COLLAPSED_FINDINGS_KEY, JSON.stringify(collapsed));
   }, [collapsed]);
@@ -475,30 +493,17 @@ export default function Findings() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
   const connectedId = accounts.data?.find((a) => a.status === "connected")?.id;
 
-  const scanRun = useQuery({
-    queryKey: ["scan-run-latest", connectedId],
-    queryFn: () => connectedId ? api<{ id: string; status: string; started_at: string; finished_at: string | null; error: string | null; failed_at?: string | null; error_type?: string | null } | null>(`/v1/accounts/${connectedId}/scan-runs/latest`) : null,
-    enabled: !!connectedId,
-    refetchInterval: (query) => query.state.data?.status === "running" ? 5000 : false,
+  const {
+    scanRun,
+    scanStatus,
+    isRunning,
+    scanTriggered,
+    isScanActive,
+    scanProgress,
+    triggerScan,
+  } = useTriggeredScan(connectedId, {
+    onScanComplete: () => qc.invalidateQueries({ queryKey: ["findings"] }),
   });
-
-  const scanStatus = scanRun.data?.status ?? null;
-  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
-  const isRunning = scanStatus === "running" && !scanStuck;
-  const isScanActive = scanTriggered || isRunning;
-  const scanProgress = useScanProgress(isScanActive, isRunning ? scanStartedAt : null);
-
-  useEffect(() => {
-    if (prevScanStatus.current === "running" && scanStatus === "ok") {
-      qc.invalidateQueries({ queryKey: ["findings"] });
-      if (scanRun.data?.started_at && scanRun.data?.finished_at) {
-        saveScanDurationMs(scanRun.data.started_at, scanRun.data.finished_at);
-      }
-    }
-    if (scanStatus === "running") setScanTriggered(false);
-    prevScanStatus.current = scanStatus;
-  }, [scanStatus, qc, scanRun.data?.started_at, scanRun.data?.finished_at]);
 
   useEffect(() => {
     if (isRefreshing && !q.isFetching) {
@@ -513,11 +518,6 @@ export default function Findings() {
     if (!still) { setDrawerResolved(true); setVerifying(false); }
   }, [q.data, selected, drawerResolved]);
 
-  const scan = useMutation({
-    mutationFn: (id: string) => api(`/v1/accounts/${id}/scan`, { method: "POST" }),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }), 300),
-    onError: () => setScanTriggered(false),
-  });
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: "recheck" | "resolve" }) =>
       api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
@@ -634,7 +634,7 @@ export default function Findings() {
         <div className="flex shrink-0 items-center gap-2">
           <button onClick={downloadCsv} className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950">Export</button>
           <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 disabled:opacity-50 disabled:cursor-not-allowed">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
-          {connectedId && <button onClick={() => { setScanTriggered(true); scan.mutate(connectedId); }} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
+          {connectedId && <button onClick={() => triggerScan(connectedId)} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
         </div>
       </div>
 

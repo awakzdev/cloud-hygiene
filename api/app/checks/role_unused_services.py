@@ -27,7 +27,7 @@ def _removable_statements(inline_policies: dict, unused_set: set[str]) -> list[d
             if isinstance(actions, str):
                 actions = [actions]
             if any(a == "*" for a in actions):
-                matching = ["* (wildcard — narrow to used services)"]
+                matching = ["* (action wildcard — narrow to used API calls)"]
             else:
                 matching = [
                     a for a in actions

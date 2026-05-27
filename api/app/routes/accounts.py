@@ -23,10 +23,11 @@ from app.models.cloudtrail import CloudTrailEvent
 from app.models.github import IdentityProvider, PullRequest, Repo
 from app.models.iam import IamAccessKey, IamUser
 from app.models.resources import (
-    AccessAnalyzer, CloudTrailTrail, ConfigRecorder, Ec2Instance,
-    EbsEncryptionDefault, EbsVolume, GuardDutyDetector, IamPasswordPolicy,
-    KmsKey, RdsInstance, S3AccountPublicAccessBlock, S3Bucket, SecurityGroup,
-    SecurityHubStatus, Vpc,
+    AccessAnalyzer, AcmCertificate, CloudTrailTrail, ConfigRecorder, DynamoDbTable, Ec2Ami,
+    Ec2Instance, EbsEncryptionDefault, EbsSnapshot, EbsVolume, ElbLoadBalancer,
+    GuardDutyDetector, IamPasswordPolicy, KmsKey, LambdaFunction, RdsInstance,
+    S3AccountPublicAccessBlock, S3Bucket, SecretsManagerSecret, SecurityGroup,
+    SecurityHubStatus, SnsTopic, SsmParameter, SqsQueue, Vpc,
 )
 from app.models.org import Org
 
@@ -57,7 +58,7 @@ def _launch_url(external_id: str) -> str:
         "templateURL": settings.CFN_TEMPLATE_URL,
         "stackName": "VigilReadOnly",
         "param_ExternalId": external_id,
-        "param_HygieneAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
+        "param_VigilAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
     }
     qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
     return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
@@ -775,6 +776,14 @@ def blast_radius(
         elif check_id == "s3.bucket.no_logging":
             confidence = "high"
 
+        elif check_id == "s3.bucket.no_default_encryption":
+            confidence = "high"
+            warnings.append("Default encryption applies to new uploads only — existing objects are not retroactively encrypted")
+
+        elif check_id == "s3.bucket.no_mfa_delete":
+            confidence = "high"
+            warnings.append("MFA Delete can only be enabled or disabled by the root user — IAM users cannot toggle it")
+
         return {
             "resource_type": "s3_bucket",
             "confidence": confidence,
@@ -786,6 +795,7 @@ def blast_radius(
             "public_access_blocked": bucket.public_access_blocked,
             "https_only": bucket.https_only,
             "logging_enabled": bucket.logging_enabled,
+            "mfa_delete_enabled": bucket.mfa_delete_enabled,
             "warnings": warnings,
         }
 
@@ -897,6 +907,13 @@ def blast_radius(
         elif check_id == "rds.instance.no_automated_backup":
             confidence = "high"
 
+        elif check_id == "rds.instance.no_deletion_protection":
+            confidence = "high"
+
+        elif check_id == "rds.instance.no_multi_az":
+            confidence = "medium"
+            warnings.append("Enabling Multi-AZ triggers a brief failover (~60s) and doubles instance cost")
+
         return {
             "resource_type": "rds_instance",
             "confidence": confidence,
@@ -906,6 +923,41 @@ def blast_radius(
             "storage_encrypted": rds.storage_encrypted,
             "publicly_accessible": rds.publicly_accessible,
             "backup_retention_period": rds.backup_retention_period,
+            "multi_az": rds.multi_az,
+            "deletion_protection": rds.deletion_protection,
+            "warnings": warnings,
+        }
+
+    # ── DynamoDB Table ───────────────────────────────────────────────────────
+    if check_id.startswith("dynamodb.table."):
+        table = db.scalar(
+            select(DynamoDbTable).where(DynamoDbTable.account_id == acc.id, DynamoDbTable.arn == resource_arn)
+        )
+        if not table:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "DynamoDB table not found — run a scan first")
+
+        warnings: list[str] = []
+        confidence = "high"
+
+        if check_id == "dynamodb.table.no_encryption":
+            warnings.append(
+                "Encryption is applied in place — no table recreation required. Reads and writes continue during the update."
+            )
+            warnings.append(
+                "If using a customer-managed KMS key, verify application IAM roles have kms:Decrypt and kms:GenerateDataKey on the key"
+            )
+        elif check_id == "dynamodb.table.no_pitr":
+            warnings.append(
+                "PITR adds continuous backup storage (~$0.20/GB-month for backup data beyond the free tier)"
+            )
+
+        return {
+            "resource_type": "dynamodb_table",
+            "confidence": confidence,
+            "table_name": table.table_name,
+            "region": table.region,
+            "kms_encrypted": table.kms_encrypted,
+            "pitr_enabled": table.pitr_enabled,
             "warnings": warnings,
         }
 
@@ -945,6 +997,14 @@ def blast_radius(
         elif check_id == "cloudtrail.trail.no_kms":
             confidence = "medium"
             warnings.append("The CloudTrail delivery role must have kms:GenerateDataKey and kms:Decrypt on the chosen key — verify the role policy before applying")
+        elif check_id == "cloudtrail.trail.s3_bucket_public":
+            confidence = "low"
+            warnings.append("Audit logs may have been exposed while the bucket was public — rotate sensitive credentials")
+        elif check_id == "cloudtrail.trail.no_cloudwatch_logs":
+            confidence = "high"
+            warnings.append("CloudWatch Logs ingestion adds cost (~$0.50/GB) — set a retention period on the log group")
+        elif check_id == "cloudtrail.trail.s3_bucket_no_logging":
+            confidence = "high"
         else:
             confidence = "high"
 
@@ -957,6 +1017,8 @@ def blast_radius(
             "is_logging": trail.is_logging,
             "log_validation_enabled": trail.log_validation_enabled,
             "kms_key_id": trail.kms_key_id,
+            "s3_bucket_public": trail.s3_bucket_public,
+            "cloudwatch_logs_enabled": trail.cloudwatch_logs_enabled,
             "warnings": warnings,
         }
 
@@ -1151,6 +1213,211 @@ def blast_radius(
                 "No services recorded as used in 90 days — high confidence removal is safe",
                 "Verify application does not use this role before removing",
             ],
+        }
+
+    # ── EBS Snapshot ─────────────────────────────────────────────────────────
+    if check_id.startswith("ec2.ebs.snapshot"):
+        snap = db.scalar(
+            select(EbsSnapshot).where(EbsSnapshot.account_id == acc.id, EbsSnapshot.arn == resource_arn)
+        )
+        if not snap:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "EBS snapshot not found — run a scan first")
+
+        warnings: list[str] = []
+        confidence = "high"
+        if check_id == "ec2.ebs.snapshot_public":
+            confidence = "low"
+            warnings.append("Public snapshots may already have been copied by external accounts")
+        elif check_id == "ec2.ebs.snapshot_unencrypted":
+            warnings.append("Copying and deleting the original snapshot takes time and doubles storage cost temporarily")
+
+        return {
+            "resource_type": "ebs_snapshot",
+            "confidence": confidence,
+            "snapshot_id": snap.snapshot_id,
+            "region": snap.region,
+            "encrypted": snap.encrypted,
+            "is_public": snap.is_public,
+            "warnings": warnings,
+        }
+
+    # ── EC2 AMI ──────────────────────────────────────────────────────────────
+    if check_id == "ec2.ami.public":
+        ami = db.scalar(
+            select(Ec2Ami).where(Ec2Ami.account_id == acc.id, Ec2Ami.arn == resource_arn)
+        )
+        if not ami:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "AMI not found — run a scan first")
+
+        return {
+            "resource_type": "ec2_ami",
+            "confidence": "low",
+            "image_id": ami.image_id,
+            "name": ami.name,
+            "region": ami.region,
+            "is_public": ami.is_public,
+            "warnings": ["Assume the image may have been copied — rotate secrets baked into the AMI"],
+        }
+
+    # ── ACM Certificate ──────────────────────────────────────────────────────
+    if check_id == "acm.certificate.expiring":
+        cert = db.scalar(
+            select(AcmCertificate).where(
+                AcmCertificate.account_id == acc.id,
+                AcmCertificate.certificate_arn == resource_arn,
+            )
+        )
+        if not cert:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "certificate not found — run a scan first")
+
+        days_left = None
+        if cert.expires_at:
+            days_left = int((cert.expires_at - now).total_seconds() / 86400)
+
+        confidence = "medium" if days_left is not None and days_left <= 14 else "high"
+        warnings: list[str] = []
+        if days_left is not None and days_left <= 7:
+            confidence = "low"
+            warnings.append(f"Certificate expires in {days_left} days — renew immediately to avoid HTTPS outages")
+
+        return {
+            "resource_type": "acm_certificate",
+            "confidence": confidence,
+            "domain_name": cert.domain_name,
+            "region": cert.region,
+            "expires_at": cert.expires_at.isoformat() if cert.expires_at else None,
+            "days_until_expiry": days_left,
+            "status": cert.status,
+            "warnings": warnings,
+        }
+
+    # ── Lambda Function ──────────────────────────────────────────────────────
+    if check_id.startswith("lambda.function."):
+        fn = db.scalar(
+            select(LambdaFunction).where(LambdaFunction.account_id == acc.id, LambdaFunction.arn == resource_arn)
+        )
+        if not fn:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Lambda function not found — run a scan first")
+
+        warnings: list[str] = []
+        confidence = "high"
+        if check_id == "lambda.function.deprecated_runtime":
+            confidence = "medium"
+            warnings.append("Runtime upgrades can break dependencies — test in a staging alias before updating production")
+        elif check_id == "lambda.function.no_dlq":
+            warnings.append("Adding a DLQ does not affect successful invocations — monitor DLQ depth after enabling")
+
+        return {
+            "resource_type": "lambda_function",
+            "confidence": confidence,
+            "function_name": fn.function_name,
+            "region": fn.region,
+            "runtime": fn.runtime,
+            "has_dlq": fn.has_dlq,
+            "warnings": warnings,
+        }
+
+    # ── Secrets Manager ──────────────────────────────────────────────────────
+    if check_id == "secretsmanager.secret.no_rotation":
+        secret = db.scalar(
+            select(SecretsManagerSecret).where(
+                SecretsManagerSecret.account_id == acc.id,
+                SecretsManagerSecret.secret_arn == resource_arn,
+            )
+        )
+        if not secret:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "secret not found — run a scan first")
+
+        return {
+            "resource_type": "secrets_manager_secret",
+            "confidence": "medium",
+            "name": secret.name,
+            "region": secret.region,
+            "rotation_enabled": secret.rotation_enabled,
+            "warnings": ["First rotation updates the live secret — verify apps read from Secrets Manager, not cached values"],
+        }
+
+    # ── SSM Parameter ────────────────────────────────────────────────────────
+    if check_id == "ssm.parameter.plaintext_secret":
+        param_name = resource_arn.split(":parameter", 1)[-1] if ":parameter" in resource_arn else resource_arn
+        if param_name and not param_name.startswith("/"):
+            param_name = f"/{param_name}"
+        param = db.scalar(
+            select(SsmParameter).where(
+                SsmParameter.account_id == acc.id,
+                SsmParameter.parameter_name == param_name,
+            )
+        )
+        if not param:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "SSM parameter not found — run a scan first")
+
+        return {
+            "resource_type": "ssm_parameter",
+            "confidence": "medium",
+            "parameter_name": param.parameter_name,
+            "parameter_type": param.parameter_type,
+            "region": param.region,
+            "warnings": ["Converting to SecureString requires kms:Decrypt on consuming IAM roles"],
+        }
+
+    # ── ELB Load Balancer ────────────────────────────────────────────────────
+    if check_id.startswith("elb.load_balancer."):
+        lb = db.scalar(
+            select(ElbLoadBalancer).where(
+                ElbLoadBalancer.account_id == acc.id,
+                ElbLoadBalancer.load_balancer_arn == resource_arn,
+            )
+        )
+        if not lb:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "load balancer not found — run a scan first")
+
+        warnings: list[str] = []
+        confidence = "high"
+        if check_id == "elb.load_balancer.weak_tls_policy":
+            confidence = "medium"
+            warnings.append("Stricter TLS policies break clients still on TLS 1.0/1.1 — test with your oldest production clients")
+
+        return {
+            "resource_type": "elb_load_balancer",
+            "confidence": confidence,
+            "name": lb.name,
+            "region": lb.region,
+            "lb_type": lb.lb_type,
+            "access_logs_enabled": lb.access_logs_enabled,
+            "ssl_policy": lb.ssl_policy,
+            "warnings": warnings,
+        }
+
+    # ── SNS Topic ────────────────────────────────────────────────────────────
+    if check_id == "sns.topic.no_encryption":
+        topic = db.scalar(
+            select(SnsTopic).where(SnsTopic.account_id == acc.id, SnsTopic.topic_arn == resource_arn)
+        )
+        if not topic:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "SNS topic not found — run a scan first")
+
+        return {
+            "resource_type": "sns_topic",
+            "confidence": "medium",
+            "region": topic.region,
+            "kms_encrypted": topic.kms_encrypted,
+            "warnings": ["Publishers and subscribers need kms:Decrypt and kms:GenerateDataKey if using a customer-managed key"],
+        }
+
+    # ── SQS Queue ──────────────────────────────────────────────────────────
+    if check_id == "sqs.queue.no_encryption":
+        queue = db.scalar(
+            select(SqsQueue).where(SqsQueue.account_id == acc.id, SqsQueue.queue_arn == resource_arn)
+        )
+        if not queue:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "SQS queue not found — run a scan first")
+
+        return {
+            "resource_type": "sqs_queue",
+            "confidence": "medium",
+            "region": queue.region,
+            "kms_encrypted": queue.kms_encrypted,
+            "warnings": ["Producers and consumers need KMS permissions after enabling encryption"],
         }
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")

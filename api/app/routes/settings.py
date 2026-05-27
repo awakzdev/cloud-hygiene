@@ -1,10 +1,11 @@
-"""Org-level settings: check enable/disable + notification config."""
+"""Org-level settings: notifications + automated scan schedule."""
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,15 +13,25 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models.org import Org, User
 from app.models import AwsAccount, Finding
+from app.services.scan_schedule import (
+    DEFAULT_SCANNING,
+    get_scanning_settings,
+    max_interval_for_plan,
+    min_custom_hours_for_plan,
+    next_scan_at,
+    validate_scanning,
+)
 
 router = APIRouter()
 
 DEFAULT_SETTINGS: dict = {
     "checks": {},
+    "scanning": dict(DEFAULT_SCANNING),
     "notifications": {
         "email_digest_enabled": False,
         "digest_email": None,
         "slack_webhook_url": None,
+        "scan_failure_email_enabled": True,
     },
 }
 
@@ -28,6 +39,7 @@ DEFAULT_SETTINGS: dict = {
 def _merged(stored: dict) -> dict:
     merged = {**DEFAULT_SETTINGS}
     merged["checks"] = {**stored.get("checks", {})}
+    merged["scanning"] = get_scanning_settings(stored)
     merged["notifications"] = {**DEFAULT_SETTINGS["notifications"], **stored.get("notifications", {})}
     return merged
 
@@ -40,16 +52,41 @@ class NotificationsIn(BaseModel):
     email_digest_enabled: bool = False
     digest_email: str | None = None
     slack_webhook_url: str | None = None
+    scan_failure_email_enabled: bool = True
+
+
+class ScanningIn(BaseModel):
+    enabled: bool = True
+    interval: Literal["daily", "weekly", "custom", "manual"] = "daily"
+    custom_hours: int | None = None
+
+    @field_validator("interval")
+    @classmethod
+    def normalize_interval(cls, v: str) -> str:
+        if v not in ("daily", "weekly", "custom", "manual"):
+            raise ValueError("interval must be daily, weekly, custom, or manual")
+        return v
+
+
+class ScanStatusOut(BaseModel):
+    account_connected: bool
+    last_scan_at: str | None
+    next_scan_at: str | None
+    max_interval: Literal["daily", "weekly"]
+    min_custom_hours: int
 
 
 class SettingsPatch(BaseModel):
     checks: dict[str, CheckSettingIn] | None = None
+    scanning: ScanningIn | None = None
     notifications: NotificationsIn | None = None
 
 
 class SettingsOut(BaseModel):
     checks: dict
+    scanning: dict
     notifications: dict
+    scan_status: ScanStatusOut
 
 
 def _get_org(p, db: Session) -> Org:
@@ -59,10 +96,30 @@ def _get_org(p, db: Session) -> Org:
     return org
 
 
+def _scan_status(org: Org, db: Session) -> ScanStatusOut:
+    acc = db.scalars(
+        select(AwsAccount).where(
+            AwsAccount.org_id == org.id,
+            AwsAccount.status == "connected",
+        )
+    ).first()
+    scanning = get_scanning_settings(org.settings or {})
+    last = acc.last_scan_at if acc else None
+    nxt = next_scan_at(last, scanning) if acc else None
+    return ScanStatusOut(
+        account_connected=acc is not None,
+        last_scan_at=last.isoformat() if last else None,
+        next_scan_at=nxt.isoformat() if nxt else None,
+        max_interval=max_interval_for_plan(org.plan),
+        min_custom_hours=min_custom_hours_for_plan(org.plan),
+    )
+
+
 @router.get("", response_model=SettingsOut)
 def get_settings(p=Depends(current_principal), db: Session = Depends(get_db)):
     org = _get_org(p, db)
-    return _merged(org.settings or {})
+    merged = _merged(org.settings or {})
+    return SettingsOut(**merged, scan_status=_scan_status(org, db))
 
 
 @router.patch("", response_model=SettingsOut)
@@ -76,6 +133,23 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
             checks[check_id] = {"enabled": cfg.enabled}
         current["checks"] = checks
 
+    if body.scanning is not None:
+        payload = {
+            "enabled": body.scanning.enabled,
+            "interval": body.scanning.interval,
+            "custom_hours": body.scanning.custom_hours,
+        }
+        try:
+            validate_scanning(payload, org.plan)
+        except ValueError as e:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+        interval = body.scanning.interval
+        enabled = body.scanning.enabled and interval != "manual"
+        stored = {"enabled": enabled, "interval": interval}
+        if interval == "custom":
+            stored["custom_hours"] = body.scanning.custom_hours
+        current["scanning"] = stored
+
     if body.notifications is not None:
         current["notifications"] = body.notifications.model_dump()
 
@@ -83,7 +157,8 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
     db.add(org)
     db.commit()
     db.refresh(org)
-    return _merged(org.settings)
+    merged = _merged(org.settings)
+    return SettingsOut(**merged, scan_status=_scan_status(org, db))
 
 
 @router.post("/test-digest", status_code=200)

@@ -22,6 +22,13 @@ export function formatScanDuration(ms: number): string {
   return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
 }
 
+export function formatScanFinishTime(remainingMs: number): string {
+  return new Date(Date.now() + remainingMs).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 type ScanProgress = {
   progress: number;
   elapsedMs: number;

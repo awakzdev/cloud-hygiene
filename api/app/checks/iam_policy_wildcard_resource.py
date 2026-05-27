@@ -4,9 +4,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.checks.base import FindingDraft, score
+from app.models import AwsAccount
 from app.models.iam import IamRole
 
 CHECK_ID = "iam.policy.wildcard_resource"
+
+# Vigil collector + IAM credential report APIs — read-only, require Resource: *
+_SAFE_ACTIONS_ON_ANY_RESOURCE = {
+    "iam:generateservicelastaccesseddetails",
+    "iam:getservicelastaccesseddetails",
+}
 
 # Read-only prefixes safe to ignore on Resource: *
 _SAFE_PREFIXES = {
@@ -24,6 +31,8 @@ _DANGEROUS_SERVICES = {
 def _is_dangerous_action(action: str) -> bool:
     """Return True if this action on Resource:* is worth flagging."""
     action = action.strip()
+    if action.lower() in _SAFE_ACTIONS_ON_ANY_RESOURCE:
+        return False
     if action == "*":
         return False  # already caught by wildcard_action check
     if ":" not in action:
@@ -60,11 +69,16 @@ def _wildcard_resource_statements(doc: dict) -> list[dict]:
 
 
 def run(db: Session, account_id) -> list[FindingDraft]:
+    acc = db.get(AwsAccount, account_id)
+    vigil_role_arn = (acc.role_arn or "").lower() if acc else ""
+
     roles = db.scalars(select(IamRole).where(IamRole.account_id == account_id)).all()
     out: list[FindingDraft] = []
     for r in roles:
         if "/aws-service-role/" in r.arn:
             continue
+        if vigil_role_arn and r.arn.lower() == vigil_role_arn:
+            continue  # Vigil CFN scan role — intentionally broad read-only
 
         hits: list[dict] = []
 

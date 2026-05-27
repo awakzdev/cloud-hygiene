@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import ScanProgressBar from "../components/ScanProgressBar";
+import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Account = {
   id: string;
@@ -12,45 +14,30 @@ type Account = {
   last_scan_at: string | null;
 };
 
-type Finding = { id: string; severity: string; status: string };
+type Finding = { id: string; account_id: string; severity: string; status: string };
 
-type ScanRun = {
-  id: string;
-  status: string;
-  started_at: string;
-  finished_at: string | null;
-  error: string | null;
-  failed_at?: string | null;
-  error_type?: string | null;
-};
+type FindingStats = { critHigh: number; medium: number; open: number };
 
-type AssumeRoleAuditEntry = {
-  id: string;
-  called_at: string;
-  purpose: string | null;
-  session_name: string | null;
-  success: boolean;
-  error_code: string | null;
-  error_message: string | null;
-};
-
-function AwsProviderIcon() {
+function AwsIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
     <img
       src="https://www.google.com/s2/favicons?domain=aws.amazon.com&sz=64"
-      alt="AWS"
-      className="h-6 w-6 object-contain"
+      alt=""
+      className={`object-contain ${className}`}
     />
   );
 }
 
 type ControlRow = { status: string };
 
-function useComplianceScore(framework: string, enabled: boolean) {
+function useComplianceScore(framework: string, accountId: string | null, enabled: boolean) {
   return useQuery({
-    queryKey: ["controls", framework],
-    queryFn: () => api<ControlRow[]>(`/v1/controls?framework=${framework}`),
-    enabled,
+    queryKey: ["controls", framework, accountId],
+    queryFn: () =>
+      api<ControlRow[]>(
+        `/v1/controls?framework=${framework}${accountId ? `&account_id=${accountId}` : ""}`
+      ),
+    enabled: enabled && !!accountId,
     select: (rows) => {
       const total = rows.length;
       const passed = rows.filter((r) => r.status === "pass").length;
@@ -59,77 +46,431 @@ function useComplianceScore(framework: string, enabled: boolean) {
   });
 }
 
-function scoreColor(pct: number | null | undefined): string {
-  if (pct == null) return "bg-zinc-300";
-  if (pct >= 80) return "bg-emerald-600";
-  if (pct >= 50) return "bg-emerald-500";
-  return "bg-emerald-400";
+function formatLastScan(iso: string | null) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const ms = Date.now() - d.getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function AssumeRoleAuditPanel({ accountId }: { accountId: string }) {
-  const [open, setOpen] = useState(false);
-  const audit = useQuery({
-    queryKey: ["assume-role-audit", accountId],
-    queryFn: () => api<AssumeRoleAuditEntry[]>(`/v1/accounts/${accountId}/assume-role-audit?limit=50`),
-    enabled: open,
-    refetchInterval: open ? 30000 : false,
+function shortExternalId(value: string): string {
+  if (value.length <= 14) return value;
+  return `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function CopyableExternalId({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={copied ? "Copied!" : value}
+      className="font-mono text-indigo-600 underline decoration-indigo-200 underline-offset-2 transition hover:text-indigo-700"
+    >
+      {copied ? "copied" : shortExternalId(value)}
+    </button>
+  );
+}
+
+const cardClass =
+  "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm shadow-zinc-900/[0.03]";
+
+const secondaryBtn =
+  "inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
+const cardActionBtn =
+  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-700";
+const cardRescanBtn =
+  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 text-xs font-semibold text-white shadow-sm shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50";
+const dangerBtn =
+  "inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50";
+
+function buildStatsMap(items: Finding[] | undefined): Map<string, FindingStats> {
+  const map = new Map<string, FindingStats>();
+  for (const f of items ?? []) {
+    const cur = map.get(f.account_id) ?? { critHigh: 0, medium: 0, open: 0 };
+    cur.open += 1;
+    if (f.severity === "critical" || f.severity === "high") cur.critHigh += 1;
+    if (f.severity === "medium") cur.medium += 1;
+    map.set(f.account_id, cur);
+  }
+  return map;
+}
+
+function StatPill({ value, label, href, highlight }: { value: number | string; label: string; href?: string; highlight?: boolean }) {
+  const inner = (
+    <>
+      <div className={`text-base font-medium tabular-nums leading-none ${highlight ? "text-indigo-600" : "text-zinc-900"}`}>
+        {value}
+      </div>
+      <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
+    </>
+  );
+  const cls = "min-w-[4.5rem] rounded-xl bg-zinc-50 px-3 py-2 text-center ring-1 ring-zinc-100 transition hover:border-indigo-200 hover:bg-indigo-50/50";
+  if (href) {
+    return <a href={href} className={cls}>{inner}</a>;
+  }
+  return <div className={cls}>{inner}</div>;
+}
+
+function ComplianceBadge({ pct, label }: { pct: number | null | undefined; label: string }) {
+  if (pct == null) {
+    return (
+      <div className="min-w-[3.75rem] rounded-xl border border-zinc-100 bg-zinc-50/50 px-2.5 py-2 text-center">
+        <div className="text-sm font-medium tabular-nums leading-none text-zinc-500/40">—</div>
+        <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
+      </div>
+    );
+  }
+  return (
+    <a
+      href="/controls"
+      className="min-w-[3.75rem] rounded-xl border border-zinc-200/80 bg-white px-2.5 py-2 text-center shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40"
+    >
+      <div className="text-sm font-medium tabular-nums leading-none text-zinc-800">{pct}%</div>
+      <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
+    </a>
+  );
+}
+
+function AccountCard({
+  acc,
+  stats,
+  expanded,
+  onToggle,
+}: {
+  acc: Account;
+  stats: FindingStats | undefined;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const qc = useQueryClient();
+  const [roleArn, setRoleArn] = useState("");
+  const [showUpdateArn, setShowUpdateArn] = useState(false);
+
+  const connected = acc.status === "connected";
+  const hasScanned = connected && !!acc.last_scan_at;
+
+  const {
+    scanRun,
+    scanStatus,
+    isRunning,
+    isScanActive,
+    scanProgress,
+    triggerScan,
+  } = useTriggeredScan(connected ? acc.id : undefined, {
+    backgroundPollMs: 5000,
+    onScanComplete: () => {
+      qc.invalidateQueries({ queryKey: ["findings-snapshot-all"] });
+      qc.invalidateQueries({ queryKey: ["controls"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
   });
 
-  const rows = audit.data ?? [];
+  const verify = useMutation({
+    mutationFn: () =>
+      api<Account>(`/v1/accounts/${acc.id}/verify`, {
+        method: "POST",
+        body: JSON.stringify({ role_arn: roleArn }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+  });
+
+  const soc2 = useComplianceScore("soc2", acc.id, connected && hasScanned);
+  const cis = useComplianceScore("cis_aws_l1", acc.id, connected && hasScanned);
+  const iso = useComplianceScore("iso27001", acc.id, connected && hasScanned);
+
+  const remove = useMutation({
+    mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+  });
+
+  const lastScan = formatLastScan(acc.last_scan_at);
+  const critHigh = stats?.critHigh ?? 0;
+  const medium = stats?.medium ?? 0;
+  const open = stats?.open ?? 0;
+  const hasStats = connected && hasScanned;
+
   return (
-    <div className="border-t border-zinc-100">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between px-5 py-2.5 text-left text-xs font-medium text-zinc-500 transition hover:bg-zinc-50"
-      >
-        <span className="inline-flex items-center gap-2">
-          <svg className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          AWS activity (every sts:AssumeRole Vigil ran on this account)
-        </span>
-        {open && rows.length > 0 && (
-          <span className="text-[11px] text-zinc-400 tabular-nums">{rows.length} event{rows.length === 1 ? "" : "s"}</span>
+    <div
+      className={`${cardClass} ${!connected ? "border-l-[3px] border-l-amber-300" : ""} ${expanded ? "ring-2 ring-indigo-500/15" : ""}`}
+    >
+      <div className="p-4">
+        {/* Header row */}
+        <div className="flex gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 ring-1 ring-orange-100/80">
+            <AwsIcon />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <h2 className="truncate text-[15px] font-medium tracking-[-0.01em] text-zinc-900">{acc.label}</h2>
+                  <span className={connected ? "inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700" : "inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700"}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-indigo-400" : "bg-amber-400"}`} />
+                    {connected ? "Connected" : "Setup needed"}
+                  </span>
+                  {isScanActive && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
+                      <svg className="h-2.5 w-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      {isRunning ? "Scanning" : "Starting"}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                {connected && (
+                  <button
+                    onClick={() => triggerScan(acc.id)}
+                    disabled={isScanActive}
+                    className={cardRescanBtn}
+                  >
+                    <svg
+                      className={`h-3.5 w-3.5 ${isScanActive ? "animate-spin" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                    {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Re-scan"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={onToggle}
+                  className={cardActionBtn}
+                  aria-expanded={expanded}
+                  aria-label={expanded ? "Collapse details" : "Expand details"}
+                >
+                  <svg
+                    className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {acc.account_id && (
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
+                <span className="font-mono">{acc.account_id}</span>
+                {connected && (
+                  <>
+                    <span className="text-zinc-300">·</span>
+                    {isScanActive ? (
+                      <span className="font-medium text-indigo-600">
+                        {isRunning ? "Scanning now" : "Starting scan"}
+                      </span>
+                    ) : lastScan ? (
+                      <span>Last scan {lastScan}</span>
+                    ) : null}
+                  </>
+                )}
+              </p>
+            )}
+            {!connected && (
+              <p className="mt-1 text-xs text-zinc-500">Deploy the CloudFormation stack to connect.</p>
+            )}
+          </div>
+        </div>
+
+        {connected && isScanActive && (
+          <ScanProgressBar
+            className="mt-3"
+            phase={isRunning ? "running" : "starting"}
+            progress={scanProgress.progress}
+            elapsedMs={scanProgress.elapsedMs}
+            remainingMs={scanProgress.remainingMs}
+            finishing={scanProgress.finishing}
+            indeterminate={scanProgress.indeterminate}
+          />
         )}
-      </button>
-      {open && (
-        <div className="border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
-          {audit.isLoading ? (
-            <p className="text-xs text-zinc-400">Loading…</p>
-          ) : rows.length === 0 ? (
-            <p className="text-xs text-zinc-400">No activity recorded yet.</p>
+
+        {/* Posture strip — visible when scanned, no expand needed */}
+        {hasStats && (
+          <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-4">
+            <StatPill value={critHigh} label="Crit + high" highlight={critHigh > 0} />
+            <StatPill value={medium} label="Medium" />
+            <StatPill value={open} label="Open" href="/findings" highlight />
+            <div className="ml-auto flex flex-wrap gap-1.5">
+              <ComplianceBadge pct={soc2.data} label="SOC 2" />
+              <ComplianceBadge pct={cis.data} label="CIS" />
+              <ComplianceBadge pct={iso.data} label="ISO" />
+            </div>
+          </div>
+        )}
+
+        {connected && !hasScanned && (
+          <div className="mt-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 text-center text-xs text-zinc-500">
+            Run a scan to see findings and compliance scores.
+          </div>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-4 text-xs">
+          {!connected ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  {
+                    n: 1,
+                    title: "Deploy role",
+                    body: (
+                      <a
+                        href={acc.cfn_launch_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-flex items-center gap-1 font-medium text-indigo-300 hover:text-zinc-800"
+                      >
+                        Launch stack
+                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                      </a>
+                    ),
+                  },
+                  { n: 2, title: "Copy RoleArn", body: <p className="mt-1 text-zinc-500">From stack Outputs tab</p> },
+                  {
+                    n: 3,
+                    title: "Verify",
+                    body: <p className="mt-1 text-zinc-500">Paste RoleArn below</p>,
+                  },
+                ].map(({ n, title, body }) => (
+                  <div key={n} className="rounded-xl border border-zinc-200 bg-white p-3 p-3">
+                    <div className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-[10px] font-medium text-zinc-500">
+                      {n}
+                    </div>
+                    <div className="mt-2 text-sm font-medium text-zinc-900">{title}</div>
+                    {body}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-500">
+                External ID for stack: <CopyableExternalId value={acc.external_id} />
+              </p>
+              <div className="flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0 flex-1"
+                  placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
+                  value={roleArn}
+                  onChange={(e) => setRoleArn(e.target.value)}
+                />
+                <button
+                  onClick={() => verify.mutate()}
+                  disabled={verify.isPending || !roleArn}
+                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {verify.isPending ? "Verifying…" : "Verify"}
+                </button>
+              </div>
+              {verify.error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  {(verify.error as Error).message}
+                </div>
+              )}
+              <div className="flex justify-end border-t border-zinc-100 pt-3">
+                <button
+                  onClick={() => remove.mutate()}
+                  disabled={remove.isPending}
+                  className={dangerBtn}
+                >
+                  {remove.isPending ? "Removing…" : "Remove account"}
+                </button>
+              </div>
+            </div>
           ) : (
-            <div className="max-h-72 overflow-y-auto rounded-lg border border-zinc-200 bg-white">
-              <table className="w-full text-[11px]">
-                <thead className="sticky top-0 bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-400">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">When</th>
-                    <th className="px-3 py-2 font-semibold">Purpose</th>
-                    <th className="px-3 py-2 font-semibold">Result</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {rows.map((r) => (
-                    <tr key={r.id} className="hover:bg-zinc-50/50">
-                      <td className="whitespace-nowrap px-3 py-1.5 tabular-nums text-zinc-600">{formatAuditTime(r.called_at)}</td>
-                      <td className="px-3 py-1.5 font-mono text-zinc-700">{r.purpose ?? r.session_name ?? "—"}</td>
-                      <td className="px-3 py-1.5">
-                        {r.success ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-600">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            ok
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-red-600" title={r.error_message ?? undefined}>
-                            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                            {r.error_code ?? "error"}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              {scanStatus === "error" && scanRun.data?.error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                  <span className="font-medium">Last scan failed</span>
+                  {scanRun.data.error_type && <> ({scanRun.data.error_type})</>}
+                  <div className="mt-1 line-clamp-2 break-words">{scanRun.data.error}</div>
+                </div>
+              )}
+
+              {showUpdateArn ? (
+                <div className="rounded-xl border border-zinc-200 bg-white p-3 space-y-2 p-3">
+                  <p className="text-zinc-500">
+                    Paste the new RoleArn from stack Outputs. External ID:{" "}
+                    <CopyableExternalId value={acc.external_id} />.{" "}
+                    <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
+                      Re-deploy stack
+                    </a>
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0 flex-1"
+                      placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
+                      value={roleArn}
+                      onChange={(e) => setRoleArn(e.target.value)}
+                    />
+                    <button
+                      onClick={() => verify.mutate()}
+                      disabled={verify.isPending || !roleArn}
+                      className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {verify.isPending ? "…" : "Verify"}
+                    </button>
+                    <button
+                      onClick={() => { setShowUpdateArn(false); setRoleArn(""); verify.reset(); }}
+                      className="rounded-lg px-2 py-2 text-zinc-400 hover:text-zinc-600"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {verify.isSuccess && <p className="text-emerald-600">Role ARN updated.</p>}
+                  {verify.error && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700 py-1.5">
+                      {(verify.error as Error).message}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUpdateArn(true)}
+                    disabled={isScanActive}
+                    className={secondaryBtn}
+                  >
+                    Update role
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm("Remove this account? All findings will be deleted.")) remove.mutate();
+                    }}
+                    disabled={remove.isPending}
+                    className={dangerBtn}
+                  >
+                    {remove.isPending ? "Removing…" : "Remove account"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -138,423 +479,109 @@ function AssumeRoleAuditPanel({ accountId }: { accountId: string }) {
   );
 }
 
-function formatAuditTime(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const ms = now.getTime() - d.getTime();
-  if (ms < 60_000) return "just now";
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-  return d.toLocaleString();
-}
-
-
-function AccountCard({ acc, findingsData, onRemoved }: {
-  acc: Account;
-  findingsData: { items: Finding[] } | undefined;
-  onRemoved: () => void;
-}) {
-  const qc = useQueryClient();
-  const [roleArn, setRoleArn] = useState("");
-  const [scanTriggered, setScanTriggered] = useState(false);
-  const [showUpdateArn, setShowUpdateArn] = useState(false);
-
-  function toggleUpdateArn() {
-    setShowUpdateArn((v) => !v);
-  }
-
-  const verify = useMutation({
-    mutationFn: () => api<Account>(`/v1/accounts/${acc.id}/verify`, { method: "POST", body: JSON.stringify({ role_arn: roleArn }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
-  });
-
-  const scan = useMutation({
-    mutationFn: () => api(`/v1/accounts/${acc.id}/scan`, { method: "POST" }),
-    onMutate: () => setScanTriggered(true),
-    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest", acc.id] }), 300),
-    onError: () => setScanTriggered(false),
-  });
-
-  const scanRun = useQuery({
-    queryKey: ["scan-run-latest", acc.id],
-    queryFn: () => api<ScanRun | null>(`/v1/accounts/${acc.id}/scan-runs/latest`),
-    enabled: acc.status === "connected",
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
-  });
-
-  const scanStatus = scanRun.data?.status ?? null;
-  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
-  const isRunning = scanStatus === "running" && !scanStuck;
-  const isStarting = scanTriggered || scan.isPending;
-  const isScanActive = isStarting || isRunning;
-  const prevScanStatus = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (prevScanStatus.current === "running" && scanStatus === "ok") {
-      qc.invalidateQueries({ queryKey: ["findings-snapshot-all"] });
-      qc.invalidateQueries({ queryKey: ["controls"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-    }
-    if (scanStatus === "running") setScanTriggered(false);
-    prevScanStatus.current = scanStatus;
-  }, [scanStatus, qc]);
-
-  const remove = useMutation({
-    mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["accounts"] }); onRemoved(); },
-  });
-
-  const critHigh = findingsData?.items.filter(f => f.severity === "critical" || f.severity === "high").length ?? 0;
-  const medium = findingsData?.items.filter(f => f.severity === "medium").length ?? 0;
-  const totalOpen = findingsData?.items.length ?? 0;
-  const hasScanned = acc.status === "connected" && !!acc.last_scan_at;
-  const soc2 = useComplianceScore("soc2", hasScanned);
-  const cis = useComplianceScore("cis_aws_l1", hasScanned);
-  const iso = useComplianceScore("iso27001", hasScanned);
-
-  return (
-    <div className="flex items-start gap-3">
-      {/* Main card */}
-      <div className="min-w-0 flex-1 flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        {/* Account header */}
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-orange-50 ring-1 ring-orange-100">
-              <AwsProviderIcon />
-            </div>
-            <div>
-              <div className="text-base font-semibold text-zinc-900">{acc.label}</div>
-              {acc.account_id && <div className="mt-0.5 font-mono text-xs text-zinc-400">{acc.account_id}</div>}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {acc.status === "connected" && isScanActive && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
-                <svg className="h-3 w-3 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                {isRunning ? "Scanning" : "Starting"}
-              </span>
-            )}
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-              acc.status === "connected" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
-            }`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${acc.status === "connected" ? "bg-green-500" : "bg-amber-500"}`} />
-              {acc.status}
-            </span>
-          </div>
-        </div>
-
-        {/* Setup steps (not connected) */}
-        {acc.status !== "connected" && (
-          <div className="px-6 py-5 space-y-5">
-            <div className="space-y-4">
-              {[
-                {
-                  n: 1,
-                  label: "Deploy IAM role via CloudFormation",
-                  content: (
-                    <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-indigo-600 font-medium hover:text-indigo-700">
-                      Launch CloudFormation stack
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                      </svg>
-                    </a>
-                  ),
-                },
-                { n: 2, label: "Copy the RoleArn from stack Outputs", content: null },
-                {
-                  n: 3,
-                  label: "Paste and verify",
-                  content: (
-                    <div className="space-y-2">
-                      <div className="text-xs text-zinc-400">
-                        ExternalId: <code className="font-mono bg-zinc-100 px-1.5 py-0.5 rounded">{acc.external_id}</code>
-                      </div>
-                      <div className="flex gap-2">
-                        <input
-                          className="flex-1 border border-zinc-200 rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                          placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
-                          value={roleArn}
-                          onChange={e => setRoleArn(e.target.value)}
-                        />
-                        <button
-                          onClick={() => verify.mutate()}
-                          disabled={verify.isPending || !roleArn}
-                          className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {verify.isPending ? "Verifying…" : "Verify"}
-                        </button>
-                      </div>
-                      {verify.error && (
-                        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-                          {(verify.error as Error).message}
-                        </div>
-                      )}
-                    </div>
-                  ),
-                },
-              ].map(({ n, label, content }) => (
-                <div key={n} className="flex gap-3">
-                  <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-xs font-bold text-zinc-500 flex-shrink-0 mt-0.5">
-                    {n}
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <div className="text-sm font-medium text-zinc-700">{label}</div>
-                    {content}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-end pt-2 border-t border-zinc-100">
-              <button
-                onClick={() => remove.mutate()}
-                disabled={remove.isPending}
-                className="text-sm font-medium text-zinc-400 hover:text-red-500 transition-colors disabled:opacity-50"
-              >
-                {remove.isPending ? "Removing…" : "Remove account"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Connected state */}
-        {acc.status === "connected" && (
-          <div className="flex flex-col">
-            <div className="space-y-3 px-5 py-4">
-            {/* Info tiles */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
-                <div className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-0.5">Open findings</div>
-                <div className="font-semibold text-sm text-zinc-800">{findingsData ? totalOpen : "…"}</div>
-              </div>
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
-                <div className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-0.5">External ID</div>
-                <div className="font-mono text-xs text-zinc-600 truncate" title={acc.external_id}>{acc.external_id}</div>
-              </div>
-            </div>
-
-            {showUpdateArn && (
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-4 space-y-2">
-                <div className="text-xs text-zinc-500">
-                  Paste the new RoleArn from your CloudFormation stack Outputs.{" "}
-                  <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">Re-deploy stack</a>
-                  {" "}if you need to update permissions.
-                </div>
-                <div className="text-xs text-zinc-400">
-                  ExternalId: <code className="font-mono bg-white border border-zinc-200 px-1.5 py-0.5 rounded">{acc.external_id}</code>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    className="flex-1 border border-zinc-200 rounded-lg px-3 py-2 font-mono text-xs bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
-                    value={roleArn}
-                    onChange={(e) => setRoleArn(e.target.value)}
-                  />
-                  <button
-                    onClick={() => verify.mutate()}
-                    disabled={verify.isPending || !roleArn}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    {verify.isPending ? "Verifying…" : "Verify"}
-                  </button>
-                </div>
-                {verify.isSuccess && <p className="text-xs text-emerald-600">Role ARN updated.</p>}
-                {verify.error && (
-                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-                    {(verify.error as Error).message}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {scanStatus === "error" && scanRun.data?.error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                <div>
-                  <span className="font-semibold">Last scan failed</span>
-                  {scanRun.data.failed_at && (
-                    <> at step <code className="rounded bg-red-100 px-1 py-0.5 font-mono">{scanRun.data.failed_at}</code></>
-                  )}
-                  {scanRun.data.error_type && (
-                    <> ({scanRun.data.error_type})</>
-                  )}
-                  :
-                </div>
-                <div className="mt-1 line-clamp-3 break-words text-[11px] text-red-700/90">{scanRun.data.error}</div>
-              </div>
-            )}
-
-            </div>
-
-            {/* Actions */}
-            <div className="flex items-center justify-between gap-3 border-t border-zinc-100 px-5 py-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => scan.mutate()}
-                  disabled={isScanActive}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <svg className={`h-4 w-4 ${isScanActive ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                  {isRunning ? "Scanning…" : isStarting ? "Starting…" : "Run scan now"}
-                </button>
-                <button
-                  onClick={() => { toggleUpdateArn(); setRoleArn(""); verify.reset(); }}
-                  disabled={isScanActive}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Update role ARN
-                  <svg className={`h-3 w-3 transition-transform ${showUpdateArn ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-              </div>
-
-              <button
-                onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(); }}
-                disabled={remove.isPending}
-                className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-              >
-                {remove.isPending ? "Removing…" : "Remove account"}
-              </button>
-            </div>
-
-            <AssumeRoleAuditPanel accountId={acc.id} />
-          </div>
-        )}
-      </div>
-
-      {/* Posture snapshot sidebar */}
-      <div className="flex w-[252px] shrink-0 flex-col self-stretch rounded-xl border border-zinc-200 bg-white px-4 py-3.5 shadow-sm">
-        <div className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-widest text-zinc-400">Posture Snapshot</div>
-        {hasScanned ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-center">
-                <div className="text-[26px] font-bold text-red-600 tabular-nums leading-none">{findingsData ? critHigh : "…"}</div>
-                <div className="mt-1.5 text-[11px] font-medium text-red-500">critical · high</div>
-              </div>
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-center">
-                <div className="text-[26px] font-bold text-amber-600 tabular-nums leading-none">{findingsData ? medium : "…"}</div>
-                <div className="mt-1.5 text-[11px] font-medium text-amber-500">medium</div>
-              </div>
-            </div>
-            <div className="mt-2.5 shrink-0 space-y-1.5 border-t border-zinc-100 pt-2.5">
-              {[
-                { label: "SOC 2", pct: soc2.data },
-                { label: "CIS AWS L1", pct: cis.data },
-                { label: "ISO 27001", pct: iso.data },
-              ].map(({ label, pct }) => (
-                <div key={label} className="flex items-center gap-2">
-                  <span className="w-[68px] shrink-0 text-[11px] font-medium text-zinc-600">{label}</span>
-                  <div className="h-1.5 min-w-0 flex-1 rounded-full bg-emerald-100 overflow-hidden">
-                    <div className={`h-full rounded-full transition-all duration-500 ${scoreColor(pct)}`} style={{ width: `${pct ?? 0}%` }} />
-                  </div>
-                  <span className="w-8 shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-700">
-                    {pct == null ? "—" : `${pct}%`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-2.5">
-            <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
-                <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
-                <div className="text-[11px] text-zinc-300 font-medium mt-0.5">critical · high</div>
-              </div>
-              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
-                <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
-                <div className="text-[11px] text-zinc-300 font-medium mt-0.5">medium</div>
-              </div>
-            </div>
-            <p className="shrink-0 text-[12px] text-zinc-400 leading-relaxed">
-              {acc.status === "connected"
-                ? "Run a scan to see posture data."
-                : "Awaiting verification — posture data will appear after the first scan."}
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function Accounts() {
   const qc = useQueryClient();
-  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<Account[]>("/v1/accounts"),
+  });
 
   const create = useMutation({
     mutationFn: () => api<Account>("/v1/accounts", { method: "POST", body: JSON.stringify({}) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+    onSuccess: (acc) => {
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      setExpandedId(acc.id);
+    },
   });
 
   const allFindings = useQuery({
     queryKey: ["findings-snapshot-all"],
-    queryFn: () => api<{ items: Finding[]; total: number; next_cursor: string | null }>(`/v1/findings?status=open&limit=500`),
+    queryFn: () =>
+      api<{ items: Finding[]; total: number; next_cursor: string | null }>(
+        `/v1/findings?status=open&limit=500`
+      ),
     enabled: (accounts.data?.length ?? 0) > 0,
   });
 
+  const statsMap = useMemo(() => buildStatsMap(allFindings.data?.items), [allFindings.data?.items]);
+
   const accs = accounts.data ?? [];
   const hasPending = accs.some((a) => a.status !== "connected");
+  const didAutoExpand = useRef(false);
+
+  // Auto-expand once on first load with a single account
+  useEffect(() => {
+    if (!didAutoExpand.current && accs.length === 1) {
+      setExpandedId(accs[0].id);
+      didAutoExpand.current = true;
+    }
+  }, [accs]);
 
   return (
-    <div className="space-y-6 max-w-5xl">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto w-full max-w-4xl space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">AWS Accounts</h1>
-          <p className="text-sm text-zinc-500 mt-1">Connect your AWS accounts to start scanning.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">AWS Accounts</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            Manage connected accounts and scan schedules.
+          </p>
         </div>
         {accs.length > 0 && (
-          <div className="flex flex-col items-end gap-1">
-            <button
-              onClick={() => create.mutate()}
-              disabled={create.isPending || hasPending}
-              title={hasPending ? "Finish setting up the pending account first" : undefined}
-              className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-2.5 text-sm font-semibold text-zinc-700 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              {create.isPending ? "Adding…" : "Add account"}
-            </button>
-            {hasPending && (
-              <span className="text-[11px] text-zinc-400">Finish pending setup first</span>
-            )}
-          </div>
+          <button
+            onClick={() => create.mutate()}
+            disabled={create.isPending || hasPending}
+            title={hasPending ? "Finish setting up the pending account first" : undefined}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            {create.isPending ? "Adding…" : "Add account"}
+          </button>
         )}
       </div>
 
       {accs.length === 0 && !accounts.isLoading && (
-        <div className="bg-white rounded-xl border border-zinc-200 shadow-sm p-6 max-w-md">
-          <h2 className="font-semibold text-zinc-900 mb-1">Connect an AWS account</h2>
-          <p className="text-sm text-zinc-500 mb-4">Deploy a read-only IAM role and start scanning for security issues.</p>
+        <div className={`${cardClass} max-w-lg p-6`}>
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-100 bg-zinc-50 ring-1 ring-orange-500/20">
+            <AwsIcon className="h-6 w-6" />
+          </div>
+          <h2 className="mt-4 text-lg font-medium tracking-[-0.01em] text-zinc-900">Connect your first AWS account</h2>
+          <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">
+            Deploy a read-only IAM role via CloudFormation. Vigil scans daily and maps findings to SOC 2 and CIS controls.
+          </p>
           <button
             onClick={() => create.mutate()}
             disabled={create.isPending}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            className="mt-5 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50"
           >
             {create.isPending ? "Setting up…" : "Connect account"}
           </button>
         </div>
       )}
 
-      {accs.map((acc) => (
-        <AccountCard
-          key={acc.id}
-          acc={acc}
-          findingsData={acc.status === "connected" ? allFindings.data : undefined}
-          onRemoved={() => {}}
-        />
-      ))}
+      {accs.length > 0 && (
+        <div className="space-y-3">
+          {accs.map((acc) => (
+            <AccountCard
+              key={acc.id}
+              acc={acc}
+              stats={statsMap.get(acc.id)}
+              expanded={expandedId === acc.id}
+              onToggle={() => setExpandedId((id) => (id === acc.id ? null : acc.id))}
+            />
+          ))}
+        </div>
+      )}
+
+      {hasPending && accs.length > 0 && (
+        <p className="text-center text-xs text-zinc-500">Finish pending setup before adding another account.</p>
+      )}
 
       {create.error && (
-        <div className="max-w-md text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">
           {(create.error as Error).message}
         </div>
       )}

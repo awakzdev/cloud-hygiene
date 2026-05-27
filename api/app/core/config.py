@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # launched-today stack reference the exact same template.
     # Defaults are safe for dev; override in prod via env.
     CFN_TEMPLATE_URL: str = (
-        "https://amzn-demo-cloud-hygiene.s3.amazonaws.com/hygiene-readonly-role.yaml"
+        "https://raw.githubusercontent.com/awakzdev/Vigil/main/infra/cfn/vigil-readonly-role.yaml"
     )
 
     # When True (default) hitting /v1/auth/{github,gitlab,google} *without*

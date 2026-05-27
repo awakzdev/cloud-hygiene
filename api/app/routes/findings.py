@@ -16,6 +16,7 @@ router = APIRouter()
 
 class FindingOut(BaseModel):
     id: str
+    account_id: str
     check_id: str
     resource_arn: str
     title: str
@@ -67,6 +68,7 @@ class ExceptionIn(BaseModel):
 def _to_out(f: Finding) -> FindingOut:
     return FindingOut(
         id=str(f.id),
+        account_id=str(f.account_id),
         check_id=f.check_id,
         resource_arn=f.resource_arn,
         title=f.title,
@@ -87,6 +89,7 @@ def list_findings(
     status_filter: str | None = Query(default="open", alias="status"),
     severity: str | None = None,
     check_id: str | None = None,
+    account_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
     cursor: str | None = Query(default=None),
     p=Depends(current_principal),
@@ -100,6 +103,8 @@ def list_findings(
         base_q = base_q.where(Finding.severity == severity)
     if check_id:
         base_q = base_q.where(Finding.check_id == check_id)
+    if account_id:
+        base_q = base_q.where(Finding.account_id == uuid.UUID(account_id))
 
     total = db.scalar(select(func.count()).select_from(base_q.subquery()))
 

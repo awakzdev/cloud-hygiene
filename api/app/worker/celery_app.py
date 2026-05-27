@@ -21,7 +21,7 @@ celery_app.conf.update(
     beat_schedule={
         "daily-scan-all-accounts": {
             "task": "app.worker.tasks.scan_all_accounts",
-            "schedule": crontab(hour=6, minute=0),
+            "schedule": crontab(minute=0),  # hourly — per-org interval decides if due
         },
         "reap-stuck-scan-runs": {
             "task": "app.worker.tasks.reap_stuck_scan_runs",

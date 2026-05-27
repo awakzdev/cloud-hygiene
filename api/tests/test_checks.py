@@ -525,6 +525,44 @@ class TestWildcardResourceCheck:
         drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
         assert drafts == []
 
+    def test_skips_vigil_scan_role(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        vigil_arn = "arn:aws:iam::123456789012:role/VigilReadOnly"
+        acc = MagicMock()
+        acc.role_arn = vigil_arn
+        mock_db.get.return_value = acc
+        role = _role_with_inline(
+            arn=vigil_arn,
+            account_id=acc_id,
+            inline={"VigilMinimalReadOnly": {"Statement": [
+                {"Effect": "Allow", "Action": ["iam:GenerateServiceLastAccessedDetails"], "Resource": "*"}
+            ]}},
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert drafts == []
+
+    def test_skips_iam_last_accessed_actions(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        role = _role_with_inline(
+            account_id=acc_id,
+            inline={"PermUsage": {"Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": [
+                        "iam:GenerateServiceLastAccessedDetails",
+                        "iam:GetServiceLastAccessedDetails",
+                    ],
+                    "Resource": "*",
+                }
+            ]}},
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert drafts == []
+
 
 # --- github.org.outside_collaborators ---
 

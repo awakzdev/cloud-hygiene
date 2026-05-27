@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -482,6 +482,367 @@ aws rds restore-db-instance-from-db-snapshot \\
   --preferred-backup-window 03:00-04:00`,
     risk: "No automated backups means no point-in-time recovery. Operational mistakes or corruption may require manual snapshot rollback, if any snapshot exists.",
   },
+  "dynamodb.table.no_encryption": {
+    why: "Tables without explicit encryption at rest rely on legacy defaults. Enabling SSE-KMS or AWS-owned encryption protects item data on disk and satisfies auditor expectations for data-at-rest controls.",
+    console: [
+      "Open DynamoDB → Tables → select the table",
+      'Open the "Additional settings" tab',
+      'Under "Encryption at rest", click "Manage encryption"',
+      'Choose "Owned by Amazon DynamoDB" or "AWS managed key (aws/dynamodb)" for the simplest path',
+      "For a customer-managed key, select your KMS key and confirm IAM roles can use it",
+      "Save — the table stays online during the update",
+    ],
+    cli: `# Enable encryption in place (AWS managed DynamoDB key)
+aws dynamodb update-table \\
+  --table-name <table-name> \\
+  --region <region> \\
+  --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId=alias/aws/dynamodb
+
+# Or use AWS-owned encryption (AES256)
+aws dynamodb update-table \\
+  --table-name <table-name> \\
+  --region <region> \\
+  --sse-specification Enabled=true,SSEType=AES256`,
+    risk: "Unencrypted tables store data without explicit at-rest protection. Encryption can be enabled in place, but customer-managed KMS keys require kms:Decrypt on consuming roles.",
+  },
+  "dynamodb.table.no_pitr": {
+    why: "Point-in-time recovery (PITR) provides continuous backups and restore to any second within the last 35 days. Without it, accidental deletes or bad writes require manual on-demand backups — if any exist.",
+    console: [
+      "Open DynamoDB → Tables → select the table",
+      'Open the "Backups" tab',
+      'Under "Point-in-time recovery (PITR)", click "Edit"',
+      "Enable PITR and save",
+    ],
+    cli: `aws dynamodb update-continuous-backups \\
+  --table-name <table-name> \\
+  --region <region> \\
+  --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true`,
+    risk: "Without PITR, table data loss from accidental deletes or application bugs may be irreversible.",
+  },
+  "s3.bucket.no_default_encryption": {
+    why: "Without default encryption, objects uploaded without an explicit encryption header are stored unencrypted. Default bucket encryption applies SSE to every new object automatically.",
+    console: [
+      "Open S3 → select the bucket",
+      'Open the "Properties" tab → "Default encryption" → Edit',
+      "Enable SSE-S3 (AES-256) or SSE-KMS with your preferred key",
+      "Save — only affects new uploads; existing objects are unchanged",
+    ],
+    cli: `aws s3api put-bucket-encryption \\
+  --bucket <bucket-name> \\
+  --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'`,
+    risk: "Existing objects are not retroactively encrypted. Re-upload or use S3 Batch Operations if you need to encrypt historical data.",
+  },
+  "s3.bucket.no_mfa_delete": {
+    why: "With versioning enabled but MFA Delete off, a compromised IAM principal can permanently delete all object versions without a second factor. MFA Delete requires root credentials to enable or disable.",
+    console: [
+      "Sign in as the root user (MFA Delete cannot be enabled by IAM users)",
+      "Open S3 → select the bucket → Properties",
+      'Under "Bucket Versioning", click Edit',
+      "Enable MFA Delete and provide your root MFA device serial and two consecutive codes",
+    ],
+    cli: `# MFA Delete requires root credentials
+aws s3api put-bucket-versioning \\
+  --bucket <bucket-name> \\
+  --versioning-configuration Status=Enabled,MFADelete=Enabled \\
+  --mfa "<root-mfa-serial> <code1> <code2>"`,
+    risk: "Disabling MFA Delete later also requires root MFA. Treat this as a permanent hardening step once enabled.",
+  },
+  "ec2.ebs.snapshot_public": {
+    why: "Public EBS snapshots can be copied or mounted by any AWS account worldwide. They may contain full disk images with credentials, keys, or customer data.",
+    console: [
+      "Open EC2 → Snapshots → select the snapshot",
+      'Click "Actions" → "Modify snapshot permissions"',
+      'Remove any "Groups" entry (e.g. all) and confirm only your account ID is listed',
+      "If the snapshot is no longer needed, delete it",
+    ],
+    cli: `# Remove public access — allow only this account
+aws ec2 modify-snapshot-attribute \\
+  --snapshot-id <snapshot-id> \\
+  --region <region> \\
+  --attribute createVolumePermission \\
+  --operation-type remove \\
+  --group-names all
+
+# Verify permissions
+aws ec2 describe-snapshot-attribute \\
+  --snapshot-id <snapshot-id> \\
+  --region <region> \\
+  --attribute createVolumePermission`,
+    risk: "Public snapshots may already have been copied by external accounts — removing access stops new copies but not existing ones.",
+  },
+  "ec2.ebs.snapshot_unencrypted": {
+    why: "Unencrypted snapshots store block data in plaintext. Anyone with snapshot access (including after a cross-account share) can read the full disk contents.",
+    console: [
+      "Open EC2 → Snapshots → select the snapshot",
+      'Click "Actions" → "Copy snapshot"',
+      "Enable encryption and choose a KMS key",
+      "After validating the encrypted copy, delete the original unencrypted snapshot",
+    ],
+    cli: `aws ec2 copy-snapshot \\
+  --source-region <region> \\
+  --source-snapshot-id <snapshot-id> \\
+  --region <region> \\
+  --description "Encrypted copy" \\
+  --encrypted \\
+  --kms-key-id alias/aws/ebs
+
+# After validation, delete the original
+aws ec2 delete-snapshot --snapshot-id <snapshot-id> --region <region>`,
+    risk: "Copying large snapshots takes time and incurs storage cost for both copies until the original is deleted.",
+  },
+  "ec2.ami.public": {
+    why: "A public AMI exposes your machine image to every AWS account. Images may contain hardcoded secrets, internal tooling, or proprietary code.",
+    console: [
+      "Open EC2 → AMIs → select the AMI",
+      'Click "Actions" → "Modify image permissions"',
+      'Set visibility to "Private" (remove all and add only your account if needed)',
+      "Deregister the AMI if it was shared accidentally and is no longer needed",
+    ],
+    cli: `# Make AMI private (this account only)
+aws ec2 modify-image-attribute \\
+  --image-id <image-id> \\
+  --region <region> \\
+  --launch-permission '{"Remove":[{"Group":"all"}]}'
+
+# Verify
+aws ec2 describe-image-attribute \\
+  --image-id <image-id> \\
+  --region <region> \\
+  --attribute launchPermission`,
+    risk: "If the AMI was public, assume it may have been copied — rotate any secrets baked into the image.",
+  },
+  "cloudtrail.trail.s3_bucket_public": {
+    why: "CloudTrail logs contain every API call in your account. A public S3 bucket receiving those logs exposes your full operational history to the internet.",
+    console: [
+      "Identify the S3 bucket receiving CloudTrail logs (CloudTrail → Trails → select trail → Storage location)",
+      "Open S3 → select that bucket → Permissions",
+      "Enable all four Block Public Access settings",
+      "Review the bucket policy — remove any Principal: * grants",
+      "Confirm the bucket is not listed as publicly accessible in S3 → Access Points or ACLs",
+    ],
+    cli: `# Block all public access on the CloudTrail log bucket
+aws s3api put-public-access-block \\
+  --bucket <bucket-name> \\
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true`,
+    risk: "Audit logs may already have been downloaded if the bucket was public. Treat this as a potential data breach and rotate sensitive credentials.",
+  },
+  "cloudtrail.trail.no_cloudwatch_logs": {
+    why: "CloudWatch Logs integration enables real-time alerting on suspicious API activity. S3-only delivery delays detection until logs are delivered and queried.",
+    console: [
+      "Open CloudTrail → Trails → select the trail",
+      'Click "Edit" → expand "CloudWatch Logs"',
+      "Create or select a CloudWatch Logs log group",
+      "Attach the CloudTrail service role (or create one with logs:CreateLogStream and logs:PutLogEvents)",
+      "Save and verify events appear in the log group within a few minutes",
+    ],
+    cli: `# Create log group and enable CloudWatch delivery (requires CloudTrail service role)
+aws logs create-log-group --log-group-name CloudTrail/<trail-name> --region <region>
+
+aws cloudtrail update-trail \\
+  --name <trail-name> \\
+  --cloud-watch-logs-log-group-arn arn:aws:logs:<region>:<account-id>:log-group:CloudTrail/<trail-name>:* \\
+  --cloud-watch-logs-role-arn <cloudtrail-cloudwatch-role-arn> \\
+  --region <region>`,
+    risk: "CloudWatch Logs ingestion adds cost (~$0.50/GB). Set a retention period on the log group to control spend.",
+  },
+  "cloudtrail.trail.s3_bucket_no_logging": {
+    why: "The S3 bucket storing CloudTrail logs should have server access logging enabled. Without it, access to your audit trail itself is not recorded.",
+    console: [
+      "Identify the S3 bucket receiving CloudTrail logs",
+      "Create a separate logging target bucket (do not log the log bucket into itself)",
+      "Open the CloudTrail bucket → Properties → Server access logging → Edit",
+      "Enable logging to the target bucket with a clear prefix (e.g. cloudtrail-access-logs/)",
+    ],
+    cli: `aws s3api put-bucket-logging \\
+  --bucket <bucket-name> \\
+  --bucket-logging-status '{"LoggingEnabled":{"TargetBucket":"<logging-bucket>","TargetPrefix":"cloudtrail-access-logs/"}}'`,
+    risk: "Low operational risk — logging adds a small storage cost to the target bucket.",
+  },
+  "acm.certificate.expiring": {
+    why: "An expiring TLS certificate will break HTTPS for any service using it — load balancers, CloudFront, API Gateway. Browsers will show certificate errors and API clients will fail TLS handshakes.",
+    console: [
+      "Open ACM → Certificates → select the certificate",
+      "Confirm the expiry date and associated services (ELB, CloudFront, etc.)",
+      "If DNS-validated and auto-renewal eligible, verify the CNAME validation record still exists in Route 53",
+      "If not auto-renewing, request a new certificate and update the listener/distribution before expiry",
+    ],
+    cli: `# Check certificate status and expiry
+aws acm describe-certificate \\
+  --certificate-arn <certificate-arn> \\
+  --region <region>
+
+# Request a replacement (DNS validation recommended)
+aws acm request-certificate \\
+  --domain-name <domain-name> \\
+  --validation-method DNS \\
+  --region <region>`,
+    risk: "Replacing a certificate on a live listener requires updating the attachment — plan a brief maintenance window if auto-renewal cannot be restored.",
+  },
+  "lambda.function.deprecated_runtime": {
+    why: "Deprecated Lambda runtimes no longer receive security patches. AWS will eventually block creates/updates and then disable invocation on unsupported runtimes.",
+    console: [
+      "Open Lambda → Functions → select the function",
+      'Click "Configuration" → "General configuration" → Edit',
+      "Select a supported runtime (e.g. python3.12, nodejs20.x, java21)",
+      "Test thoroughly in a staging alias before updating production",
+    ],
+    cli: `# Update runtime
+aws lambda update-function-configuration \\
+  --function-name <function-name> \\
+  --region <region> \\
+  --runtime python3.12
+
+# Test with a dry-run invocation
+aws lambda invoke \\
+  --function-name <function-name> \\
+  --region <region> \\
+  --payload '{}' /tmp/out.json`,
+    risk: "Runtime upgrades can break dependencies — test in non-prod. Python 3.12 and Node 20 may require dependency updates.",
+  },
+  "lambda.function.no_dlq": {
+    why: "Without a dead-letter queue (DLQ), failed async invocations are retried until they expire silently. You lose visibility into poison messages and cannot replay failures.",
+    console: [
+      "Create an SQS queue or SNS topic to use as the DLQ",
+      "Open Lambda → Functions → select the function",
+      'Click "Configuration" → "Asynchronous invocation" → Edit',
+      "Set the dead-letter queue ARN and a maximum retry attempt count (e.g. 2)",
+      "Save and trigger a test failure to confirm messages arrive in the DLQ",
+    ],
+    cli: `# Create DLQ queue
+aws sqs create-queue --queue-name <function-name>-dlq --region <region>
+
+# Attach DLQ to function
+aws lambda update-function-configuration \\
+  --function-name <function-name> \\
+  --region <region> \\
+  --dead-letter-config TargetArn=<dlq-arn>`,
+    risk: "Low risk — adding a DLQ does not change successful invocation behaviour. Monitor DLQ depth after enabling.",
+  },
+  "rds.instance.no_deletion_protection": {
+    why: "Without deletion protection, a mistaken `delete-db-instance` call (human error, bad automation, or compromised credentials) permanently destroys the database.",
+    console: [
+      "Open RDS → Databases → select the instance",
+      'Click "Modify"',
+      "Enable Deletion protection",
+      'Apply immediately or during the next maintenance window',
+    ],
+    cli: `aws rds modify-db-instance \\
+  --db-instance-identifier <instance-id> \\
+  --region <region> \\
+  --deletion-protection \\
+  --apply-immediately`,
+    risk: "Deletion protection must be disabled before intentional deletion — this is the intended safety trade-off.",
+  },
+  "rds.instance.no_multi_az": {
+    why: "Single-AZ RDS has no automatic failover during host failure or maintenance. Multi-AZ provides synchronous standby replication and automatic failover, typically within 60–120 seconds.",
+    console: [
+      "Open RDS → Databases → select the instance",
+      'Click "Modify"',
+      "Enable Multi-AZ deployment",
+      "Review the maintenance window — conversion causes a brief failover (~60s downtime)",
+      'Apply during a planned maintenance window',
+    ],
+    cli: `aws rds modify-db-instance \\
+  --db-instance-identifier <instance-id> \\
+  --region <region> \\
+  --multi-az \\
+  --apply-immediately`,
+    risk: "Enabling Multi-AZ doubles instance cost and triggers a failover with brief downtime. Plan a maintenance window.",
+  },
+  "secretsmanager.secret.no_rotation": {
+    why: "Secrets without automatic rotation stay static indefinitely. Long-lived database passwords and API keys are harder to revoke and more valuable if leaked.",
+    console: [
+      "Open Secrets Manager → select the secret",
+      'Click "Edit rotation"',
+      "Enable automatic rotation and choose an interval (e.g. 30 days)",
+      "Select or create a Lambda rotation function for the secret type",
+      "Run a test rotation to confirm the secret updates and downstream apps reconnect",
+    ],
+    cli: `# Enable rotation (requires a rotation Lambda — use AWS-managed templates where available)
+aws secretsmanager rotate-secret \\
+  --secret-id <secret-name> \\
+  --region <region> \\
+  --rotation-lambda-arn <rotation-lambda-arn> \\
+  --rotation-rules AutomaticallyAfterDays=30`,
+    risk: "First rotation updates the live secret — verify applications read the latest version from Secrets Manager, not a cached copy.",
+  },
+  "ssm.parameter.plaintext_secret": {
+    why: "This SSM parameter is stored as plaintext String type but its name suggests it holds a secret. Plaintext parameters appear in API responses, CloudTrail logs, and console views without decryption controls.",
+    console: [
+      "Open Systems Manager → Parameter Store → select the parameter",
+      "Create a new SecureString parameter with the same value (KMS-encrypted)",
+      "Update applications to read the SecureString parameter",
+      "Delete the plaintext parameter after migration",
+    ],
+    cli: `# Read current value, write as SecureString, then delete original
+VALUE=$(aws ssm get-parameter --name <parameter-name> --region <region> --query Parameter.Value --output text)
+
+aws ssm put-parameter \\
+  --name <parameter-name> \\
+  --region <region> \\
+  --type SecureString \\
+  --value "$VALUE" \\
+  --overwrite`,
+    risk: "Rotating to SecureString changes the parameter type in place with --overwrite, but verify apps handle SecureString decryption (kms:Decrypt may be required).",
+  },
+  "elb.load_balancer.no_access_logs": {
+    why: "Load balancer access logs record every request — source IP, path, response code, and TLS cipher. Without them, investigating abuse or debugging routing issues requires guesswork.",
+    console: [
+      "Create an S3 bucket to receive access logs (separate from application data)",
+      "Open EC2 → Load Balancers → select the load balancer",
+      'Click "Attributes" → Edit → Access logs',
+      "Enable logging, specify the S3 bucket and prefix",
+      "Ensure the bucket policy grants ELB log delivery permission for your region",
+    ],
+    cli: `aws elbv2 modify-load-balancer-attributes \\
+  --load-balancer-arn <load-balancer-arn> \\
+  --region <region> \\
+  --attributes Key=access_logs.s3.enabled,Value=true Key=access_logs.s3.bucket,Value=<bucket-name> Key=access_logs.s3.prefix,Value=elb-logs/`,
+    risk: "Low risk — logging adds S3 storage cost. Set a lifecycle policy on the log bucket to expire old logs.",
+  },
+  "elb.load_balancer.weak_tls_policy": {
+    why: "The load balancer uses a legacy SSL/TLS policy that allows outdated cipher suites (TLS 1.0/1.1, weak ciphers). Modern clients and compliance frameworks require TLS 1.2+.",
+    console: [
+      "Open EC2 → Load Balancers → select the load balancer",
+      'Open the "Listeners" tab → select the HTTPS/TLS listener → Edit',
+      "Change the security policy to ELBSecurityPolicy-TLS13-1-2-2021-06 or TLS-1-2-2017-01 minimum",
+      "Save and verify client connectivity from your oldest supported browsers/API clients",
+    ],
+    cli: `aws elbv2 modify-listener \\
+  --listener-arn <listener-arn> \\
+  --region <region> \\
+  --ssl-policy ELBSecurityPolicy-TLS13-1-2-2021-06`,
+    risk: "Stricter TLS policies break legacy clients still on TLS 1.0/1.1 — test with your oldest production clients before applying.",
+  },
+  "sns.topic.no_encryption": {
+    why: "SNS topics without KMS encryption deliver messages in plaintext at rest. Any principal with sns:Subscribe or CloudWatch log access can read message contents.",
+    console: [
+      "Open SNS → Topics → select the topic",
+      'Click "Edit" → expand "Encryption"',
+      "Enable encryption with the AWS managed key (alias/aws/sns) or a customer-managed KMS key",
+      "Update publisher/subscriber IAM policies to include kms:Decrypt and kms:GenerateDataKey if using a CMK",
+    ],
+    cli: `aws sns set-topic-attributes \\
+  --topic-arn <topic-arn> \\
+  --region <region> \\
+  --attribute-name KmsMasterKeyId \\
+  --attribute-value alias/aws/sns`,
+    risk: "Enabling encryption requires publishers and subscribers to have KMS permissions — test publish/subscribe after enabling.",
+  },
+  "sqs.queue.no_encryption": {
+    why: "SQS queues without KMS encryption store messages in plaintext at rest. Queue contents may include PII, tokens, or job payloads visible to anyone with sqs:ReceiveMessage.",
+    console: [
+      "Open SQS → Queues → select the queue",
+      'Click "Edit" → expand "Encryption"',
+      "Enable server-side encryption with the AWS managed key (alias/aws/sqs) or a customer-managed KMS key",
+      "Update producer/consumer IAM roles with kms:Decrypt and kms:GenerateDataKey if using a CMK",
+    ],
+    cli: `aws sqs set-queue-attributes \\
+  --queue-url <queue-url> \\
+  --region <region> \\
+  --attributes KmsMasterKeyId=alias/aws/sqs`,
+    risk: "Enabling encryption on a live queue requires KMS permissions on all producers and consumers — test end-to-end after enabling.",
+  },
   "iam.account.password_policy_weak": {
     why: "A weak account password policy means IAM users can set short, simple, or reused passwords. Attackers who obtain one password may rotate through accounts trivially.",
     console: [
@@ -801,12 +1162,238 @@ const fallbackRemediation: Remediation = {
 type RemovableStatement = { policy: string; sid: string; actions: string[]; resources: string[] };
 
 function ServicePills({ services }: { services: string[] }) {
-  return <div className="flex flex-wrap gap-1.5">{services.map((s) => <span key={s} className="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-xs font-medium text-amber-700">{s}</span>)}</div>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {services.map((s) => (
+        <span
+          key={s}
+          className="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-xs font-medium text-amber-700"
+        >
+          {s}
+        </span>
+      ))}
+    </div>
+  );
 }
 
-function RemovableStatementsBlock({ statements }: { statements: RemovableStatement[] }) {
+const SERVICE_PILL_COLLAPSED_LIMIT = 24;
+
+function ServiceListExpandToggle({
+  expanded,
+  total,
+  hiddenCount,
+  onToggle,
+}: {
+  expanded: boolean;
+  total: number;
+  hiddenCount: number;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="mb-2 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-800"
+    >
+      {expanded ? "Show less" : `Show all ${total} services (${hiddenCount} more)`}
+    </button>
+  );
+}
+
+function CollapsibleServicePills({ services }: { services: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = services.length > SERVICE_PILL_COLLAPSED_LIMIT;
+  const visible = collapsible && !expanded ? services.slice(0, SERVICE_PILL_COLLAPSED_LIMIT) : services;
+  const hiddenCount = services.length - SERVICE_PILL_COLLAPSED_LIMIT;
+
+  return (
+    <div>
+      {collapsible && (
+        <ServiceListExpandToggle
+          expanded={expanded}
+          total={services.length}
+          hiddenCount={hiddenCount}
+          onToggle={() => setExpanded((v) => !v)}
+        />
+      )}
+      <ServicePills services={visible} />
+    </div>
+  );
+}
+
+type GrantedServicePill = {
+  name: string;
+  last_used: string | null;
+  days_ago: number | null;
+  active: boolean;
+};
+
+function GrantedServicePills({ services }: { services: GrantedServicePill[] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {services.map((s) => (
+        <span
+          key={s.name}
+          title={s.last_used ? `Last used ${s.days_ago}d ago` : "Never used"}
+          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${
+            s.active ? "border-red-200 bg-red-50 text-red-700" : "border-zinc-200 bg-zinc-50 text-zinc-500"
+          }`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${s.active ? "bg-red-400" : "bg-zinc-300"}`} />
+          {s.name}
+          {s.days_ago !== null && <span className="opacity-60">{s.days_ago}d</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function CollapsibleGrantedServices({ services }: { services: GrantedServicePill[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const collapsible = services.length > SERVICE_PILL_COLLAPSED_LIMIT;
+  const visible = collapsible && !expanded ? services.slice(0, SERVICE_PILL_COLLAPSED_LIMIT) : services;
+  const hiddenCount = services.length - SERVICE_PILL_COLLAPSED_LIMIT;
+
+  return (
+    <div>
+      {collapsible && (
+        <ServiceListExpandToggle
+          expanded={expanded}
+          total={services.length}
+          hiddenCount={hiddenCount}
+          onToggle={() => setExpanded((v) => !v)}
+        />
+      )}
+      <GrantedServicePills services={visible} />
+    </div>
+  );
+}
+
+function resourceWildcardNote(cloudTrailLogging: boolean) {
+  if (cloudTrailLogging) {
+    return "Account-wide scope in this export. CloudTrail is enabled — use IAM Access Analyzer policy generation for ARN-level least privilege; Vigil Generate still scopes actions only.";
+  }
+  return "Account-wide scope. IAM last-accessed shows which API calls were used, not which ARNs were touched. Enable CloudTrail to unlock resource-level narrowing.";
+}
+
+function generatePolicyIntro(cloudTrailLogging: boolean) {
+  const action =
+    "Vigil narrows action wildcards to the API calls recorded in the last 90 days.";
+  const resource = cloudTrailLogging
+    ? "Resource scope still shows * in this output (actions only) — use Access Analyzer with your CloudTrail logs for ARN-level scope."
+    : "Resource scope is left as-is — IAM last-accessed does not record which ARNs were used.";
+  return `${action} ${resource}`;
+}
+
+const ACTION_WILDCARD_NOTE =
+  "Wildcard action — narrow to the API calls recorded in the last 90 days.";
+
+function isActionWildcardLabel(value: string) {
+  return value === "*" || value.includes("wildcard");
+}
+
+function IamPolicyScopePill({ value, kind }: { value: string; kind: "action" | "resource" | "resource-wildcard" }) {
+  const styles =
+    kind === "action"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : kind === "resource-wildcard"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : "border-zinc-200 bg-white text-zinc-700";
+  const mono = kind === "resource" && value.startsWith("arn:");
+  return (
+    <span className={`rounded border px-1.5 py-0.5 text-[11px] leading-relaxed ${mono ? "font-mono" : ""} ${styles}`}>
+      {value}
+    </span>
+  );
+}
+
+function IamPolicyScopeField({
+  label,
+  tone,
+  children,
+  note,
+}: {
+  label: string;
+  tone: "action" | "resource";
+  children: ReactNode;
+  note?: string;
+}) {
+  const boxTone = tone === "action" ? "border-red-100 bg-red-50/50" : "border-amber-100 bg-amber-50/50";
+  const noteTone = tone === "action" ? "text-red-800/80" : "text-amber-900/80";
+  return (
+    <div className={`rounded-md border ${boxTone} px-2.5 py-2`}>
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</div>
+      {children}
+      {note && <p className={`mt-1.5 text-[11px] leading-relaxed ${noteTone}`}>{note}</p>}
+    </div>
+  );
+}
+
+function RemovableStatementsBlock({
+  statements,
+  cloudTrailLogging,
+}: {
+  statements: RemovableStatement[];
+  cloudTrailLogging: boolean;
+}) {
   if (!statements.length) return null;
-  return <div><div className="mb-2 text-sm font-semibold text-zinc-700">Removable statements<span className="ml-1.5 text-xs font-normal text-zinc-400">from inline policies</span></div><div className="space-y-2">{statements.map((stmt, i) => <div key={i} className="overflow-hidden rounded-lg border border-zinc-200 text-xs"><div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2"><span className="font-mono font-medium text-zinc-800">{stmt.policy}</span>{stmt.sid && <span className="text-zinc-400">· {stmt.sid}</span>}</div><div className="space-y-2 px-3 py-2.5"><div className="flex flex-wrap gap-1">{stmt.actions.map((a) => <span key={a} className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 font-mono text-red-700">{a}</span>)}</div><div className="font-mono text-xs text-zinc-400">on: {stmt.resources.join(", ")}</div></div></div>)}</div></div>;
+  return (
+    <div>
+      <div className="mb-2 text-sm font-semibold text-zinc-700">
+        Removable statements
+        <span className="ml-1.5 text-xs font-normal text-zinc-400">from inline policies</span>
+      </div>
+      <div className="space-y-2">
+        {statements.map((stmt, i) => {
+          const resourceWildcard = stmt.resources.length === 1 && stmt.resources[0] === "*";
+          const actionWildcards = stmt.actions.filter(isActionWildcardLabel);
+          const concreteActions = stmt.actions.filter((a) => !isActionWildcardLabel(a));
+          return (
+            <div key={i} className="overflow-hidden rounded-lg border border-zinc-200 text-xs">
+              <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2">
+                <span className="font-mono font-medium text-zinc-800">{stmt.policy}</span>
+                {stmt.sid && <span className="text-zinc-400">· {stmt.sid}</span>}
+              </div>
+              <div className="space-y-2 px-3 py-2.5">
+                {(actionWildcards.length > 0 || concreteActions.length > 0) && (
+                  <IamPolicyScopeField
+                    label="Actions"
+                    tone="action"
+                    note={actionWildcards.length > 0 ? ACTION_WILDCARD_NOTE : undefined}
+                  >
+                    <div className="flex flex-wrap gap-1">
+                      {actionWildcards.map((a) => (
+                        <IamPolicyScopePill key={a} value="*" kind="action" />
+                      ))}
+                      {concreteActions.map((a) => (
+                        <IamPolicyScopePill key={a} value={a} kind="action" />
+                      ))}
+                    </div>
+                  </IamPolicyScopeField>
+                )}
+                <IamPolicyScopeField label="Resources" tone="resource">
+                  {resourceWildcard ? (
+                    <>
+                      <IamPolicyScopePill value="*" kind="resource-wildcard" />
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-amber-900/80">
+                        {resourceWildcardNote(cloudTrailLogging)}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {stmt.resources.map((r) => (
+                        <IamPolicyScopePill key={r} value={r} kind="resource" />
+                      ))}
+                    </div>
+                  )}
+                </IamPolicyScopeField>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
@@ -1118,7 +1705,15 @@ function evidenceSectionTitle(key: string) {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unknown>; checkId: string }) {
+function EvidenceSection({
+  evidence,
+  checkId,
+  cloudTrailLogging,
+}: {
+  evidence: Record<string, unknown>;
+  checkId: string;
+  cloudTrailLogging: boolean;
+}) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
   const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
   const scalars = entries
@@ -1138,7 +1733,7 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
               {unusedServices.length} of {(evidence.total_granted_services as number) ?? "?"} granted
             </span>
           </div>
-          <ServicePills services={unusedServices} />
+          <CollapsibleServicePills services={unusedServices} />
         </div>
       )}
       {scalars.length > 0 && (
@@ -1168,7 +1763,7 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
           {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
         </div>
       ))}
-      {removable && <RemovableStatementsBlock statements={removable} />}
+      {removable && <RemovableStatementsBlock statements={removable} cloudTrailLogging={cloudTrailLogging} />}
     </div>
   );
 }
@@ -1199,14 +1794,68 @@ aws accessanalyzer get-generated-policy --job-id <job-id>`;
   const rem = remediations[finding.check_id] ?? fallbackRemediation;
   const policyNames = removable ? [...new Set(removable.map((s) => s.policy))] : [];
   const policyName = policyNames.length === 1 ? policyNames[0] : "<policy-name>";
-  const bucketName = (finding.evidence.bucket_name as string | undefined) ?? "<bucket-name>";
-  const kmsKeyId = (finding.evidence.key_id as string | undefined) ?? "<key-id>";
+  const ev = finding.evidence;
+  const arnRegion = arn.match(/^arn:aws:[^:]+:([^:*]+)/)?.[1] ?? "<region>";
+  const bucketName =
+    (ev.bucket_name as string | undefined) ??
+    (ev.name as string | undefined) ??
+    arn.match(/^arn:aws:s3:::([^/]+)$/)?.[1] ??
+    "<bucket-name>";
+  const tableName =
+    (ev.table_name as string | undefined) ??
+    arn.match(/:table\/([^/]+)$/)?.[1] ??
+    "<table-name>";
+  const instanceId =
+    (ev.db_instance_id as string | undefined) ??
+    arn.match(/:db:([^:/]+)/)?.[1] ??
+    "<instance-id>";
+  const functionName =
+    (ev.function_name as string | undefined) ??
+    arn.match(/:function:([^:+/]+)/)?.[1] ??
+    "<function-name>";
+  const snapshotId =
+    (ev.snapshot_id as string | undefined) ??
+    arn.match(/snapshot\/(snap-[^/]+)/)?.[1] ??
+    "<snapshot-id>";
+  const imageId =
+    (ev.image_id as string | undefined) ??
+    arn.match(/(ami-[a-f0-9]+)/)?.[1] ??
+    "<image-id>";
+  const trailName = (ev.name as string | undefined) ?? "<trail-name>";
+  const parameterName = (ev.parameter_name as string | undefined) ?? "<parameter-name>";
+  const secretName = (ev.name as string | undefined) ?? "<secret-name>";
+  const loadBalancerArn = arn.includes(":loadbalancer/") ? arn : "<load-balancer-arn>";
+  const domainName = (ev.domain_name as string | undefined) ?? "<domain-name>";
+  const certificateArn = arn.includes(":acm:") ? arn : "<certificate-arn>";
+  const topicArn = arn.includes(":sns:") ? arn : "<topic-arn>";
+  const queueArnMatch = arn.match(/^arn:aws:sqs:([^:]+):(\d+):(.+)$/);
+  const queueUrl = queueArnMatch
+    ? `https://sqs.${queueArnMatch[1]}.amazonaws.com/${queueArnMatch[2]}/${queueArnMatch[3]}`
+    : "<queue-url>";
+  const region = (ev.region as string | undefined) ?? arnRegion;
+  const kmsKeyId = (ev.key_id as string | undefined) ?? "<key-id>";
+  const accountId = arn.match(/^arn:aws:[^:]+:[^:]+:\d+:/)?.[0]?.match(/:(\d+):/)?.[1] ?? "<account-id>";
   return rem.cli
     .replace(/<role-name>/g, roleName || "<role-name>")
     .replace(/<user>/g, userName || "<user>")
     .replace(/<key-id>/g, kmsKeyId)
     .replace(/<policy-name>/g, policyName)
-    .replace(/<bucket-name>/g, bucketName);
+    .replace(/<bucket-name>/g, bucketName)
+    .replace(/<table-name>/g, tableName)
+    .replace(/<region>/g, region)
+    .replace(/<instance-id>/g, instanceId)
+    .replace(/<function-name>/g, functionName)
+    .replace(/<snapshot-id>/g, snapshotId)
+    .replace(/<image-id>/g, imageId)
+    .replace(/<trail-name>/g, trailName)
+    .replace(/<parameter-name>/g, parameterName)
+    .replace(/<secret-name>/g, secretName)
+    .replace(/<load-balancer-arn>/g, loadBalancerArn)
+    .replace(/<domain-name>/g, domainName)
+    .replace(/<certificate-arn>/g, certificateArn)
+    .replace(/<topic-arn>/g, topicArn)
+    .replace(/<queue-url>/g, queueUrl)
+    .replace(/<account-id>/g, accountId);
 }
 
 type AttachedPolicyAnalysis = {
@@ -1294,6 +1943,9 @@ type BlastRadiusData = {
   storage_encrypted?: boolean;
   publicly_accessible?: boolean;
   backup_retention_period?: number;
+  // dynamodb table fields
+  table_name?: string;
+  pitr_enabled?: boolean;
   // ec2 instance fields
   instance_id?: string;
   instance_type?: string | null;
@@ -1425,9 +2077,64 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   }
 
   if (resource_type === "rds_instance") {
+    if (checkId === "rds.instance.no_multi_az") {
+      return { text: "Enabling Multi-AZ causes a brief failover (~60s) and doubles cost — plan a maintenance window.", type: "caution" };
+    }
+    if (checkId === "rds.instance.no_deletion_protection") {
+      return { text: "Safe to enable — deletion protection only blocks accidental deletes; intentional deletion requires disabling it first.", type: "safe" };
+    }
     if (confidence === "low") return { text: "High blast radius — encrypting an RDS instance requires creating a new instance from an encrypted snapshot. Plan a maintenance window.", type: "warning" };
     if (confidence === "high") return { text: "Safe to enable — automated backups have no impact on application availability and can be enabled at any time.", type: "safe" };
     return { text: "Verify connectivity before applying — disabling public access removes the external endpoint. Ensure your app connects via VPC.", type: "caution" };
+  }
+
+  if (resource_type === "dynamodb_table") {
+    if (checkId === "dynamodb.table.no_pitr") {
+      return { text: "Safe to enable — point-in-time recovery is turned on in place with no downtime or application changes.", type: "safe" };
+    }
+    return { text: "Safe to enable — DynamoDB encryption at rest updates in place with no downtime. Reads and writes continue during the update.", type: "safe" };
+  }
+
+  if (resource_type === "ebs_snapshot") {
+    if (checkId === "ec2.ebs.snapshot_public") {
+      return { text: "Remove public access immediately — assume the snapshot may already have been copied externally.", type: "warning" };
+    }
+    return { text: "Safe to encrypt via snapshot copy — no running instances affected.", type: "safe" };
+  }
+
+  if (resource_type === "ec2_ami") {
+    return { text: "Make private immediately — assume the image may have been copied. Rotate any secrets baked into the AMI.", type: "warning" };
+  }
+
+  if (resource_type === "acm_certificate") {
+    if (confidence === "low") return { text: "Urgent — certificate expires within a week. Renew now to avoid HTTPS outages.", type: "warning" };
+    return { text: "Plan renewal before expiry — update listeners/distributions after issuing a replacement certificate.", type: "caution" };
+  }
+
+  if (resource_type === "lambda_function") {
+    if (checkId === "lambda.function.deprecated_runtime") {
+      return { text: "Test runtime upgrade in a staging alias first — dependency incompatibilities are common.", type: "caution" };
+    }
+    return { text: "Safe to add — DLQ only captures failed async invocations; successful calls are unaffected.", type: "safe" };
+  }
+
+  if (resource_type === "secrets_manager_secret") {
+    return { text: "First rotation updates the live secret — verify applications fetch the latest version from Secrets Manager.", type: "caution" };
+  }
+
+  if (resource_type === "ssm_parameter") {
+    return { text: "Converting to SecureString is low-risk if apps already use the SSM API — confirm kms:Decrypt on consuming roles.", type: "caution" };
+  }
+
+  if (resource_type === "elb_load_balancer") {
+    if (checkId === "elb.load_balancer.weak_tls_policy") {
+      return { text: "Test with your oldest TLS clients before tightening the listener policy.", type: "caution" };
+    }
+    return { text: "Safe to enable — access logs add S3 storage cost only; no impact on traffic.", type: "safe" };
+  }
+
+  if (resource_type === "sns_topic" || resource_type === "sqs_queue") {
+    return { text: "Verify publishers/subscribers have KMS permissions after enabling encryption.", type: "caution" };
   }
 
   if (resource_type === "ec2_instance") {
@@ -1658,23 +2365,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {data.resource_type === "iam_role" && data.services && data.services.length > 0 && (
           <div>
             <div className="text-sm font-semibold text-zinc-700 mb-2">Granted services ({data.services.length})</div>
-            <div className="flex flex-wrap gap-1.5">
-              {data.services.map((s) => (
-                <span
-                  key={s.name}
-                  title={s.last_used ? `Last used ${s.days_ago}d ago` : "Never used"}
-                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${
-                    s.active
-                      ? "border-red-200 bg-red-50 text-red-700"
-                      : "border-zinc-200 bg-zinc-50 text-zinc-500"
-                  }`}
-                >
-                  <span className={`h-1.5 w-1.5 rounded-full ${s.active ? "bg-red-400" : "bg-zinc-300"}`} />
-                  {s.name}
-                  {s.days_ago !== null && <span className="opacity-60">{s.days_ago}d</span>}
-                </span>
-              ))}
-            </div>
+            <CollapsibleGrantedServices services={data.services} />
             <div className="mt-2 flex gap-3 text-xs text-zinc-400">
               <span><span className="font-semibold text-red-600">{data.active_service_count}</span> active</span>
               <span><span className="font-semibold text-zinc-600">{data.unused_service_count}</span> unused</span>
@@ -1813,6 +2504,23 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
               ["Encrypted", data.storage_encrypted ? "Yes" : "No", data.storage_encrypted],
               ["Public access", data.publicly_accessible ? "Enabled" : "Disabled", !data.publicly_accessible],
               ["Backup retention", data.backup_retention_period != null ? `${data.backup_retention_period}d` : "—", (data.backup_retention_period ?? 0) > 0],
+            ] as [string, string, boolean | null][]).map(([label, val, ok]) => (
+              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                <div className={`font-mono font-medium truncate ${ok === true ? "text-emerald-700" : ok === false ? "text-red-600" : "text-zinc-700"}`}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* DynamoDB table: metadata grid */}
+        {data.resource_type === "dynamodb_table" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {([
+              ["Table", data.table_name ?? "—", null],
+              ["Region", data.region ?? "—", null],
+              ["Encrypted", data.kms_encrypted ? "Yes" : "No", data.kms_encrypted],
+              ["PITR", data.pitr_enabled ? "Enabled" : "Disabled", data.pitr_enabled],
             ] as [string, string, boolean | null][]).map(([label, val, ok]) => (
               <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
                 <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
@@ -2139,6 +2847,37 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 type Tab = "overview" | "remediation" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
+const MISLEADING_INLINE_POLICY_NAMES = new Set([
+  "AdministratorAccess",
+  "PowerUserAccess",
+  "ReadOnlyAccess",
+  "IAMFullAccess",
+  "IAMUserChangePassword",
+  "SecurityAudit",
+  "ViewOnlyAccess",
+]);
+
+function roleShortName(roleArn: string): string {
+  const match = roleArn.match(/:role\/(.+)$/);
+  return match ? (match[1].split("/").pop() ?? "role") : "role";
+}
+
+function suggestedInlinePolicyName(roleArn: string): string {
+  const base = roleShortName(roleArn).replace(/[^a-zA-Z0-9+=,.@-]/g, "-");
+  return `${base}-scoped`;
+}
+
+function policyRenameHint(policyName: string, roleArn: string, narrowed: boolean): string | null {
+  if (!narrowed && !MISLEADING_INLINE_POLICY_NAMES.has(policyName)) return null;
+  if (MISLEADING_INLINE_POLICY_NAMES.has(policyName)) {
+    return `Inline policy name "${policyName}" no longer matches its scope. Consider renaming to ${suggestedInlinePolicyName(roleArn)} when you apply.`;
+  }
+  if (narrowed && /admin/i.test(policyName)) {
+    return `Policy "${policyName}" was narrowed — rename on apply so the name reflects least privilege.`;
+  }
+  return null;
+}
+
 function policyChangeSummary(data: GeneratedPolicy) {
   const removed = data.statements_removed ?? 0;
   const modified = data.statements_modified ?? 0;
@@ -2148,9 +2887,9 @@ function policyChangeSummary(data: GeneratedPolicy) {
   if (removed) parts.push(`${removed} statement${removed !== 1 ? "s" : ""} removed`);
   if (modified) {
     if (data.granularity === "action" && usedActions) {
-      parts.push(`${modified} wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedActions} used action${usedActions !== 1 ? "s" : ""}`);
+      parts.push(`${modified} action wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedActions} used action${usedActions !== 1 ? "s" : ""}`);
     } else {
-      parts.push(`${modified} wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedServices} used service${usedServices !== 1 ? "s" : ""}`);
+      parts.push(`${modified} action wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedServices} used service${usedServices !== 1 ? "s" : ""}`);
     }
   }
   return parts.length ? parts.join(" · ") : "No changes";
@@ -2158,7 +2897,17 @@ function policyChangeSummary(data: GeneratedPolicy) {
 
 type PolicyStatement = { Sid?: string; Effect?: string; Action?: string | string[]; Resource?: string | string[]; [k: string]: unknown };
 
-function PolicyDiffView({ original, cleaned, granularity }: { original: Record<string, unknown>; cleaned: Record<string, unknown>; granularity?: "action" | "service" }) {
+function PolicyDiffView({
+  original,
+  cleaned,
+  granularity,
+  hideUnchangedResources,
+}: {
+  original: Record<string, unknown>;
+  cleaned: Record<string, unknown>;
+  granularity?: "action" | "service";
+  hideUnchangedResources?: boolean;
+}) {
   const sections = Object.entries(original).map(([name, origDoc]) => {
     const origStmts: PolicyStatement[] = (origDoc as any)?.Statement ?? [];
     const cleanStmts: PolicyStatement[] = (cleaned as any)?.[name]?.Statement ?? [];
@@ -2213,8 +2962,13 @@ function PolicyDiffView({ original, cleaned, granularity }: { original: Record<s
                         )}
                       </div>
                     )}
-                    {resources.length > 0 && (
-                      <div><span className="text-zinc-400">Resource: </span><span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-600"}`}>{resources.join(", ")}</span></div>
+                    {resources.length > 0 && !(hideUnchangedResources && s.kind === "modified" && resources.length === 1 && resources[0] === "*") && (
+                      <div>
+                        <span className="text-zinc-400">Resources: </span>
+                        <span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-600"}`}>
+                          {resources.join(", ")}
+                        </span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -2227,7 +2981,15 @@ function PolicyDiffView({ original, cleaned, granularity }: { original: Record<s
   );
 }
 
-function GeneratePolicySection({ accountId, finding }: { accountId: string; finding: Finding }) {
+function GeneratePolicySection({
+  accountId,
+  finding,
+  cloudTrailLogging,
+}: {
+  accountId: string;
+  finding: Finding;
+  cloudTrailLogging: boolean;
+}) {
   const [enabled, setEnabled] = useState(false);
   const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
   const { data, isLoading, error } = useQuery<GeneratedPolicy>({
@@ -2243,7 +3005,9 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
         <div className="text-sm font-semibold text-zinc-700">Suggested policy</div>
         {!enabled && <button onClick={() => setEnabled(true)} className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900">Generate</button>}
       </div>
-      {!enabled && <p className="text-xs leading-relaxed text-zinc-400">Vigil replaces wildcard actions with the specific API calls recorded in the last 90 days, or removes unused service statements from inline policies.</p>}
+      {!enabled && (
+        <p className="text-xs leading-relaxed text-zinc-400">{generatePolicyIntro(cloudTrailLogging)}</p>
+      )}
       {enabled && isLoading && <div className="py-3 text-xs text-zinc-400">Generating…</div>}
       {enabled && error && <div className="py-2 text-xs text-red-500">{String(error)}</div>}
       {enabled && data && !data.has_inline_policies && (
@@ -2263,16 +3027,27 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
               ))}
             </div>
           </div>
-          {view === "diff" && <PolicyDiffView original={data.original_policies} cleaned={data.cleaned_policies} granularity={data.granularity} />}
+          {Object.keys(data.cleaned_policies).map((policyName) => {
+            const hint = policyRenameHint(policyName, finding.resource_arn, (data.statements_modified ?? 0) > 0);
+            if (!hint) return null;
+            return (
+              <div key={policyName} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-xs leading-relaxed text-indigo-900">
+                {hint}
+              </div>
+            );
+          })}
+          {view === "diff" && (
+            <PolicyDiffView
+              original={data.original_policies}
+              cleaned={data.cleaned_policies}
+              granularity={data.granularity}
+              hideUnchangedResources={finding.check_id === "iam.role.unused_services_90d"}
+            />
+          )}
           {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
           {data.granularity === "service" && (
             <p className="text-xs leading-relaxed text-zinc-400">
               Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or use Access Analyzer for action-level generation on wildcard policies.
-            </p>
-          )}
-          {data.granularity === "action" && (
-            <p className="text-xs leading-relaxed text-zinc-400">
-              Resource stays <span className="font-mono">*</span> — narrowing to specific ARNs requires knowing which resources each action needs.
             </p>
           )}
         </div>
@@ -2422,6 +3197,15 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   const [remTab, setRemTab] = useState<"console" | "cli">("console");
   const [countdown, setCountdown] = useState(5);
 
+  const { data: accountMeta } = useQuery({
+    queryKey: ["account-cloudtrail", accountId],
+    queryFn: () =>
+      api<{ meta: { cloudtrail_logging: boolean } }>(`/v1/accounts/${accountId}/timeline?days=1&limit=1`),
+    enabled: !!accountId && !!finding,
+    staleTime: 300_000,
+  });
+  const cloudTrailLogging = accountMeta?.meta?.cloudtrail_logging ?? false;
+
   useEffect(() => { setTab("overview"); setRemTab("console"); }, [finding?.id]);
 
   useEffect(() => {
@@ -2433,6 +3217,7 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   }, [resolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!finding) return null;
+
   const rem = identityRemediations[finding.check_id] ?? remediations[finding.check_id] ?? fallbackRemediation;
   const isIdentityCheck = finding.check_id.startsWith("github.") || finding.check_id.startsWith("gitlab.");
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
@@ -2446,6 +3231,16 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "iam.role": "IAM Role",
     "s3.bucket": "S3 Bucket",
     "kms.key": "KMS Key",
+    "dynamodb.table": "DynamoDB Table",
+    "lambda.function": "Lambda Function",
+    "acm.certificate": "ACM Certificate",
+    "secretsmanager.secret": "Secrets Manager",
+    "ssm.parameter": "SSM Parameter",
+    "elb.load_balancer": "Load Balancer",
+    "sns.topic": "SNS Topic",
+    "sqs.queue": "SQS Queue",
+    "ec2.ami": "EC2 AMI",
+    "ec2.ebs.snapshot": "EBS Snapshot",
   };
   const category = Object.entries(categoryLabel).find(([prefix]) => finding.check_id.startsWith(prefix))?.[1] ?? "Finding";
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
@@ -2488,6 +3283,27 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "aws.access_analyzer.not_enabled",
     "iam.policy.wildcard_resource",
     "iam.policy.unattached",
+    "dynamodb.table.no_encryption",
+    "dynamodb.table.no_pitr",
+    "s3.bucket.no_default_encryption",
+    "s3.bucket.no_mfa_delete",
+    "ec2.ebs.snapshot_public",
+    "ec2.ebs.snapshot_unencrypted",
+    "ec2.ami.public",
+    "cloudtrail.trail.s3_bucket_public",
+    "cloudtrail.trail.no_cloudwatch_logs",
+    "cloudtrail.trail.s3_bucket_no_logging",
+    "acm.certificate.expiring",
+    "lambda.function.deprecated_runtime",
+    "lambda.function.no_dlq",
+    "rds.instance.no_deletion_protection",
+    "rds.instance.no_multi_az",
+    "secretsmanager.secret.no_rotation",
+    "ssm.parameter.plaintext_secret",
+    "elb.load_balancer.no_access_logs",
+    "elb.load_balancer.weak_tls_policy",
+    "sns.topic.no_encryption",
+    "sqs.queue.no_encryption",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
@@ -2537,9 +3353,19 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
         </div>
         {hasEvidence && <div>
           <div className="mb-2 text-sm font-semibold text-zinc-700">Scan details</div>
-          <EvidenceSection evidence={finding.evidence} checkId={finding.check_id} />
+          <EvidenceSection
+            evidence={finding.evidence}
+            checkId={finding.check_id}
+            cloudTrailLogging={cloudTrailLogging}
+          />
         </div>}
-        {showPolicyGen && <GeneratePolicySection accountId={accountId!} finding={finding} />}
+        {showPolicyGen && (
+          <GeneratePolicySection
+            accountId={accountId!}
+            finding={finding}
+            cloudTrailLogging={cloudTrailLogging}
+          />
+        )}
         <div className="flex items-center gap-3 border-t border-zinc-200/70 pt-4 pb-1 text-xs text-zinc-400">
           <span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span>
           <span className="text-zinc-300">·</span>

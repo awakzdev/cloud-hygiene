@@ -1,96 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { api } from "../api";
 
-type CheckCfg = { enabled: boolean };
+type ScanInterval = "daily" | "weekly" | "custom" | "manual";
+type FreqMode = "daily" | "weekly" | "custom";
+
 type SettingsData = {
-  checks: Record<string, CheckCfg>;
+  scanning: {
+    enabled: boolean;
+    interval: ScanInterval;
+    custom_hours: number | null;
+  };
   notifications: {
     email_digest_enabled: boolean;
     digest_email: string | null;
     slack_webhook_url: string | null;
+    scan_failure_email_enabled: boolean;
+  };
+  scan_status: {
+    account_connected: boolean;
+    last_scan_at: string | null;
+    next_scan_at: string | null;
+    max_interval: "daily" | "weekly";
+    min_custom_hours: number;
   };
 };
 
-const ALL_CHECKS: { id: string; label: string; severity: string; description: string }[] = [
-  // Root
-  { id: "iam.root.has_access_keys", label: "Root has access keys", severity: "critical", description: "Root account access keys are permanent credentials — delete them." },
-  { id: "iam.root.no_mfa", label: "Root MFA not enabled", severity: "critical", description: "Root account without MFA can be compromised with credentials alone." },
-  { id: "iam.root.usage", label: "Root account used recently", severity: "high", description: "Root account should not be used for regular operations — use IAM users or roles instead." },
-  // IAM account
-  { id: "iam.account.password_policy_weak", label: "Weak password policy", severity: "medium", description: "Strengthen the account password policy to enforce complexity and rotation." },
-  // Users
-  { id: "iam.user.no_mfa", label: "MFA not enabled", severity: "high", description: "Require MFA for interactive IAM users." },
-  { id: "iam.user.inactive_90d", label: "Inactive user", severity: "medium", description: "Disable or remove dormant IAM users." },
-  // Access keys
-  { id: "iam.access_key.unused_90d", label: "Unused access key", severity: "high", description: "Deactivate stale access keys, then delete after validation." },
-  { id: "iam.access_key.no_rotation_90d", label: "Key not rotated", severity: "medium", description: "Rotate active keys older than 90 days." },
-  { id: "iam.access_key.multiple_active", label: "Multiple active access keys", severity: "medium", description: "Each user should have at most one active access key." },
-  // Roles
-  { id: "iam.role.unassumed_90d", label: "Role unassumed", severity: "medium", description: "Remove or deactivate roles that have never been assumed." },
-  { id: "iam.role.wildcard_action", label: "Wildcard action in inline policy", severity: "high", description: "Replace Action: '*' with explicit action lists." },
-  { id: "iam.perm.granted_vs_used", label: "Write actions granted but never used", severity: "medium", description: "Role has write/mutating actions in its policies that have no recorded usage in 90 days." },
-  { id: "iam.policy.wildcard_resource", label: "Wildcard resource in policy", severity: "high", description: "Policy grants dangerous actions on Resource: '*' — scope to specific ARNs." },
-  { id: "iam.policy.unattached", label: "Unattached managed policy", severity: "low", description: "Customer-managed policies not attached to any user, group, or role." },
-  { id: "iam.role.unused_services_90d", label: "Unused granted services", severity: "medium", description: "Scope role policies down to services actually used." },
-  { id: "iam.role.trust_wildcard", label: "Wildcard trust policy", severity: "critical", description: "Roles that trust '*' can be assumed by anyone." },
-  // S3
-  { id: "s3.account.public_access_not_blocked", label: "Account public access not blocked", severity: "high", description: "Enable account-level S3 Block Public Access." },
-  { id: "s3.bucket.public_access_not_blocked", label: "Public access not blocked", severity: "high", description: "Enable all four Block Public Access settings." },
-  { id: "s3.bucket.no_https_policy", label: "No HTTPS-only policy", severity: "low", description: "Deny plain HTTP — defense in depth; modern SDKs already use HTTPS." },
-  { id: "s3.bucket.no_kms", label: "Not encrypted with KMS", severity: "medium", description: "Use SSE-KMS for encryption at rest." },
-  { id: "s3.bucket.no_logging", label: "Access logging disabled", severity: "low", description: "Enable server access logging for audit visibility." },
-  // KMS
-  { id: "kms.key.no_rotation", label: "Key rotation disabled", severity: "medium", description: "Enable annual automatic rotation for customer-managed keys." },
-  // CloudTrail
-  { id: "cloudtrail.trail.not_enabled", label: "CloudTrail not enabled", severity: "high", description: "Enable CloudTrail with multi-region logging in all accounts." },
-  { id: "cloudtrail.trail.no_log_validation", label: "Log file validation disabled", severity: "medium", description: "Enable log file integrity validation to detect tampering." },
-  { id: "cloudtrail.trail.no_kms", label: "CloudTrail not encrypted with KMS", severity: "medium", description: "Encrypt CloudTrail logs with a customer-managed KMS key." },
-  // GuardDuty
-  { id: "guardduty.detector.not_enabled", label: "GuardDuty not enabled", severity: "high", description: "Enable GuardDuty to detect threats and anomalous behavior." },
-  // Access Analyzer
-  { id: "aws.access_analyzer.not_enabled", label: "IAM Access Analyzer not enabled", severity: "medium", description: "Enable IAM Access Analyzer to surface cross-account over-permissive access." },
-  // AWS Config
-  { id: "aws.config.not_enabled", label: "AWS Config not enabled", severity: "low", description: "Enable AWS Config to maintain a continuous configuration change history." },
-  // Security Hub
-  { id: "aws.securityhub.not_enabled", label: "Security Hub not enabled", severity: "medium", description: "Enable Security Hub for centralized security posture checks." },
-  // VPC
-  { id: "vpc.flow_logs.not_enabled", label: "VPC flow logs disabled", severity: "medium", description: "Enable flow logs on all VPCs for network visibility." },
-  // Security Groups
-  { id: "ec2.security_group.unrestricted_ssh", label: "Unrestricted SSH (port 22)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 22 — restrict to known IPs." },
-  { id: "ec2.security_group.unrestricted_rdp", label: "Unrestricted RDP (port 3389)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 3389 — restrict to known IPs." },
-  { id: "ec2.security_group.default_allows_traffic", label: "Default SG has rules", severity: "medium", description: "Default security groups should have no rules — move traffic to named groups." },
-  // EC2
-  { id: "ec2.instance.imdsv2_not_required", label: "IMDSv2 not required", severity: "medium", description: "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata." },
-  { id: "ec2.ebs.encryption_not_default", label: "EBS encryption not default", severity: "medium", description: "Enable default EBS encryption so all new volumes are encrypted at creation." },
-  { id: "ec2.ebs.volume_unencrypted", label: "EBS volume not encrypted", severity: "high", description: "Encrypt existing EBS volumes by copying snapshots with encryption enabled." },
-  // RDS
-  { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
-  { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },
-  { id: "rds.instance.no_automated_backup", label: "RDS backups disabled", severity: "medium", description: "Enable automated backups with a retention period." },
-  // GitHub
-  { id: "github.org.mfa_not_enforced", label: "GitHub MFA not enforced", severity: "high", description: "Require two-factor authentication for all organization members." },
-  { id: "github.org.dormant_members", label: "GitHub dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
-  { id: "github.org.outside_collaborators", label: "Outside collaborators", severity: "medium", description: "Non-organization members with direct repository access — review and remove stale access." },
-  { id: "github.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable branch protection on the default branch to require reviews and block direct pushes." },
-  { id: "github.repo.no_codeowners", label: "No CODEOWNERS file", severity: "medium", description: "Add a CODEOWNERS file to automatically assign reviewers for code changes." },
-  { id: "github.repo.no_env_protection", label: "Deployment environment unprotected", severity: "high", description: "Add required reviewers to deployment environments to enforce change approval before deploying." },
-  { id: "github.repo.self_merge_allowed", label: "Self-merge allowed", severity: "high", description: "Require at least one reviewer other than the PR author before merging." },
-  { id: "github.repo.insufficient_reviews", label: "Insufficient PR reviews", severity: "high", description: "Increase required approvals so changes are reviewed by at least one peer." },
-  // GitLab
-  { id: "gitlab.org.mfa_not_enforced", label: "GitLab MFA not enforced", severity: "high", description: "Require two-factor authentication for all group members." },
-  { id: "gitlab.org.dormant_members", label: "GitLab dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
-  { id: "gitlab.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable protected branches on the default branch to require reviews and block direct pushes." },
-  { id: "gitlab.repo.self_merge_allowed", label: "Self-merge allowed", severity: "high", description: "Require at least one reviewer other than the MR author before merging." },
-  { id: "gitlab.repo.insufficient_reviews", label: "Insufficient MR reviews", severity: "high", description: "Increase required approvals so changes are reviewed by at least one peer." },
-];
-
-const sevBadge: Record<string, string> = {
-  critical: "border-red-200 bg-red-50 text-red-700",
-  high: "border-orange-200 bg-orange-50 text-orange-600",
-  medium: "border-amber-200 bg-amber-50 text-amber-600",
-  low: "border-zinc-200 bg-zinc-50 text-zinc-500",
-};
+const cardClass =
+  "overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]";
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -99,7 +36,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
         checked ? "bg-sky-500" : "bg-zinc-200"
       }`}
     >
@@ -112,6 +49,39 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
+function SettingRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 px-5 py-3.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-zinc-900">{title}</p>
+        <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">{description}</p>
+      </div>
+      <div className="shrink-0 pt-0.5">{children}</div>
+    </div>
+  );
+}
+
+function formatWhen(iso: string | null) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function formatCustomHours(hours: number) {
+  if (hours % 168 === 0) return `about every ${hours / 168} week${hours / 168 === 1 ? "" : "s"}`;
+  if (hours % 24 === 0) return `about every ${hours / 24} day${hours / 24 === 1 ? "" : "s"}`;
+  return `about every ${hours} hours`;
+}
+
 export default function Settings() {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery<SettingsData>({
@@ -119,7 +89,10 @@ export default function Settings() {
     queryFn: () => api("/v1/settings"),
   });
 
-  const [checks, setChecks] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(true);
+  const [freqMode, setFreqMode] = useState<FreqMode>("daily");
+  const [customHours, setCustomHours] = useState(24);
+  const [scanFailureEnabled, setScanFailureEnabled] = useState(true);
   const [emailDigestEnabled, setEmailDigestEnabled] = useState(false);
   const [digestEmail, setDigestEmail] = useState("");
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
@@ -129,20 +102,36 @@ export default function Settings() {
   const [slackTestState, setSlackTestState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [slackTestError, setSlackTestError] = useState("");
 
+  const minCustomHours = data?.scan_status.min_custom_hours ?? 6;
+  const canDaily = data?.scan_status.max_interval === "daily";
+
   useEffect(() => {
     if (!data) return;
-    const map: Record<string, boolean> = {};
-    for (const c of ALL_CHECKS) {
-      map[c.id] = data.checks[c.id]?.enabled ?? true;
+    setScanEnabled(data.scanning.enabled);
+    const interval = data.scanning.interval;
+    if (interval === "custom") {
+      setFreqMode("custom");
+      setCustomHours(data.scanning.custom_hours ?? 24);
+    } else if (interval === "weekly") {
+      setFreqMode("weekly");
+    } else {
+      setFreqMode(canDaily ? "daily" : "weekly");
     }
-    setChecks(map);
+    setScanFailureEnabled(data.notifications.scan_failure_email_enabled ?? true);
     setEmailDigestEnabled(data.notifications.email_digest_enabled ?? false);
     setDigestEmail(data.notifications.digest_email ?? "");
     setSlackWebhookUrl(data.notifications.slack_webhook_url ?? "");
-  }, [data]);
+  }, [data, canDaily]);
+
+  const scanScheduleLabel = useMemo(() => {
+    if (!scanEnabled) return "Manual only — trigger scans from Findings or Compliance.";
+    if (freqMode === "weekly") return "Automated scan about every 7 days.";
+    if (freqMode === "custom") return `Automated scan ${formatCustomHours(customHours)}.`;
+    return "Automated scan about every 24 hours.";
+  }, [scanEnabled, freqMode, customHours]);
 
   const mutation = useMutation({
-    mutationFn: (body: Partial<SettingsData>) =>
+    mutationFn: (body: { scanning: SettingsData["scanning"]; notifications: SettingsData["notifications"] }) =>
       api("/v1/settings", { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["settings"] });
@@ -180,210 +169,214 @@ export default function Settings() {
   }
 
   function save() {
-    const checksPayload: Record<string, CheckCfg> = {};
-    for (const [id, enabled] of Object.entries(checks)) {
-      checksPayload[id] = { enabled };
-    }
     mutation.mutate({
-      checks: checksPayload,
+      scanning: {
+        enabled: scanEnabled,
+        interval: scanEnabled ? (freqMode === "custom" ? "custom" : freqMode) : "manual",
+        custom_hours: scanEnabled && freqMode === "custom" ? customHours : null,
+      },
       notifications: {
         email_digest_enabled: emailDigestEnabled,
         digest_email: digestEmail.trim() || null,
         slack_webhook_url: slackWebhookUrl.trim() || null,
+        scan_failure_email_enabled: scanFailureEnabled,
       },
     });
   }
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64 text-zinc-400 text-sm">
+      <div className="mx-auto flex h-64 w-full max-w-2xl items-center justify-center text-sm text-zinc-400">
         Loading settings…
       </div>
     );
   }
 
-  const grouped = {
-    root: ALL_CHECKS.filter((c) => c.id.startsWith("iam.root.")),
-    iam_account: ALL_CHECKS.filter((c) => c.id.startsWith("iam.account.")),
-    user: ALL_CHECKS.filter((c) => c.id.startsWith("iam.user.")),
-    access_key: ALL_CHECKS.filter((c) => c.id.startsWith("iam.access_key.")),
-    role: ALL_CHECKS.filter((c) => c.id.startsWith("iam.role.")),
-    s3: ALL_CHECKS.filter((c) => c.id.startsWith("s3.")),
-    kms: ALL_CHECKS.filter((c) => c.id.startsWith("kms.")),
-    cloudtrail: ALL_CHECKS.filter((c) => c.id.startsWith("cloudtrail.")),
-    guardduty: ALL_CHECKS.filter((c) => c.id.startsWith("guardduty.")),
-    access_analyzer: ALL_CHECKS.filter((c) => c.id.startsWith("aws.access_analyzer.")),
-    config: ALL_CHECKS.filter((c) => c.id.startsWith("aws.config.")),
-    securityhub: ALL_CHECKS.filter((c) => c.id.startsWith("aws.securityhub.")),
-    vpc: ALL_CHECKS.filter((c) => c.id.startsWith("vpc.")),
-    ec2: ALL_CHECKS.filter((c) => c.id.startsWith("ec2.")),
-    rds: ALL_CHECKS.filter((c) => c.id.startsWith("rds.")),
-    github: ALL_CHECKS.filter((c) => c.id.startsWith("github.")),
-    gitlab: ALL_CHECKS.filter((c) => c.id.startsWith("gitlab.")),
-  };
+  const lastScan = formatWhen(data?.scan_status.last_scan_at ?? null);
+  const nextScan = formatWhen(data?.scan_status.next_scan_at ?? null);
+  const showAlertEmail = emailDigestEnabled || scanFailureEnabled;
 
   return (
-    <div className="max-w-3xl space-y-8">
+    <div className="mx-auto w-full max-w-2xl space-y-7 pb-4">
       <div>
-        <h1 className="text-2xl font-semibold text-zinc-900">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Configure which checks run during scans and how you receive alerts.
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Settings</h1>
+        <p className="mt-2 text-sm text-zinc-500">
+          Automated scanning and alert delivery for your organization.
         </p>
       </div>
 
-      {/* Checks */}
-      <section className="space-y-4">
-        <h2 className="text-base font-semibold text-zinc-800">Checks</h2>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">Scanning</h2>
+        <div className={cardClass}>
+          <SettingRow
+            title="Automated scans"
+            description="Regular scans build your compliance evidence timeline. Turn off to scan manually only."
+          >
+            <Toggle checked={scanEnabled} onChange={setScanEnabled} />
+          </SettingRow>
 
-        {(
-          [
-            ["Root Account", grouped.root],
-            ["IAM Account Policy", grouped.iam_account],
-            ["IAM Users", grouped.user],
-            ["Access Keys", grouped.access_key],
-            ["IAM Roles", grouped.role],
-            ["S3 Buckets", grouped.s3],
-            ["KMS Keys", grouped.kms],
-            ["CloudTrail", grouped.cloudtrail],
-            ["GuardDuty", grouped.guardduty],
-            ["IAM Access Analyzer", grouped.access_analyzer],
-            ["AWS Config", grouped.config],
-            ["Security Hub", grouped.securityhub],
-            ["VPC", grouped.vpc],
-            ["Security Groups & EC2", grouped.ec2],
-            ["RDS", grouped.rds],
-            ["GitHub", grouped.github],
-            ["GitLab", grouped.gitlab],
-          ] as [string, typeof ALL_CHECKS][]
-        ).map(([groupLabel, items]) => (
-          <div key={groupLabel} className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
-            <div className="px-5 py-3 border-b border-zinc-100" style={{ background: "linear-gradient(to bottom, #f9fafb, #f4f5f6)" }}>
-              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-                {groupLabel}
-              </span>
-            </div>
-            <div className="divide-y divide-zinc-100">
-              {items.map((c) => (
-                <div key={c.id} className="group flex items-center gap-4 px-5 py-4 transition-colors hover:bg-zinc-50/70">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-zinc-900">{c.label}</span>
-                      <span
-                        className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                          sevBadge[c.severity]
-                        }`}
-                      >
-                        {c.severity}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-xs text-zinc-500">{c.description}</p>
-                  </div>
-                  <Toggle
-                    checked={checks[c.id] ?? true}
-                    onChange={(v) => setChecks((prev) => ({ ...prev, [c.id]: v }))}
+          {scanEnabled && (
+            <div className="border-t border-zinc-100 px-6 pb-5 pt-1">
+              <label htmlFor="scan-interval" className="mb-2 mt-4 block text-xs font-medium text-zinc-500">
+                Frequency
+              </label>
+              <select
+                id="scan-interval"
+                value={freqMode}
+                onChange={(e) => setFreqMode(e.target.value as FreqMode)}
+                className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="daily" disabled={!canDaily}>
+                  Daily{canDaily ? "" : " (paid plan)"}
+                </option>
+                <option value="weekly">Weekly</option>
+                <option value="custom">Custom interval</option>
+              </select>
+
+              {freqMode === "custom" && (
+                <div className="mt-3">
+                  <label htmlFor="custom-hours" className="mb-2 block text-xs font-medium text-zinc-500">
+                    Interval (hours)
+                  </label>
+                  <input
+                    id="custom-hours"
+                    type="number"
+                    min={minCustomHours}
+                    max={720}
+                    step={1}
+                    value={customHours}
+                    onChange={(e) => setCustomHours(Number(e.target.value))}
+                    className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
                   />
+                  <p className="mt-1.5 text-xs text-zinc-400">
+                    Between {minCustomHours} and 720 hours
+                    {minCustomHours >= 168 ? " (7+ days on Free)" : ""}.
+                  </p>
                 </div>
-              ))}
+              )}
+
+              <p className="mt-3 text-xs text-zinc-400">{scanScheduleLabel}</p>
             </div>
+          )}
+
+          <div className="border-t border-zinc-100 bg-zinc-50/70 px-6 py-3.5 text-xs leading-relaxed text-zinc-500">
+            {!data?.scan_status.account_connected ? (
+              <span>Connect an AWS account to enable automated scanning.</span>
+            ) : (
+              <span>
+                {lastScan ? <>Last scan: {lastScan}</> : "No scan completed yet."}
+                {scanEnabled && nextScan && (
+                  <>
+                    {" · "}
+                    Next scan due: {nextScan}
+                  </>
+                )}
+              </span>
+            )}
           </div>
-        ))}
+        </div>
       </section>
 
-      {/* Notifications */}
-      <section className="space-y-4">
-        <h2 className="text-base font-semibold text-zinc-800">Notifications</h2>
-        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
-          <div className="flex items-center justify-between px-5 py-4">
-            <div>
-              <p className="text-sm font-medium text-zinc-900">Weekly email digest</p>
-              <p className="text-xs text-zinc-500">Send a findings summary every Monday at 9am UTC.</p>
-            </div>
-            <Toggle checked={emailDigestEnabled} onChange={setEmailDigestEnabled} />
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">Notifications</h2>
+        <div className={cardClass}>
+          <SettingRow
+            title="Scan failure email"
+            description="Email immediately when an automated or manual scan fails — broken IAM role, collector error, etc."
+          >
+            <Toggle checked={scanFailureEnabled} onChange={setScanFailureEnabled} />
+          </SettingRow>
+
+          <div className="border-t border-zinc-100">
+            <SettingRow
+              title="Weekly email digest"
+              description="Findings summary every Monday at 9am UTC."
+            >
+              <Toggle checked={emailDigestEnabled} onChange={setEmailDigestEnabled} />
+            </SettingRow>
           </div>
-          {emailDigestEnabled && (
-            <div className="px-5 pb-4 border-t border-zinc-100">
-              <label className="block text-xs font-medium text-zinc-500 mb-1.5 mt-3">
-                Recipient email
+
+          {showAlertEmail && (
+            <div className="border-t border-zinc-100 px-6 pb-5">
+              <label htmlFor="alert-email" className="mb-2 mt-4 block text-xs font-medium text-zinc-500">
+                Alert email
               </label>
-              <div className="flex max-w-xl items-center gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <input
+                  id="alert-email"
                   type="email"
                   value={digestEmail}
                   onChange={(e) => setDigestEmail(e.target.value)}
-                  placeholder="Email address"
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                  placeholder="Email Address"
+                  className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
                 />
-                <button
-                  type="button"
-                  onClick={sendTest}
-                  disabled={testState === "sending"}
-                  className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
-                >
-                  {testState === "sending" ? "Sending…" : "Send report"}
-                </button>
+                {emailDigestEnabled && (
+                  <button
+                    type="button"
+                    onClick={sendTest}
+                    disabled={testState === "sending"}
+                    className="shrink-0 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
+                  >
+                    {testState === "sending" ? "Sending…" : "Send test digest"}
+                  </button>
+                )}
               </div>
-              <p className="mt-1.5 text-xs text-zinc-400">
-                Leave blank to send to your account email.
+              <p className="mt-2 text-xs text-zinc-400">
+                Used for scan failure alerts{emailDigestEnabled ? " and the weekly digest" : ""}. Leave blank for your account email.
               </p>
-              <div className="mt-2 flex items-center gap-3">
-                {testState === "sent" && (
-                  <span className="text-xs text-emerald-600 font-medium">Report sent.</span>
-                )}
-                {testState === "error" && (
-                  <span className="text-xs text-red-500">{testError}</span>
-                )}
-              </div>
+              {testState === "sent" && (
+                <p className="mt-2 text-xs font-medium text-emerald-600">Test digest sent.</p>
+              )}
+              {testState === "error" && (
+                <p className="mt-2 text-xs text-red-500">{testError}</p>
+              )}
             </div>
           )}
         </div>
       </section>
 
-      {/* Slack */}
-      <section className="space-y-4">
-        <h2 className="text-base font-semibold text-zinc-800">Slack</h2>
-        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
-          <div className="px-5 py-4">
-            <p className="text-sm font-medium text-zinc-900 mb-0.5">Slack webhook</p>
-            <p className="text-xs text-zinc-500 mb-3">Post the weekly digest to a Slack channel. Create an Incoming Webhook in your Slack workspace and paste the URL below.</p>
-            <div className="flex max-w-xl items-center gap-2">
-              <input
-                type="url"
-                value={slackWebhookUrl}
-                onChange={(e) => setSlackWebhookUrl(e.target.value)}
-                placeholder="https://hooks.slack.com/services/…"
-                className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
-              />
-              <button
-                type="button"
-                onClick={sendSlackTest}
-                disabled={slackTestState === "sending" || !slackWebhookUrl.trim()}
-                className="shrink-0 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
-              >
-                {slackTestState === "sending" ? "Sending…" : "Test"}
-              </button>
-            </div>
-            <div className="mt-1.5 flex items-center gap-3">
-              {slackTestState === "sent" && (
-                <span className="text-xs text-emerald-600 font-medium">Message sent to Slack.</span>
-              )}
-              {slackTestState === "error" && (
-                <span className="text-xs text-red-500">{slackTestError}</span>
-              )}
-            </div>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-zinc-400">Slack</h2>
+        <div className={`${cardClass} px-6 py-5`}>
+          <p className="text-sm font-medium text-zinc-900">Slack webhook</p>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Post the weekly digest to a Slack channel via an Incoming Webhook.
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              type="url"
+              value={slackWebhookUrl}
+              onChange={(e) => setSlackWebhookUrl(e.target.value)}
+              placeholder="https://hooks.slack.com/services/…"
+              className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-sky-500"
+            />
+            <button
+              type="button"
+              onClick={sendSlackTest}
+              disabled={slackTestState === "sending" || !slackWebhookUrl.trim()}
+              className="shrink-0 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-xs font-semibold text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-50"
+            >
+              {slackTestState === "sending" ? "Sending…" : "Test"}
+            </button>
           </div>
+          {slackTestState === "sent" && (
+            <p className="mt-2 text-xs font-medium text-emerald-600">Message sent to Slack.</p>
+          )}
+          {slackTestState === "error" && (
+            <p className="mt-2 text-xs text-red-500">{slackTestError}</p>
+          )}
         </div>
       </section>
 
-      {/* Save */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 pt-2">
         <button
           onClick={save}
           disabled={mutation.isPending}
-          className="rounded-lg bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-600 disabled:opacity-60 transition-colors"
+          className="rounded-xl bg-sky-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-600 disabled:opacity-60"
         >
           {mutation.isPending ? "Saving…" : "Save changes"}
         </button>
-        {saved && <span className="text-sm text-emerald-600 font-medium">Saved</span>}
+        {saved && <span className="text-sm font-medium text-emerald-600">Saved</span>}
         {mutation.isError && (
           <span className="text-sm text-red-500">{(mutation.error as Error).message}</span>
         )}

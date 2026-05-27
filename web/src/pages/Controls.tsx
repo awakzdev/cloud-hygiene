@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, token } from "../api";
-import ScanProgressBar from "../components/ScanProgressBar";
 import { labelForCheck } from "../data/checkLabels";
-import { saveScanDurationMs, useScanProgress } from "../hooks/useScanProgress";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
@@ -214,69 +212,205 @@ function LoadingSkeleton() {
   );
 }
 
+function checkGroupLabel(id: string): string {
+  if (id.startsWith("github.")) return "GitHub";
+  if (id.startsWith("gitlab.")) return "GitLab";
+  if (id.startsWith("iam.")) return "IAM";
+  if (id.startsWith("s3.")) return "S3";
+  if (id.startsWith("kms.")) return "KMS";
+  if (id.startsWith("cloudtrail.")) return "CloudTrail";
+  if (id.startsWith("ec2.")) return "EC2";
+  if (id.startsWith("rds.")) return "RDS";
+  if (id.startsWith("guardduty.")) return "GuardDuty";
+  if (id.startsWith("aws.")) return "AWS";
+  if (id.startsWith("vpc.")) return "VPC";
+  const prefix = id.split(".")[0] ?? id;
+  return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+}
+
+const CHECK_GROUP_ORDER = ["IAM", "GitHub", "GitLab", "S3", "KMS", "CloudTrail", "EC2", "RDS", "GuardDuty", "AWS", "VPC"];
+
+function groupCheckIds(checkIds: string[]) {
+  const groups = new Map<string, string[]>();
+  for (const id of checkIds) {
+    const label = checkGroupLabel(id);
+    const list = groups.get(label) ?? [];
+    list.push(id);
+    groups.set(label, list);
+  }
+  return Array.from(groups.entries()).sort(([a], [b]) => {
+    const ai = CHECK_GROUP_ORDER.indexOf(a);
+    const bi = CHECK_GROUP_ORDER.indexOf(b);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    return a.localeCompare(b);
+  });
+}
+
 function MappedChecksList({ checkIds }: { checkIds: string[] }) {
-  const [open, setOpen] = useState(false);
-  const [showIds, setShowIds] = useState(false);
+  const navigate = useNavigate();
+  const grouped = useMemo(() => groupCheckIds(checkIds), [checkIds]);
 
   return (
-    <div className="border-t border-zinc-100 pt-4">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-left"
-      >
-        <p className="vigil-kicker">
-          {checkIds.length} mapped check{checkIds.length === 1 ? "" : "s"}
-        </p>
-        <span className="text-[11px] font-semibold text-zinc-500">{open ? "Hide" : "Show"}</span>
-      </button>
-      {open && (
-        <>
-          <div className="mb-2 mt-2 flex justify-end">
-            <button
-              type="button"
-              onClick={() => setShowIds((v) => !v)}
-              className="text-[11px] font-semibold text-zinc-500 transition hover:text-zinc-800"
-            >
-              {showIds ? "Hide IDs" : "Show IDs"}
-            </button>
+    <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Mapped checks</p>
+      <p className="mt-1 text-xs font-medium text-zinc-600">
+        {checkIds.length} check{checkIds.length === 1 ? "" : "s"} evaluated for this control
+      </p>
+      <div className="mt-3.5 space-y-3">
+        {grouped.map(([group, ids]) => (
+          <div key={group}>
+            <p className="mb-1.5 text-xs font-semibold text-zinc-700">{group}</p>
+            <ul className="overflow-hidden rounded-lg border border-zinc-200 bg-white divide-y divide-zinc-100">
+              {ids.map((cid) => (
+                <li key={cid}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => navigate(`/findings?checks=${encodeURIComponent(cid)}`)}
+                    className="group flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-zinc-50/80"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold leading-snug text-zinc-900 group-hover:text-indigo-700">
+                        {labelForCheck(cid)}
+                      </p>
+                      <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">{cid}</p>
+                    </div>
+                    <svg
+                      className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-colors group-hover:text-indigo-500"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="space-y-2">
-            {checkIds.map((cid) => (
-              <li key={cid} className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2">
-                <p className="text-sm font-medium text-zinc-800">{labelForCheck(cid)}</p>
-                {showIds && <code className="mt-1 block font-mono text-[10px] text-zinc-400">{cid}</code>}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+        ))}
+      </div>
     </div>
   );
 }
 
-function NarrativeBlock({ text }: { text: string }) {
+type QuestionnaireDraft = { body: string; notes: string[] };
+
+function buildQuestionnaireDraft(control: ControlRow, periodDays: number): QuestionnaireDraft | null {
+  const body = (control.narrative ?? control.description).trim();
+  if (!body) return null;
+
+  if (control.status === "no_data") {
+    return {
+      body,
+      notes: [
+        "Status: Not yet evaluated in Vigil (no scan data for mapped checks, or required sources are not connected).",
+        "Run a scan before submitting this answer to auditors.",
+      ],
+    };
+  }
+
+  if (control.status === "pass") {
+    return {
+      body,
+      notes: [
+        `Status: Passing as of the latest Vigil scan (0 open findings mapped to ${control.control_id} in the last ${periodDays} days).`,
+      ],
+    };
+  }
+
+  return {
+    body,
+    notes: [
+      `Status: ${findingLabel(control.finding_count)} mapped to ${control.control_id} as of the latest scan.`,
+      "Edit before submitting to auditors — describe remediation in progress, compensating controls, or documented exceptions.",
+      "After remediation, re-scan and export the evidence pack for audit sampling.",
+    ],
+  };
+}
+
+function questionnaireDraftText(draft: QuestionnaireDraft) {
+  return [draft.body, ...draft.notes].join("\n");
+}
+
+function questionnaireMeta(status: ControlRow["status"]) {
+  if (status === "pass") {
+    return {
+      label: "Questionnaire answer",
+      hint: "Adapt for Vanta, Drata, or auditor forms.",
+      box: "border-violet-200/80 bg-violet-50/40",
+      labelColor: "text-violet-600",
+      textColor: "text-violet-950/90",
+      btn: "border-violet-200 text-violet-700 hover:bg-violet-50",
+    };
+  }
+  if (status === "fail") {
+    return {
+      label: "Questionnaire template",
+      hint: "Control is failing — add remediation status before submitting.",
+      box: "border-amber-200/80 bg-amber-50/40",
+      labelColor: "text-amber-800",
+      textColor: "text-amber-950/90",
+      btn: "border-amber-200 text-amber-800 hover:bg-amber-50",
+    };
+  }
+  return {
+    label: "Questionnaire template",
+    hint: "Not evaluated yet — run a scan first.",
+    box: "border-zinc-200 bg-zinc-50/80",
+    labelColor: "text-zinc-600",
+    textColor: "text-zinc-800",
+    btn: "border-zinc-200 text-zinc-700 hover:bg-zinc-100",
+  };
+}
+
+function QuestionnaireAnswerBlock({ control, periodDays }: { control: ControlRow; periodDays: number }) {
   const [copied, setCopied] = useState(false);
+  const draft = buildQuestionnaireDraft(control, periodDays);
+  const meta = questionnaireMeta(control.status);
+
+  if (!draft) return null;
+  const content = draft;
 
   async function copy() {
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(questionnaireDraftText(content));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const noteDivider =
+    control.status === "pass"
+      ? "border-violet-200/60"
+      : control.status === "fail"
+        ? "border-amber-200/60"
+        : "border-zinc-200";
+
   return (
-    <div className="rounded-xl border border-violet-200/80 bg-violet-50/40 p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-600">Audit response draft</p>
+    <div className={`rounded-xl border p-4 ${meta.box}`}>
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={`text-[10px] font-semibold uppercase tracking-wider ${meta.labelColor}`}>{meta.label}</p>
+          <p className={`mt-0.5 text-[11px] ${meta.labelColor} opacity-80`}>{meta.hint}</p>
+        </div>
         <button
           type="button"
           onClick={copy}
-          className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-violet-700 transition hover:bg-violet-50"
+          className={`inline-flex shrink-0 items-center gap-1 rounded-lg border bg-white px-2.5 py-1 text-[11px] font-semibold transition ${meta.btn}`}
         >
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <p className="text-sm leading-relaxed text-violet-950/90">{text}</p>
+      <p className={`text-sm leading-relaxed ${meta.textColor}`}>{content.body}</p>
+      {content.notes.length > 0 && (
+        <div className={`mt-2.5 space-y-1 border-t pt-2.5 ${noteDivider}`}>
+          {content.notes.map((note) => (
+            <p key={note} className={`text-xs leading-snug ${meta.textColor} opacity-90`}>
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -356,16 +490,14 @@ function useFrameworkPassRate(framework: string, accountId: string | undefined, 
 
 export default function Controls() {
   const navigate = useNavigate();
-  const qc = useQueryClient();
   const [framework, setFramework] = useState("soc2");
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [period, setPeriod] = useState(90);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [scanTriggered, setScanTriggered] = useState(false);
-  const prevScanStatus = useRef<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -375,44 +507,6 @@ export default function Controls() {
   const connectedAccount = accounts.data?.find((a) => a.status === "connected");
   const hasScanned = !!connectedAccount?.last_scan_at;
   const activeFramework = FRAMEWORKS.find((fw) => fw.id === framework)!;
-
-  const scanRun = useQuery({
-    queryKey: ["scan-run-latest", connectedAccount?.id],
-    queryFn: () =>
-      connectedAccount
-        ? api<{
-            id: string;
-            status: string;
-            started_at: string;
-            finished_at: string | null;
-          } | null>(`/v1/accounts/${connectedAccount.id}/scan-runs/latest`)
-        : null,
-    enabled: !!connectedAccount,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
-  });
-
-  const scan = useMutation({
-    mutationFn: (accountId: string) => api(`/v1/accounts/${accountId}/scan`, { method: "POST", body: "{}" }),
-  });
-
-  const scanStatus = scanRun.data?.status ?? null;
-  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
-  const isRunning = scanStatus === "running" && !scanStuck;
-  const isScanActive = scanTriggered || isRunning;
-  const scanProgress = useScanProgress(isScanActive, isRunning ? scanStartedAt : null);
-
-  useEffect(() => {
-    if (prevScanStatus.current === "running" && scanStatus === "ok") {
-      qc.invalidateQueries({ queryKey: ["controls"] });
-      qc.invalidateQueries({ queryKey: ["control-evidence"] });
-      if (scanRun.data?.started_at && scanRun.data?.finished_at) {
-        saveScanDurationMs(scanRun.data.started_at, scanRun.data.finished_at);
-      }
-    }
-    if (scanStatus === "running") setScanTriggered(false);
-    prevScanStatus.current = scanStatus;
-  }, [scanStatus, qc, scanRun.data?.started_at, scanRun.data?.finished_at]);
 
   const controls = useQuery({
     queryKey: ["controls", framework, connectedAccount?.id],
@@ -424,11 +518,15 @@ export default function Controls() {
   });
 
   useEffect(() => {
-    if (isRefreshing && !controls.isFetching) {
-      const t = setTimeout(() => setIsRefreshing(false), 600);
-      return () => clearTimeout(t);
+    if (!exportOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
     }
-  }, [isRefreshing, controls.isFetching]);
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [exportOpen]);
 
   const soc2Rate = useFrameworkPassRate("soc2", connectedAccount?.id, hasScanned);
   const cisRate = useFrameworkPassRate("cis_aws_l1", connectedAccount?.id, hasScanned);
@@ -513,71 +611,92 @@ export default function Controls() {
             {connectedAccount?.account_id && (
               <span className="text-zinc-400"> · account {connectedAccount.account_id}</span>
             )}
-            {(scanRun.data?.finished_at || connectedAccount?.last_scan_at) && (
+            {connectedAccount?.last_scan_at && (
               <span className="text-zinc-400">
                 {" "}
-                · Last scan {lastScanLabel(scanRun.data?.finished_at ?? connectedAccount!.last_scan_at!)}
+                · Last scan {lastScanLabel(connectedAccount.last_scan_at)}
               </span>
             )}
             {passRate != null && (
-              <span className={`font-medium ${passRateColor(passRate)}`}> · {passRate}% passing</span>
+              <span className="text-zinc-400"> · {passed}/{total} controls passing</span>
             )}
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (isRefreshing) return;
-              qc.invalidateQueries({ queryKey: ["controls"] });
-              qc.invalidateQueries({ queryKey: ["control-evidence"] });
-              setIsRefreshing(true);
-            }}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {isRefreshing && (
-              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            )}
-            Refresh
-          </button>
           {connectedAccount && (
-            <button
-              type="button"
-              onClick={() => {
-                setScanTriggered(true);
-                scan.mutate(connectedAccount.id);
-              }}
-              disabled={scanTriggered || isRunning}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {(scanTriggered || isRunning) && (
-                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            <div ref={exportRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setExportOpen((open) => !open)}
+                aria-expanded={exportOpen}
+                aria-haspopup="dialog"
+                className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold shadow-sm transition ${
+                  exportOpen
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-800 ring-2 ring-indigo-500/10"
+                    : "border-indigo-200 bg-indigo-50/60 text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
+                Evidence pack
+              </button>
+              {exportOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Evidence pack export"
+                  className="absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/70 to-white p-5 shadow-lg shadow-indigo-950/10 ring-1 ring-black/5"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
+                  <p className="mt-2 text-sm font-semibold text-zinc-900">{activeFramework.label}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                    Auditor-ready ZIP with INDEX.csv, per-control JSON snapshots, and PDF summary.
+                  </p>
+                  <div className="mt-5">
+                    <label htmlFor="evidence-period" className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                      Audit window
+                    </label>
+                    <select
+                      id="evidence-period"
+                      value={period}
+                      onChange={(e) => setPeriod(Number(e.target.value))}
+                      className="mt-1.5 w-full appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+                    >
+                      {AUDIT_WINDOWS.map((window) => (
+                        <option key={window.value} value={window.value}>
+                          {window.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={downloadPack}
+                    disabled={downloading}
+                    className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {downloading ? (
+                      <>
+                        <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        Generating…
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                        Download ZIP
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
-              {isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}
-            </button>
+            </div>
           )}
         </div>
       </div>
-
-      {isScanActive && (
-        <div className="mb-6">
-          <ScanProgressBar
-            phase={isRunning ? "running" : "starting"}
-            progress={scanProgress.progress}
-            elapsedMs={scanProgress.elapsedMs}
-            remainingMs={scanProgress.remainingMs}
-            indeterminate={scanProgress.indeterminate}
-            finishing={scanProgress.finishing}
-          />
-        </div>
-      )}
 
       {!hasScanned && connectedAccount && !controls.isLoading && (
         <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/60 px-5 py-4 text-sm text-amber-900">
@@ -586,6 +705,46 @@ export default function Controls() {
       )}
 
       {controls.isLoading && <LoadingSkeleton />}
+
+      {!controls.isLoading && connectedAccount && (
+        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3" role="tablist" aria-label="Compliance framework">
+          {FRAMEWORKS.map((fw) => {
+            const pct =
+              fw.id === "soc2" ? soc2Rate.data : fw.id === "cis_aws_l1" ? cisRate.data : isoRate.data;
+            const isActive = framework === fw.id;
+            return (
+              <button
+                key={fw.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => {
+                  setFramework(fw.id);
+                  setSelectedFamilyKey(null);
+                  setExpanded(null);
+                }}
+                className={`rounded-xl border-2 px-4 py-3.5 text-left transition-all ${
+                  isActive
+                    ? "border-indigo-300 bg-indigo-50/80 text-zinc-900 shadow-sm ring-2 ring-indigo-500/10"
+                    : "border-zinc-200 bg-white text-zinc-900 hover:border-indigo-200 hover:bg-indigo-50/30"
+                }`}
+              >
+                <div className="text-sm font-bold">{fw.label}</div>
+                <div className="mt-0.5 text-xs text-zinc-500">{fw.fullLabel}</div>
+                <div className={`mt-3 text-2xl font-bold tabular-nums ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
+                  {pct == null ? "—" : `${pct}%`}
+                </div>
+                <div className={`mt-2 h-1.5 overflow-hidden rounded-full ${isActive ? "bg-indigo-100" : "bg-zinc-100"}`}>
+                  <div
+                    className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
+                    style={{ width: `${pct ?? 0}%` }}
+                  />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {!controls.isLoading && total > 0 && (
         <div className="mb-4 space-y-2">
@@ -607,12 +766,12 @@ export default function Controls() {
                 }}
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                   statusFilter === f.id
-                    ? "bg-zinc-900 text-white"
+                    ? "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200"
                     : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
                 }`}
               >
                 {f.label}
-                <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
+                <span className={statusFilter === f.id ? "text-indigo-500" : "text-zinc-400"}> · {f.count}</span>
               </button>
             ))}
           </div>
@@ -635,8 +794,7 @@ export default function Controls() {
         </div>
       )}
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_272px]">
-        <section className="min-w-0">
+      <section className="min-w-0">
           {!controls.isLoading && rows.length === 0 && (
             <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
               No controls found for this framework.
@@ -670,13 +828,13 @@ export default function Controls() {
                           }}
                           className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
                             isSelected
-                              ? "bg-zinc-950 text-white shadow-sm"
+                              ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200"
                               : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                           }`}
                         >
                           {shortFamilyLabel(group.label)}
                           {group.failed > 0 && (
-                            <span className={isSelected ? "text-red-200" : "text-red-500"}> · {group.failed}</span>
+                            <span className="text-red-500"> · {group.failed}</span>
                           )}
                         </button>
                       );
@@ -697,7 +855,13 @@ export default function Controls() {
                     return (
                       <div key={ctrl.id}>
                         <button
-                          onClick={() => setExpanded(isExpanded ? null : ctrl.id)}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            const scrollY = window.scrollY;
+                            setExpanded(isExpanded ? null : ctrl.id);
+                            requestAnimationFrame(() => window.scrollTo(0, scrollY));
+                          }}
                           className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 py-3.5 pl-5 pr-5 text-left transition-colors ${statusAccent[ctrl.status]} ${
                             isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/80"
                           }`}
@@ -738,31 +902,14 @@ export default function Controls() {
 
                         {isExpanded && (
                           <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                              <p className="min-w-0 flex-1 text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
-                              {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
-                                <button
-                                  onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
-                                  className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-700"
-                                >
-                                  View {findingLabel(ctrl.finding_count)}
-                                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                                  </svg>
-                                </button>
-                              )}
-                            </div>
-
-                            {ctrl.narrative ? (
-                              <div className="mt-4">
-                                <NarrativeBlock text={ctrl.narrative} />
-                              </div>
+                            {(ctrl.narrative || ctrl.description) ? (
+                              <QuestionnaireAnswerBlock control={ctrl} periodDays={period} />
                             ) : (
-                              <p className="mt-4 text-sm leading-relaxed text-zinc-600">{ctrl.description}</p>
+                              <p className="text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
                             )}
 
                             {connectedAccount && hasScanned && (
-                              <div className="mt-4">
+                              <div className={`${ctrl.narrative || ctrl.description ? "mt-4" : "mt-0"}`}>
                                 <EvidencePreviewPanel
                                   controlId={ctrl.control_id}
                                   accountId={connectedAccount.id}
@@ -772,8 +919,23 @@ export default function Controls() {
                             )}
 
                             {ctrl.check_ids.length > 0 && (
-                              <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-950/[0.03]">
+                              <div className="mt-4">
                                 <MappedChecksList checkIds={ctrl.check_ids} />
+                              </div>
+                            )}
+
+                            {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
+                              <div className="mt-4 border-t border-zinc-200/70 pt-4">
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
+                                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800"
+                                >
+                                  View {findingLabel(ctrl.finding_count)}
+                                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                                  </svg>
+                                </button>
                               </div>
                             )}
                           </div>
@@ -785,92 +947,6 @@ export default function Controls() {
               </div>
             )}
         </section>
-
-        <aside className="min-w-0 xl:sticky xl:top-8">
-          <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
-            <div className="border-b border-zinc-100 p-5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework</p>
-              <div className="mt-3 space-y-2">
-                {[
-                  { id: "soc2", label: "SOC 2", pct: soc2Rate.data },
-                  { id: "cis_aws_l1", label: "CIS AWS L1", pct: cisRate.data },
-                  { id: "iso27001", label: "ISO 27001", pct: isoRate.data },
-                ].map(({ id, label, pct }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => {
-                      setFramework(id);
-                      setSelectedFamilyKey(null);
-                      setExpanded(null);
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition ${
-                      framework === id ? "bg-zinc-100 ring-1 ring-zinc-200" : "hover:bg-zinc-50"
-                    }`}
-                  >
-                    <span className="w-[72px] shrink-0 text-xs font-semibold text-zinc-700">{label}</span>
-                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-100">
-                      <div
-                        className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
-                        style={{ width: `${pct ?? 0}%` }}
-                      />
-                    </div>
-                    <span className={`w-9 shrink-0 text-right text-xs font-bold tabular-nums ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
-                      {pct == null ? "—" : `${pct}%`}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-indigo-50/40 p-5">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
-              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-                {activeFramework.label} — INDEX.csv, JSON snapshots, PDF.
-              </p>
-
-              <label htmlFor="evidence-period" className="mt-4 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                Audit window
-              </label>
-              <select
-                id="evidence-period"
-                value={period}
-                onChange={(e) => setPeriod(Number(e.target.value))}
-                className="mt-1.5 w-full appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-              >
-                {AUDIT_WINDOWS.map((window) => (
-                  <option key={window.value} value={window.value}>
-                    {window.label}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={downloadPack}
-                disabled={downloading || !connectedAccount}
-                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {downloading ? (
-                  <>
-                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Generating…
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    Download ZIP
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </aside>
-      </div>
     </div>
   );
 }
