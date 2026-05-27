@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 18)_
+_Last updated: 2026-05-27 (session 19)_
 
 ---
 
@@ -146,7 +146,7 @@ only, and only to say it's out of scope.
 - Settings page (check enable/disable per group, weekly digest toggle + recipient email)
 - Account settings page (password + GitHub)
 - Reference page (`/reference`) — searchable table of all supported search keys, resource types, check IDs, ARN patterns
-- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Reference, Settings, Account, Sign out
+- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Timeline, Integrations, Settings, Account, Sign out
 
 ### Security
 - Rate limiting: signup 5/min, login 10/min (slowapi); MFA verify locks the account after 5 failures (10 min, escalating to 30 min)
@@ -242,8 +242,8 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 | Gap | Notes |
 |---|---|
 | CORS `*` in dev | locked to `API_PUBLIC_URL` in prod via `APP_ENV` |
-| CFN URL pinned to repo `main` | pin to release tag before beta |
-| No request-id / structured access logging | add before prod |
+| CFN URL pinned to repo `main` | pin to release tag before beta (`CFN_TEMPLATE_URL` env now exists) |
+| Collector permission errors silent in UI | surface when CFN stack is stale (session 18 collectors) |
 | Multi-account support | One-account limit removed; schema was already multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
 | `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
@@ -780,6 +780,9 @@ scope and intentionally absent from that list.
 
 **Remaining gaps after session 18 — see canonical list below.**
 
+**Session 19 additions (2026-05-27):**
+- **Nav reorder**: Findings above Compliance in sidebar — Findings is the stronger daily-driver surface; Compliance page is functional but minimal UI until a dedicated polish pass
+
 ---
 
 ## Canonical remaining work
@@ -791,24 +794,28 @@ work surfaces.
 
 **Founder-blocking (need a click, not code):**
 
-1. **Re-scan the connected AWS account** — populates `actions_json` for
+1. **Update CloudFormation stack** in the connected AWS account so the
+   read-only role includes the new permissions from session 18. Do this
+   *before* re-scan — without it, new collectors return empty (no error
+   surfaced to UI yet).
+2. **Re-scan the connected AWS account** — populates `actions_json` for
    least-privilege policy generation AND runs all 21 new gap checks.
    One button on Accounts page.
-2. **Update CloudFormation stack** in the connected AWS account so the
-   read-only role includes the new permissions from session 18. Without
-   this, new collectors return empty (no error surfaced to UI yet).
 
-**Product — the actual moat:**
+**Product — when Compliance UI is ready to lead:**
 
-3. **"What If I fix this?" blast-radius drawer tab** on IAM role findings.
-   (unchanged — see session 17 notes)
+3. **Compliance page polish** — richer control detail, better pass/fail
+   storytelling, stronger evidence preview. Nav can move Compliance back
+   above Findings once this lands.
 
 **Polish / minor:**
 
-4. Web bundle size warning (Vite). Split route bundles or accept.
-5. `ALLOW_SSO_SIGNUP=False` when signup funnel should be locked.
-6. Pin `CFN_TEMPLATE_URL` to versioned S3 object when YAML stabilises.
-7. Surface collector permission errors in scan UI when CFN stack is stale.
+4. **What If for session-18 gap checks** — 21 new checks not yet in
+   `BLAST_RADIUS_CHECKS` (core What If tab already ships for 38+ checks).
+5. Web bundle size warning (Vite). Split route bundles or accept.
+6. `ALLOW_SSO_SIGNUP=False` when signup funnel should be locked.
+7. Pin `CFN_TEMPLATE_URL` to versioned S3 object when YAML stabilises.
+8. Surface collector permission errors in scan UI when CFN stack is stale.
 
 ### Phase 3 — GitHub integration (3 weeks)
 
