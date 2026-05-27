@@ -5,7 +5,6 @@ import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
-import CfnPermissionsBanner from "../components/CfnPermissionsBanner";
 import { checkLabels } from "../data/checkLabels";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
@@ -650,9 +649,6 @@ export default function Findings() {
           finishing={scanProgress.finishing}
           indeterminate={scanProgress.indeterminate}
         />
-      )}
-      {!isScanActive && scanRun.data?.cfn_permissions_stale && (
-        <CfnPermissionsBanner cfnLaunchUrl={connectedAccount?.cfn_launch_url} className="mb-4" />
       )}
       {scanStatus === "error" && scanRun.data?.error && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

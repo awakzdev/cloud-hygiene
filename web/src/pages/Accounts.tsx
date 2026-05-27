@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import ScanProgressBar from "../components/ScanProgressBar";
 import ConfirmDialog from "../components/ConfirmDialog";
-import CfnPermissionsBanner from "../components/CfnPermissionsBanner";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Account = {
@@ -328,11 +327,6 @@ function AccountCard({
             indeterminate={scanProgress.indeterminate}
           />
         )}
-
-        {connected && !isScanActive && scanRun.data?.cfn_permissions_stale && (
-          <CfnPermissionsBanner cfnLaunchUrl={acc.cfn_launch_url} className="mt-2.5" />
-        )}
-
 
         {connected && !hasScanned && (
           <div className="mt-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 text-center text-xs text-zinc-500">

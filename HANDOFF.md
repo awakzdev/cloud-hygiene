@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 21)_
+_Last updated: 2026-05-27 (session 22)_
 
 ---
 
@@ -63,6 +63,7 @@ only, and only to say it's out of scope.
 | `iam.root.has_access_keys` | critical |
 | `iam.root.no_mfa` | critical |
 | `iam.user.no_mfa` | high |
+| `iam.user.direct_policy_attachment` | medium |
 | `iam.user.inactive_90d` | medium |
 | `iam.access_key.unused_90d` | high |
 | `iam.access_key.no_rotation_90d` | medium |
@@ -161,10 +162,10 @@ only, and only to say it's out of scope.
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
-- Migrations: 0001_init → … → 0024_ci_pipelines (latest)
+- Migrations: 0001_init → … → 0029_iam_user_policies (latest)
 - CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS/SecurityHub/Config/AccessAnalyzer/S3Control read permissions
-- pytest: 33 tests (check unit tests + botocore Stubber collector tests)
-- 46 checks total (36 AWS, 5 GitHub, 5 GitLab)
+- pytest: 101 tests (check unit tests + botocore Stubber collector tests)
+- 74 checks total (61 AWS, 13 GitHub/GitLab)
 
 ---
 
@@ -243,7 +244,6 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 |---|---|
 | CORS `*` in dev | locked to `API_PUBLIC_URL` in prod via `APP_ENV` |
 | CFN URL pinned to repo `main` | pin to release tag before beta (`CFN_TEMPLATE_URL` env now exists) |
-| Stale CFN stack | `cfn_permissions_stale` on scan + banner on Accounts/Findings when session-18 collectors all empty |
 | Multi-account support | One-account limit removed; schema was already multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
 | `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
@@ -785,10 +785,13 @@ scope and intentionally absent from that list.
 
 **Session 21 additions (2026-05-27):**
 - **What If**: all AWS + session-18 gap + GitHub/GitLab checks in `blastRadiusChecks.ts`; `iam.user.no_mfa`; identity blast-radius backend; gap-resource detail in drawer
-- **Stale CFN UX**: `cfn_permissions_stale` on scan stats + banner on Accounts/Findings
 - **Accounts**: two metric strips (findings | compliance)
 - **Scan progress**: removed `finish ~TIME` from progress bar
 - **Minor**: Vite `manualChunks`; `.env.example` notes for `ALLOW_SSO_SIGNUP` + `CFN_TEMPLATE_URL`
+
+**Session 22 additions (2026-05-27):**
+- **CIS 1.16** (`iam.user.direct_policy_attachment`): collector reads attached + inline user policies (migration `0029`); check flags direct user policy attachments; mapped to CIS 1.16 + What If tab
+- **Removed stale-CFN heuristic**: dropped `cfn_permissions_stale` flag, banner, and session-18 “all zeros” guess — empty Lambda/DynamoDB/etc. is normal when those services aren't used; CFN health is visible per-collector in scan stats if needed
 
 **Session 20 additions (2026-05-27)** — merged to `staging`:
 - **Compliance polish** (`feat/compliance-polish` → `staging`): framework pass-rate cards, status filters, questionnaire template (pass/fail/no_data), evidence preview, mapped checks grouping, duplicate summary line removed; Re-scan + Refresh removed from Compliance header
@@ -807,15 +810,19 @@ lists in this file are historical context only — when they conflict with
 this section, this section wins. Update *here* when items land or new
 work surfaces.
 
-**All product code from sessions 20–21 is shipped.** Remaining work is founder/AWS
-clicks only (plus optional prod env toggles when you deploy).
+**All product code from sessions 20–22 is shipped.** Remaining work is optional polish / distribution, not core AWS coverage.
 
 **Founder-blocking (need a click, not code):**
 
-1. **Update CloudFormation stack** in the connected AWS account (`infra/cfn/vigil-readonly-role.yaml` session-18 permissions). Use the launch URL on Accounts or the link in the stale-CFN banner.
-2. **Re-scan** — populates session-18 gap checks, `actions_json` for least-privilege, and clears `cfn_permissions_stale` when collectors return data.
+1. **Re-scan** after session-22 deploy — populates user policy columns for CIS 1.16 and refreshes compliance scores.
 
-**Shipped (sessions 20–21):** compliance polish · What If full coverage (`blastRadiusChecks.ts` + identity API) · stale CFN banner · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
+**Shipped (sessions 20–22):** compliance polish · What If full coverage · CIS 1.16 · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
+
+**AWS coverage snapshot (session 22):**
+- **61 AWS checks** across IAM, S3, KMS, CloudTrail, GuardDuty, Security Hub, Config, Access Analyzer, VPC/EC2/RDS, ACM, Lambda, Secrets Manager, SSM, ELB, DynamoDB, SNS, SQS
+- **55 mapped to at least one framework control** (SOC2 / CIS L1 / ISO 27001)
+- **6 findings-only** (no CIS/SOC2/ISO mapping yet): `lambda.function.*` (2), `acm.certificate.expiring`, `dynamodb.table.no_pitr`, `rds.instance.no_deletion_protection`, `rds.instance.no_multi_az`
+- **CIS L1**: automated for all mapped controls in `control_mappings.json`; full CIS benchmark is ~40+ items — many require manual evidence (password policy length, support role, etc.) or services we don't scan yet
 
 **Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object. Nav order (Findings 2nd) is intentional unless you want controls-first demos.
 

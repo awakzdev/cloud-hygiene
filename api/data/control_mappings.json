@@ -118,7 +118,9 @@
       "cloudtrail.trail.no_kms",
       "cloudtrail.trail.s3_bucket_public",
       "cloudtrail.trail.no_cloudwatch_logs",
-      "cloudtrail.trail.s3_bucket_no_logging"
+      "cloudtrail.trail.s3_bucket_no_logging",
+      "acm.certificate.expiring",
+      "lambda.function.deprecated_runtime"
     ]
   },
   {
@@ -126,12 +128,13 @@
     "control_id": "CC7.2",
     "title": "System Operations \u2014 Anomaly Detection",
     "description": "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives.",
-    "guidance": "Evidence: GuardDuty and Security Hub enabled in all regions. VPC Flow Logs enabled on all VPCs.",
+    "guidance": "Evidence: GuardDuty and Security Hub enabled in all regions. VPC Flow Logs enabled on all VPCs. Lambda functions have Dead Letter Queues configured so failed invocations are captured.",
     "checks": [
       "guardduty.detector.not_enabled",
       "aws.securityhub.not_enabled",
       "vpc.flow_logs.not_enabled",
-      "s3.bucket.no_logging"
+      "s3.bucket.no_logging",
+      "lambda.function.no_dlq"
     ]
   },
   {
@@ -402,7 +405,7 @@
     "control_id": "A.12.4.1",
     "title": "Event Logging",
     "description": "Event logs recording user activities, exceptions, faults and information security events shall be produced, kept and regularly reviewed.",
-    "guidance": "Evidence: CloudTrail is enabled with multi-region logging. VPC flow logs are enabled. GuardDuty is active and detecting threats.",
+    "guidance": "Evidence: CloudTrail is enabled with multi-region logging. VPC flow logs are enabled. GuardDuty is active and detecting threats. Lambda functions have DLQs configured to capture silent failures.",
     "checks": [
       "cloudtrail.trail.not_enabled",
       "cloudtrail.trail.no_log_validation",
@@ -411,7 +414,8 @@
       "s3.bucket.no_logging",
       "cloudtrail.trail.no_cloudwatch_logs",
       "cloudtrail.trail.s3_bucket_no_logging",
-      "elb.load_balancer.no_access_logs"
+      "elb.load_balancer.no_access_logs",
+      "lambda.function.no_dlq"
     ]
   },
   {
@@ -432,12 +436,14 @@
     "control_id": "A.12.6.1",
     "title": "Management of Technical Vulnerabilities",
     "description": "Information about technical vulnerabilities of systems being used shall be obtained in a timely fashion and appropriate measures taken.",
-    "guidance": "Evidence: Security Hub is enabled for centralised security findings. AWS Config maintains a continuous configuration change history. IAM Access Analyzer surfaces over-permissive cross-account access.",
+    "guidance": "Evidence: Security Hub is enabled for centralised security findings. AWS Config maintains a continuous configuration change history. IAM Access Analyzer surfaces over-permissive cross-account access. ACM certificates are monitored before expiry. Lambda runtimes are kept current.",
     "checks": [
       "aws.securityhub.not_enabled",
       "aws.config.not_enabled",
       "aws.access_analyzer.not_enabled",
-      "ec2.instance.imdsv2_not_required"
+      "ec2.instance.imdsv2_not_required",
+      "acm.certificate.expiring",
+      "lambda.function.deprecated_runtime"
     ]
   },
   {
@@ -513,6 +519,27 @@
     "guidance": "Automated check: cloudtrail.trail.s3_bucket_no_logging",
     "checks": [
       "cloudtrail.trail.s3_bucket_no_logging"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.12.3.1",
+    "title": "Information Backup",
+    "description": "Backup copies of information, software and system images shall be taken and tested regularly in accordance with an agreed backup policy.",
+    "guidance": "Evidence: RDS instances have deletion protection enabled to prevent accidental loss. DynamoDB tables have Point-in-Time Recovery enabled for continuous backup.",
+    "checks": [
+      "rds.instance.no_deletion_protection",
+      "dynamodb.table.no_pitr"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.17.2.1",
+    "title": "Availability of Information Processing Facilities",
+    "description": "Information processing facilities shall be implemented with redundancy sufficient to meet availability requirements.",
+    "guidance": "Evidence: RDS instances are deployed with Multi-AZ for automatic failover and high availability. Single-AZ deployments create a single point of failure.",
+    "checks": [
+      "rds.instance.no_multi_az"
     ]
   }
 ]

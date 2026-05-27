@@ -87,34 +87,6 @@ _CHECK_BY_ID = {mod.CHECK_ID: mod for mod in ALL_CHECKS}
 
 log = structlog.get_logger()
 
-# Collectors added in session 18 — all zero after a successful scan usually means
-# the customer's CFN stack was not updated with new read-only actions.
-SESSION_18_STAT_KEYS = (
-    "acm_certificates",
-    "lambda_functions",
-    "secrets_manager_secrets",
-    "ssm_parameters",
-    "elb_load_balancers",
-    "dynamodb_tables",
-    "sns_topics",
-    "sqs_queues",
-    "ebs_snapshots",
-    "ec2_amis",
-)
-
-
-def _cfn_permissions_likely_stale(stats: dict) -> bool:
-    """True only when the account clearly has baseline resources but *every*
-    session-18 collector returned zero — usually stale CFN, sometimes an empty
-    account with no Lambda/DynamoDB/etc. If any session-18 collector has data,
-    permissions are fine (empty counts just mean no resources)."""
-    has_baseline = (stats.get("s3_buckets") or 0) > 0 or (stats.get("ec2_instances") or 0) > 0
-    if not has_baseline:
-        return False
-    hits = sum(1 for k in SESSION_18_STAT_KEYS if (stats.get(k) or 0) > 0)
-    return hits == 0
-
-
 def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
     """Snapshot all collected entities for this scan run into evidence_snapshots."""
     snaps = []
@@ -550,11 +522,6 @@ def run_scan(account_id: str) -> dict:
             "drafts": len(drafts),
             "snapshots": snap_count,
         }
-        if _cfn_permissions_likely_stale(stats):
-            final_stats["cfn_permissions_stale"] = True
-        final_stats["session_18_collectors_with_data"] = sum(
-            1 for k in SESSION_18_STAT_KEYS if (stats.get(k) or 0) > 0
-        )
         if check_errors:
             final_stats["check_errors"] = check_errors
         run.stats = final_stats

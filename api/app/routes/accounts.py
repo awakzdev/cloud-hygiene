@@ -184,7 +184,6 @@ class ScanRunOut(BaseModel):
     error_type: str | None = None  # exception class name
     findings_opened: int
     findings_resolved: int
-    cfn_permissions_stale: bool = False
 
 
 @router.get("/{account_id}/scan-runs/latest", response_model=ScanRunOut | None)
@@ -211,7 +210,6 @@ def latest_scan_run(account_id: str, p=Depends(current_principal), db: Session =
         error_type=stats.get("error_type"),
         findings_opened=run.findings_opened or 0,
         findings_resolved=run.findings_resolved or 0,
-        cfn_permissions_stale=bool(stats.get("cfn_permissions_stale")),
     )
 
 
