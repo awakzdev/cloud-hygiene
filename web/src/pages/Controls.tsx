@@ -363,7 +363,6 @@ export default function Controls() {
   const [downloading, setDownloading] = useState(false);
   const [period, setPeriod] = useState(90);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [search, setSearch] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [scanTriggered, setScanTriggered] = useState(false);
   const prevScanStatus = useRef<string | null>(null);
@@ -447,19 +446,7 @@ export default function Controls() {
     [rows, statusFilter]
   );
 
-  const searchedRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return filteredRows;
-    return filteredRows.filter(
-      (r) =>
-        r.control_id.toLowerCase().includes(q) ||
-        r.title.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        (r.narrative?.toLowerCase().includes(q) ?? false)
-    );
-  }, [filteredRows, search]);
-
-  const groupedRows = useMemo(() => groupControls(searchedRows, framework), [searchedRows, framework]);
+  const groupedRows = useMemo(() => groupControls(filteredRows, framework), [filteredRows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
 
   function openControl(ctrl: ControlRow) {
@@ -598,60 +585,38 @@ export default function Controls() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_288px]">
-        <div className="min-w-0 order-2 space-y-5 xl:order-1">
-          {/* Summary stats */}
-          {controls.isLoading && <LoadingSkeleton />}
+      {controls.isLoading && <LoadingSkeleton />}
 
-          {!controls.isLoading && total > 0 && (
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
-                {(
-                  [
-                    { id: "all" as const, label: "All", count: total },
-                    { id: "fail" as const, label: "Failing", count: failed },
-                    { id: "pass" as const, label: "Passing", count: passed },
-                    { id: "no_data" as const, label: "No data", count: noData },
-                  ] as const
-                ).map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => {
-                      setStatusFilter(f.id);
-                      setExpanded(null);
-                    }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                      statusFilter === f.id
-                        ? "bg-zinc-900 text-white"
-                        : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
-                    }`}
-                  >
-                    {f.label}
-                    <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="relative min-w-[200px] sm:max-w-xs sm:flex-1">
-                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
-                </svg>
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setExpanded(null);
-                  }}
-                  placeholder="Search controls…"
-                  className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-            </div>
-          )}
-
-          {topBlocker && statusFilter !== "pass" && !controls.isLoading && total > 0 && (
+      {!controls.isLoading && total > 0 && (
+        <div className="mb-4 space-y-2">
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
+            {(
+              [
+                { id: "all" as const, label: "All", count: total },
+                { id: "fail" as const, label: "Failing", count: failed },
+                { id: "pass" as const, label: "Passing", count: passed },
+                { id: "no_data" as const, label: "No data", count: noData },
+              ] as const
+            ).map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => {
+                  setStatusFilter(f.id);
+                  setExpanded(null);
+                }}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                  statusFilter === f.id
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+                }`}
+              >
+                {f.label}
+                <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
+              </button>
+            ))}
+          </div>
+          {topBlocker && statusFilter !== "pass" && (
             <p className="text-xs text-zinc-500">
               Top blocker:{" "}
               <button
@@ -667,27 +632,23 @@ export default function Controls() {
               {" "}({findingLabel(topBlocker.finding_count)})
             </p>
           )}
+        </div>
+      )}
 
-          {/* Control list */}
-          <section>
-            {!controls.isLoading && rows.length > 0 && searchedRows.length === 0 && (
-              <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400 shadow-sm">
-                No controls match your search.
-              </div>
-            )}
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_272px]">
+        <section className="min-w-0">
+          {!controls.isLoading && rows.length === 0 && (
+            <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
+              No controls found for this framework.
+            </div>
+          )}
+          {!controls.isLoading && rows.length > 0 && filteredRows.length === 0 && statusFilter !== "all" && (
+            <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400 shadow-sm">
+              No controls match this filter.
+            </div>
+          )}
 
-            {!controls.isLoading && rows.length === 0 && (
-              <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
-                No controls found for this framework.
-              </div>
-            )}
-            {!controls.isLoading && rows.length > 0 && filteredRows.length === 0 && statusFilter !== "all" && (
-              <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400 shadow-sm">
-                No controls match this filter.
-              </div>
-            )}
-
-            {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
+          {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
               <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
                 <div className="flex flex-col gap-3 border-b border-zinc-100 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                   <div
@@ -823,90 +784,90 @@ export default function Controls() {
                 </div>
               </div>
             )}
-          </section>
-        </div>
+        </section>
 
-        {/* Sidebar — evidence pack first on mobile */}
-        <aside className="order-1 space-y-4 xl:order-2 xl:sticky xl:top-8 xl:self-start">
-          <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm shadow-zinc-950/[0.04]">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework</p>
-            <div className="mt-4 space-y-3">
-              {[
-                { id: "soc2", label: "SOC 2", pct: soc2Rate.data },
-                { id: "cis_aws_l1", label: "CIS AWS L1", pct: cisRate.data },
-                { id: "iso27001", label: "ISO 27001", pct: isoRate.data },
-              ].map(({ id, label, pct }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => {
-                    setFramework(id);
-                    setSelectedFamilyKey(null);
-                    setExpanded(null);
-                  }}
-                  className={`flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition ${
-                    framework === id ? "bg-zinc-50 ring-1 ring-zinc-200" : "hover:bg-zinc-50/80"
-                  }`}
-                >
-                  <span className="w-[72px] shrink-0 text-xs font-semibold text-zinc-700">{label}</span>
-                  <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-100">
-                    <div
-                      className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
-                      style={{ width: `${pct ?? 0}%` }}
-                    />
-                  </div>
-                  <span className={`w-9 shrink-0 text-right text-xs font-bold tabular-nums ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
-                    {pct == null ? "—" : `${pct}%`}
-                  </span>
-                </button>
-              ))}
+        <aside className="min-w-0 xl:sticky xl:top-8">
+          <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
+            <div className="border-b border-zinc-100 p-5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework</p>
+              <div className="mt-3 space-y-2">
+                {[
+                  { id: "soc2", label: "SOC 2", pct: soc2Rate.data },
+                  { id: "cis_aws_l1", label: "CIS AWS L1", pct: cisRate.data },
+                  { id: "iso27001", label: "ISO 27001", pct: isoRate.data },
+                ].map(({ id, label, pct }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setFramework(id);
+                      setSelectedFamilyKey(null);
+                      setExpanded(null);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition ${
+                      framework === id ? "bg-zinc-100 ring-1 ring-zinc-200" : "hover:bg-zinc-50"
+                    }`}
+                  >
+                    <span className="w-[72px] shrink-0 text-xs font-semibold text-zinc-700">{label}</span>
+                    <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-zinc-100">
+                      <div
+                        className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
+                        style={{ width: `${pct ?? 0}%` }}
+                      />
+                    </div>
+                    <span className={`w-9 shrink-0 text-right text-xs font-bold tabular-nums ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
+                      {pct == null ? "—" : `${pct}%`}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/80 to-white p-5 shadow-sm shadow-indigo-950/[0.04]">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
-            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-              {activeFramework.label} ZIP — INDEX.csv, per-control JSON, PDF report.
-            </p>
+            <div className="bg-indigo-50/40 p-5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
+              <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+                {activeFramework.label} — INDEX.csv, JSON snapshots, PDF.
+              </p>
 
-            <label htmlFor="evidence-period" className="mt-4 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-              Audit window
-            </label>
-            <select
-              id="evidence-period"
-              value={period}
-              onChange={(e) => setPeriod(Number(e.target.value))}
-              className="mt-1.5 w-full appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-            >
-              {AUDIT_WINDOWS.map((window) => (
-                <option key={window.value} value={window.value}>
-                  {window.label}
-                </option>
-              ))}
-            </select>
+              <label htmlFor="evidence-period" className="mt-4 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                Audit window
+              </label>
+              <select
+                id="evidence-period"
+                value={period}
+                onChange={(e) => setPeriod(Number(e.target.value))}
+                className="mt-1.5 w-full appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+              >
+                {AUDIT_WINDOWS.map((window) => (
+                  <option key={window.value} value={window.value}>
+                    {window.label}
+                  </option>
+                ))}
+              </select>
 
-            <button
-              onClick={downloadPack}
-              disabled={downloading || !connectedAccount}
-              className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {downloading ? (
-                <>
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Generating…
-                </>
-              ) : (
-                <>
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  Download ZIP
-                </>
-              )}
-            </button>
+              <button
+                onClick={downloadPack}
+                disabled={downloading || !connectedAccount}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {downloading ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Generating…
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download ZIP
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </aside>
       </div>
