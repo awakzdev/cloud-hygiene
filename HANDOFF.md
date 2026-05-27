@@ -804,9 +804,10 @@ work surfaces.
 
 **Product — when Compliance UI is ready to lead:**
 
-3. **Compliance page polish** — richer control detail, better pass/fail
-   storytelling, stronger evidence preview. Nav can move Compliance back
-   above Findings once this lands.
+3. ~~**Compliance page polish**~~ — **in progress** (`feat/compliance-polish`): pass-rate
+   stats, status filters, audit narrative copy, evidence preview per control,
+   evidence pack sidebar. Nav can move Compliance back above Findings once
+   this lands.
 
 **Polish / minor:**
 
