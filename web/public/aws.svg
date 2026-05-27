@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="10" fill="#232F3E"/>
-  <text x="32" y="36" font-family="Arial,sans-serif" font-size="17" font-weight="bold" fill="#FF9900" text-anchor="middle" letter-spacing="1.5">aws</text>
-  <path d="M19 45 Q32 52 45 45" stroke="#FF9900" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-  <path d="M43 42 L46 45 L43 47" stroke="#FF9900" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- "a" -->
+  <path fill="#FF9900" d="M13 38l5.5-14h2.2l5.5 14h-2.3l-1.3-3.5h-6l-1.3 3.5H13zm4.2-5.3h4.6l-2.3-6.2-2.3 6.2z"/>
+  <!-- "w" -->
+  <path fill="#FF9900" d="M27 24h2.2l2.8 10.2L34.8 24H37l2.8 10.2L42.6 24h2.2l-3.8 14h-2.2l-2.8-10.2L33.2 38H31l-4-14z"/>
+  <!-- "s" -->
+  <path fill="#FF9900" d="M46 35.5l1.7-1.2c.7 1.4 1.8 2.1 3.2 2.1 1.4 0 2.2-.6 2.2-1.6 0-.9-.6-1.4-2.4-1.9l-.9-.3c-2.1-.6-3.2-1.8-3.2-3.5 0-2 1.6-3.3 3.9-3.3 1.7 0 3 .6 3.9 1.9l-1.6 1.2c-.6-.9-1.4-1.4-2.4-1.4-1.1 0-1.8.5-1.8 1.4 0 .8.5 1.3 2.1 1.8l.9.3c2.3.7 3.5 1.8 3.5 3.6 0 2.1-1.7 3.5-4.3 3.5-2 0-3.6-.9-4.8-2.6z"/>
+  <!-- swoosh arrow -->
+  <path fill="#FF9900" d="M15 44 Q32 52 49 44 L47 42 Q32 49.5 17 42 Z"/>
 </svg>

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import ScanProgressBar from "../components/ScanProgressBar";
+import ConfirmDialog from "../components/ConfirmDialog";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Account = {
@@ -18,12 +19,12 @@ type Finding = { id: string; account_id: string; severity: string; status: strin
 
 type FindingStats = { critHigh: number; medium: number; open: number };
 
-function AwsIcon({ className = "h-5 w-5" }: { className?: string }) {
+function AwsIcon({ className = "h-8 w-full" }: { className?: string }) {
   return (
     <img
-      src="https://www.google.com/s2/favicons?domain=aws.amazon.com&sz=64"
-      alt=""
-      className={`object-contain ${className}`}
+      src="/aws.png"
+      alt="AWS"
+      className={`object-contain object-center ${className}`}
     />
   );
 }
@@ -157,6 +158,7 @@ function AccountCard({
   const qc = useQueryClient();
   const [roleArn, setRoleArn] = useState("");
   const [showUpdateArn, setShowUpdateArn] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
 
   const connected = acc.status === "connected";
   const hasScanned = connected && !!acc.last_scan_at;
@@ -192,7 +194,10 @@ function AccountCard({
 
   const remove = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+    onSuccess: () => {
+      setShowRemoveConfirm(false);
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
   });
 
   const lastScan = formatLastScan(acc.last_scan_at);
@@ -205,102 +210,100 @@ function AccountCard({
     <div
       className={`${cardClass} ${!connected ? "border-l-[3px] border-l-amber-300" : ""} ${expanded ? "ring-2 ring-indigo-500/15" : ""}`}
     >
-      <div className="p-4">
+      <div className="px-4 py-3">
         {/* Header row */}
-        <div className="flex gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 ring-1 ring-orange-100/80">
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-10 w-20 shrink-0 items-center justify-center rounded-xl bg-white px-2 ring-1 ring-zinc-200/90 shadow-sm">
             <AwsIcon />
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <h2 className="truncate text-[15px] font-medium tracking-[-0.01em] text-zinc-900">{acc.label}</h2>
-                  <span className={connected ? "inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700" : "inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700"}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-indigo-400" : "bg-amber-400"}`} />
-                    {connected ? "Connected" : "Setup needed"}
+          <div className="flex min-w-0 flex-1 items-end justify-between gap-2">
+            <div className="min-w-0 space-y-2">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <h2 className="truncate text-base font-medium leading-snug tracking-[-0.01em] text-zinc-900">
+                  {acc.label}
+                </h2>
+                {!connected && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-amber-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                    Setup needed
                   </span>
-                  {isScanActive && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600">
-                      <svg className="h-2.5 w-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      {isRunning ? "Scanning" : "Starting"}
-                    </span>
-                  )}
-                </div>
+                )}
+                {isScanActive && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium leading-none text-indigo-600">
+                    <svg className="h-2.5 w-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    {isRunning ? "Scanning" : "Starting"}
+                  </span>
+                )}
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
-                {connected && (
-                  <button
-                    onClick={() => triggerScan(acc.id)}
-                    disabled={isScanActive}
-                    className={cardRescanBtn}
-                  >
-                    <svg
-                      className={`h-3.5 w-3.5 ${isScanActive ? "animate-spin" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
-                    {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Re-scan"}
-                  </button>
-                )}
+              {acc.account_id && (
+                <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-xs">
+                  <span className="font-mono tabular-nums text-zinc-600">{acc.account_id}</span>
+                  {connected &&
+                    (isScanActive ? (
+                      <span className="shrink-0 font-medium text-indigo-600">
+                        {isRunning ? "Scanning now" : "Starting scan"}
+                      </span>
+                    ) : lastScan ? (
+                      <span className="shrink-0 text-zinc-500">Last scan {lastScan}</span>
+                    ) : null)}
+                </div>
+              )}
+              {!connected && (
+                <p className="text-xs leading-normal text-zinc-500">Deploy the CloudFormation stack to connect.</p>
+              )}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {connected && (
                 <button
-                  type="button"
-                  onClick={onToggle}
-                  className={cardActionBtn}
-                  aria-expanded={expanded}
-                  aria-label={expanded ? "Collapse details" : "Expand details"}
+                  onClick={() => triggerScan(acc.id)}
+                  disabled={isScanActive}
+                  className={cardRescanBtn}
                 >
                   <svg
-                    className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+                    className={`h-3.5 w-3.5 ${isScanActive ? "animate-spin" : ""}`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
                   </svg>
+                  {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Re-scan"}
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={onToggle}
+                className={cardActionBtn}
+                aria-expanded={expanded}
+                aria-label={expanded ? "Collapse details" : "Expand details"}
+              >
+                <svg
+                  className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
             </div>
-
-            {acc.account_id && (
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-zinc-500">
-                <span className="font-mono">{acc.account_id}</span>
-                {connected && (
-                  <>
-                    <span className="text-zinc-300">·</span>
-                    {isScanActive ? (
-                      <span className="font-medium text-indigo-600">
-                        {isRunning ? "Scanning now" : "Starting scan"}
-                      </span>
-                    ) : lastScan ? (
-                      <span>Last scan {lastScan}</span>
-                    ) : null}
-                  </>
-                )}
-              </p>
-            )}
-            {!connected && (
-              <p className="mt-1 text-xs text-zinc-500">Deploy the CloudFormation stack to connect.</p>
-            )}
           </div>
         </div>
 
         {connected && isScanActive && (
           <ScanProgressBar
-            className="mt-3"
+            className="mt-2.5"
             phase={isRunning ? "running" : "starting"}
             progress={scanProgress.progress}
             elapsedMs={scanProgress.elapsedMs}
@@ -312,7 +315,7 @@ function AccountCard({
 
         {/* Posture strip — visible when scanned, no expand needed */}
         {hasStats && (
-          <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-4">
+          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-3">
             <StatPill value={critHigh} label="Crit + high" highlight={critHigh > 0} />
             <StatPill value={medium} label="Medium" />
             <StatPill value={open} label="Open" href="/findings" highlight />
@@ -332,7 +335,7 @@ function AccountCard({
       </div>
 
       {expanded && (
-        <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-4 text-xs">
+        <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5 text-xs">
           {!connected ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-3">
@@ -404,7 +407,7 @@ function AccountCard({
               </div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {scanStatus === "error" && scanRun.data?.error && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
                   <span className="font-medium">Last scan failed</span>
@@ -461,9 +464,8 @@ function AccountCard({
                     Update role
                   </button>
                   <button
-                    onClick={() => {
-                      if (confirm("Remove this account? All findings will be deleted.")) remove.mutate();
-                    }}
+                    type="button"
+                    onClick={() => setShowRemoveConfirm(true)}
                     disabled={remove.isPending}
                     className={dangerBtn}
                   >
@@ -475,6 +477,17 @@ function AccountCard({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={showRemoveConfirm}
+        title="Remove this account?"
+        description={`${acc.label} and all associated findings, scan history, and evidence will be permanently deleted. This cannot be undone.`}
+        confirmLabel="Remove account"
+        variant="danger"
+        loading={remove.isPending}
+        onCancel={() => !remove.isPending && setShowRemoveConfirm(false)}
+        onConfirm={() => remove.mutate()}
+      />
     </div>
   );
 }
@@ -545,8 +558,8 @@ export default function Accounts() {
 
       {accs.length === 0 && !accounts.isLoading && (
         <div className={`${cardClass} max-w-lg p-6`}>
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-zinc-100 bg-zinc-50 ring-1 ring-orange-500/20">
-            <AwsIcon className="h-6 w-6" />
+          <div className="flex h-10 w-20 items-center justify-center rounded-2xl bg-white px-2 ring-1 ring-zinc-200/90 shadow-sm">
+            <AwsIcon />
           </div>
           <h2 className="mt-4 text-lg font-medium tracking-[-0.01em] text-zinc-900">Connect your first AWS account</h2>
           <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">
