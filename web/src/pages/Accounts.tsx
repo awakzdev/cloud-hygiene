@@ -20,6 +20,18 @@ type ScanRun = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+  failed_at?: string | null;
+  error_type?: string | null;
+};
+
+type AssumeRoleAuditEntry = {
+  id: string;
+  called_at: string;
+  purpose: string | null;
+  session_name: string | null;
+  success: boolean;
+  error_code: string | null;
+  error_message: string | null;
 };
 
 function AwsProviderIcon() {
@@ -53,6 +65,89 @@ function scoreColor(pct: number | null | undefined): string {
   if (pct >= 50) return "bg-emerald-500";
   return "bg-emerald-400";
 }
+
+function AssumeRoleAuditPanel({ accountId }: { accountId: string }) {
+  const [open, setOpen] = useState(false);
+  const audit = useQuery({
+    queryKey: ["assume-role-audit", accountId],
+    queryFn: () => api<AssumeRoleAuditEntry[]>(`/v1/accounts/${accountId}/assume-role-audit?limit=50`),
+    enabled: open,
+    refetchInterval: open ? 30000 : false,
+  });
+
+  const rows = audit.data ?? [];
+  return (
+    <div className="border-t border-zinc-100">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-5 py-2.5 text-left text-xs font-medium text-zinc-500 transition hover:bg-zinc-50"
+      >
+        <span className="inline-flex items-center gap-2">
+          <svg className={`h-3 w-3 transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          AWS activity (every sts:AssumeRole Vigil ran on this account)
+        </span>
+        {open && rows.length > 0 && (
+          <span className="text-[11px] text-zinc-400 tabular-nums">{rows.length} event{rows.length === 1 ? "" : "s"}</span>
+        )}
+      </button>
+      {open && (
+        <div className="border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
+          {audit.isLoading ? (
+            <p className="text-xs text-zinc-400">Loading…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-xs text-zinc-400">No activity recorded yet.</p>
+          ) : (
+            <div className="max-h-72 overflow-y-auto rounded-lg border border-zinc-200 bg-white">
+              <table className="w-full text-[11px]">
+                <thead className="sticky top-0 bg-zinc-50 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">When</th>
+                    <th className="px-3 py-2 font-semibold">Purpose</th>
+                    <th className="px-3 py-2 font-semibold">Result</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {rows.map((r) => (
+                    <tr key={r.id} className="hover:bg-zinc-50/50">
+                      <td className="whitespace-nowrap px-3 py-1.5 tabular-nums text-zinc-600">{formatAuditTime(r.called_at)}</td>
+                      <td className="px-3 py-1.5 font-mono text-zinc-700">{r.purpose ?? r.session_name ?? "—"}</td>
+                      <td className="px-3 py-1.5">
+                        {r.success ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-600">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            ok
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-red-600" title={r.error_message ?? undefined}>
+                            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                            {r.error_code ?? "error"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatAuditTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const ms = now.getTime() - d.getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return d.toLocaleString();
+}
+
 
 function AccountCard({ acc, findingsData, onRemoved }: {
   acc: Account;
@@ -278,7 +373,17 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 
             {scanStatus === "error" && scanRun.data?.error && (
               <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                <span className="font-semibold">Last scan failed:</span> {scanRun.data.error}
+                <div>
+                  <span className="font-semibold">Last scan failed</span>
+                  {scanRun.data.failed_at && (
+                    <> at step <code className="rounded bg-red-100 px-1 py-0.5 font-mono">{scanRun.data.failed_at}</code></>
+                  )}
+                  {scanRun.data.error_type && (
+                    <> ({scanRun.data.error_type})</>
+                  )}
+                  :
+                </div>
+                <div className="mt-1 line-clamp-3 break-words text-[11px] text-red-700/90">{scanRun.data.error}</div>
               </div>
             )}
 
@@ -317,6 +422,8 @@ function AccountCard({ acc, findingsData, onRemoved }: {
                 {remove.isPending ? "Removing…" : "Remove account"}
               </button>
             </div>
+
+            <AssumeRoleAuditPanel accountId={acc.id} />
           </div>
         )}
       </div>

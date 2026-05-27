@@ -31,6 +31,10 @@ celery_app.conf.update(
             "task": "app.worker.tasks.send_weekly_digests",
             "schedule": crontab(hour=9, minute=0, day_of_week=1),  # Monday 9am UTC
         },
+        "prune-assume-role-audit": {
+            "task": "app.worker.tasks.prune_assume_role_audit",
+            "schedule": crontab(hour=4, minute=30),  # daily 04:30 UTC, off-hours
+        },
     },
 )
 

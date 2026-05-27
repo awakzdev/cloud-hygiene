@@ -23,7 +23,7 @@ from app.collectors.access_analyzer import collect_access_analyzer
 from app.collectors.config_service import collect_config_service
 from app.collectors.securityhub import collect_securityhub
 from app.core.db import SessionLocal
-from app.models import AwsAccount, ScanRun, EvidenceSnapshot, Finding
+from app.models import AssumeRoleAudit, AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
 from app.models.resources import (
     AccessAnalyzer,
@@ -399,11 +399,13 @@ def run_scan(account_id: str) -> dict:
             acc_uuid = uuid.UUID(account_id)
         except ValueError:
             log.warning("scan.bad_account_id", account_id=account_id)
+            db.close()
             return {"ok": False, "error": "invalid account id"}
 
         acc = db.get(AwsAccount, acc_uuid)
         if not acc:
             log.warning("scan.account_not_found", account_id=account_id)
+            db.close()
             return {"ok": False, "error": "account not found"}
 
         run = ScanRun(id=uuid.uuid4(), account_id=acc.id, status="running")
@@ -649,6 +651,35 @@ def reap_stuck_scan_runs(max_age_minutes: int = 30) -> dict:
             db.commit()
             log.info("reap_stuck_scan_runs", count=len(stale), max_age_minutes=max_age_minutes)
         return {"reaped": len(stale)}
+    finally:
+        db.close()
+
+
+@celery_app.task(name="app.worker.tasks.prune_assume_role_audit")
+def prune_assume_role_audit(retention_days: int = 365) -> dict:
+    """Delete assume_role_audit rows older than `retention_days` (default 1 year).
+
+    Customer-facing audit log doesn't need to live forever — most disputes
+    are resolved within weeks. 1y retention keeps the table small and is
+    long enough for any reasonable SOC2 evidence window.
+    """
+    from sqlalchemy import delete as sql_delete
+
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(
+            sql_delete(AssumeRoleAudit).where(AssumeRoleAudit.called_at < cutoff)
+        )
+        deleted = result.rowcount or 0
+        db.commit()
+        if deleted:
+            log.info("prune_assume_role_audit", deleted=deleted, retention_days=retention_days)
+        return {"deleted": deleted, "retention_days": retention_days}
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("prune_assume_role_audit.failed")
+        return {"ok": False, "deleted": 0}
     finally:
         db.close()
 

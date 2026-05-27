@@ -550,7 +550,7 @@ export default function Findings() {
 
   const scanRun = useQuery({
     queryKey: ["scan-run-latest", connectedId],
-    queryFn: () => connectedId ? api<{ id: string; status: string; started_at: string; finished_at: string | null; error: string | null } | null>(`/v1/accounts/${connectedId}/scan-runs/latest`) : null,
+    queryFn: () => connectedId ? api<{ id: string; status: string; started_at: string; finished_at: string | null; error: string | null; failed_at?: string | null; error_type?: string | null } | null>(`/v1/accounts/${connectedId}/scan-runs/latest`) : null,
     enabled: !!connectedId,
     refetchInterval: (query) => query.state.data?.status === "running" ? 5000 : false,
   });
@@ -721,7 +721,19 @@ export default function Findings() {
           indeterminate={scanProgress.indeterminate}
         />
       )}
-      {scanStatus === "error" && scanRun.data?.error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span className="font-semibold">Last scan failed:</span> {scanRun.data.error}</div>}
+      {scanStatus === "error" && scanRun.data?.error && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div>
+            <span className="font-semibold">Last scan failed</span>
+            {scanRun.data.failed_at && (
+              <> at step <code className="rounded bg-red-100 px-1 py-0.5 font-mono text-xs">{scanRun.data.failed_at}</code></>
+            )}
+            {scanRun.data.error_type && <> ({scanRun.data.error_type})</>}
+            :
+          </div>
+          <div className="mt-1 line-clamp-3 break-words text-xs text-red-700/90">{scanRun.data.error}</div>
+        </div>
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => (

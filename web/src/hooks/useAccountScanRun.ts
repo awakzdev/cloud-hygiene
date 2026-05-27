@@ -7,6 +7,10 @@ export type ScanRun = {
   started_at: string;
   finished_at: string | null;
   error: string | null;
+  failed_at?: string | null;
+  error_type?: string | null;
+  findings_opened?: number;
+  findings_resolved?: number;
 };
 
 export function useAccountScanRun(accountId: string | null | undefined) {

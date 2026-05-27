@@ -724,12 +724,13 @@ policy analysis, onboarding empty state.
 6. Some scan_runs drop into `error` immediately on first start with no detail — root-cause once a stable AWS sandbox exists
 7. Login-flow orphan creation: signing in via GitLab/Google with an email that doesn't match an existing user still creates a brand-new user+org. Auto-claim only fires on the *link* flow. Consider gating login-flow signup behind explicit "create new account" intent (low priority — orphan-claim already mops up the symptom)
 
-**Session 17 additions (2026-05-27)** — pre-prod hygiene pass:
-- **Scan error capture**: every collector + check phase in `run_scan` is now tagged with a `step` name; on failure the step + truncated traceback land in `scan_runs.error` and `scan_runs.stats.failed_at`/`error_type`. Per-check failures are isolated (one bad check no longer kills the whole scan — error is appended to `stats.check_errors` and the rest of the checks still run). Latest scan-runs API exposes `failed_at` + `error_type` so the UI can surface "Collector X failed: SomeError" instead of an opaque traceback.
+**Session 17 additions (2026-05-27)** — pre-prod hygiene pass (end-to-end):
+- **Scan error capture**: every collector + check phase in `run_scan` is now tagged with a `step` name; on failure the step + truncated traceback land in `scan_runs.error` and `scan_runs.stats.failed_at`/`error_type`. Per-check failures are isolated (one bad check no longer kills the whole scan — error is appended to `stats.check_errors` and the rest of the checks still run). Latest scan-runs API exposes `failed_at` + `error_type`; Accounts + Findings pages render `Last scan failed at step <collector_name> (<ErrorType>):` instead of an opaque traceback.
 - **Request-id middleware**: every HTTP request gets an `X-Request-Id` (honours inbound headers from a proxy; otherwise generates a UUID4 hex). The id is bound to structlog's contextvars so every log line emitted during the request carries `request_id=`. Single `http.request` log line per request with `method/path/status/duration_ms/remote`; `/healthz` is silenced. Response carries the same id so clients/Caddy/Cloudflare can correlate. Trusts `X-Forwarded-For` only in non-dev.
 - **CFN template URL configurable**: `settings.CFN_TEMPLATE_URL` (env: `CFN_TEMPLATE_URL`) replaces the hard-coded constant in `accounts.py`. Default still points at the dev S3 location; production should pin to a versioned object so launched-yesterday vs launched-today stacks reference the same template. `.env.example` updated with a comment.
-- **AssumeRole audit log**: new `assume_role_audit` table (migration `0027`) — one row per `sts:AssumeRole` call with `org_id`, `aws_account_id`, `role_arn`, `session_name`, `purpose`, `success`, `error_code`, `error_message`, `called_at`. `app/core/aws.py` writes to it on every call (success or failure) using an isolated session so the audit row survives even when the caller rolls back. All 16 collector/check call sites pass `aws_account=acc, purpose="..."`. New customer-facing endpoint `GET /v1/accounts/{id}/assume-role-audit` returns the latest events (default 100, max 500) for that account. Migration applied locally.
+- **AssumeRole audit log**: new `assume_role_audit` table (migration `0027`) — one row per `sts:AssumeRole` call with `org_id`, `aws_account_id`, `role_arn`, `session_name`, `purpose`, `success`, `error_code`, `error_message`, `called_at`. `app/core/aws.py` writes to it on every call (success or failure) using an isolated session so the audit row survives even when the caller rolls back. All 16 collector/check call sites pass `aws_account=acc, purpose="..."`. Customer-facing endpoint `GET /v1/accounts/{id}/assume-role-audit` returns the latest events (default 100, max 500). Accounts page now has an expandable "AWS activity" panel per account that renders the last 50 events in a compact table. Migration applied locally. Daily Celery task `prune_assume_role_audit` (beat: 04:30 UTC) deletes rows older than `retention_days` (default 365).
 - **SSO signup logging + gate**: every login-flow that creates a new user+org for GitHub/GitLab/Google emits `oauth.signup.new_org` (provider, email, IdP id, org id, user id). Email-match → IdP attach is logged as `oauth.idp_attached_by_email`. New config flag `ALLOW_SSO_SIGNUP` (default `True`) — when set to `False`, the login-flow returns `?error=no_account_for_idp` instead of creating a new user+org. Login page has a friendly message for the new error code.
+- **Tests**: 7 new (75 total passing). Coverage: assume_role audit success/ClientError/generic-exception/audit-write-failure-swallowed paths, run_scan invalid-UUID + account-not-found early bailouts, per-check failure isolation.
 
 **Remaining gaps after session 17:**
 
@@ -737,8 +738,7 @@ policy analysis, onboarding empty state.
 2. Hetzner deploy (deferred)
 3. Stripe (deferred)
 4. Re-scan production account to populate action-level `actions_json` after collector fix
-5. Frontend: surface `failed_at`/`error_type` on the scan progress UI, render assume-role audit page on Account settings
-6. Once a Hetzner deploy lands: switch `ALLOW_SSO_SIGNUP=False` to lock the signup funnel
+5. Once a Hetzner deploy lands: switch `ALLOW_SSO_SIGNUP=False` to lock the signup funnel
 
 ### Phase 3 — GitHub integration (3 weeks)
 
