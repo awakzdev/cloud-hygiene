@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 
 type Account = {
@@ -13,6 +13,14 @@ type Account = {
 };
 
 type Finding = { id: string; severity: string; status: string };
+
+type ScanRun = {
+  id: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+};
 
 function AwsProviderIcon() {
   return (
@@ -53,17 +61,10 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 }) {
   const qc = useQueryClient();
   const [roleArn, setRoleArn] = useState("");
-  const [scanQueued, setScanQueued] = useState(false);
+  const [scanTriggered, setScanTriggered] = useState(false);
   const [showUpdateArn, setShowUpdateArn] = useState(false);
-  const snapshotRef = useRef<HTMLDivElement>(null);
-  const [lockedHeight, setLockedHeight] = useState<number | null>(null);
 
   function toggleUpdateArn() {
-    if (!showUpdateArn && snapshotRef.current) {
-      setLockedHeight(snapshotRef.current.offsetHeight);
-    } else {
-      setLockedHeight(null);
-    }
     setShowUpdateArn((v) => !v);
   }
 
@@ -71,10 +72,39 @@ function AccountCard({ acc, findingsData, onRemoved }: {
     mutationFn: () => api<Account>(`/v1/accounts/${acc.id}/verify`, { method: "POST", body: JSON.stringify({ role_arn: roleArn }) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
+
   const scan = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}/scan`, { method: "POST" }),
-    onSuccess: () => setScanQueued(true),
+    onMutate: () => setScanTriggered(true),
+    onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest", acc.id] }), 300),
+    onError: () => setScanTriggered(false),
   });
+
+  const scanRun = useQuery({
+    queryKey: ["scan-run-latest", acc.id],
+    queryFn: () => api<ScanRun | null>(`/v1/accounts/${acc.id}/scan-runs/latest`),
+    enabled: acc.status === "connected",
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
+  });
+
+  const scanStatus = scanRun.data?.status ?? null;
+  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
+  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
+  const isRunning = scanStatus === "running" && !scanStuck;
+  const isStarting = scanTriggered || scan.isPending;
+  const isScanActive = isStarting || isRunning;
+  const prevScanStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (prevScanStatus.current === "running" && scanStatus === "ok") {
+      qc.invalidateQueries({ queryKey: ["findings-snapshot-all"] });
+      qc.invalidateQueries({ queryKey: ["controls"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    }
+    if (scanStatus === "running") setScanTriggered(false);
+    prevScanStatus.current = scanStatus;
+  }, [scanStatus, qc]);
+
   const remove = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["accounts"] }); onRemoved(); },
@@ -89,26 +119,37 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const iso = useComplianceScore("iso27001", hasScanned);
 
   return (
-    <div className="grid grid-cols-[1fr_280px] gap-4 items-stretch">
+    <div className="grid grid-cols-[1fr_280px] items-stretch gap-4">
       {/* Main card */}
-      <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
+      <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         {/* Account header */}
-        <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-5">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center flex-shrink-0">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-orange-50 ring-1 ring-orange-100">
               <AwsProviderIcon />
             </div>
             <div>
-              <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
-              {acc.account_id && <div className="text-xs text-zinc-400 font-mono mt-0.5">{acc.account_id}</div>}
+              <div className="text-base font-semibold text-zinc-900">{acc.label}</div>
+              {acc.account_id && <div className="mt-0.5 font-mono text-xs text-zinc-400">{acc.account_id}</div>}
             </div>
           </div>
-          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-            acc.status === "connected" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
-          }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${acc.status === "connected" ? "bg-green-500" : "bg-amber-500"}`} />
-            {acc.status}
-          </span>
+          <div className="flex items-center gap-2">
+            {acc.status === "connected" && isScanActive && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                <svg className="h-3 w-3 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                {isRunning ? "Scanning" : "Starting"}
+              </span>
+            )}
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+              acc.status === "connected" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${acc.status === "connected" ? "bg-green-500" : "bg-amber-500"}`} />
+              {acc.status}
+            </span>
+          </div>
         </div>
 
         {/* Setup steps (not connected) */}
@@ -187,7 +228,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 
         {/* Connected state */}
         {acc.status === "connected" && (
-          <div className="relative px-6 py-5 space-y-4">
+          <div className="flex flex-1 flex-col px-6 py-5 space-y-4">
             {/* Info tiles */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -234,55 +275,55 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               </div>
             )}
 
+            {scanStatus === "error" && scanRun.data?.error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <span className="font-semibold">Last scan failed:</span> {scanRun.data.error}
+              </div>
+            )}
+
             {/* Actions */}
-            <div className="flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+            <div className="mt-auto flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
               <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={() => { setScanQueued(false); scan.mutate(); }}
-                  disabled={scan.isPending}
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  onClick={() => scan.mutate()}
+                  disabled={isScanActive}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <svg className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className={`h-4 w-4 ${isScanActive ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  {scan.isPending ? "Triggering…" : "Run scan now"}
+                  {isRunning ? "Scanning…" : isStarting ? "Starting…" : "Run scan now"}
                 </button>
                 <button
                   onClick={() => { toggleUpdateArn(); setRoleArn(""); verify.reset(); }}
-                  className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+                  disabled={isScanActive}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Update role ARN
-                  <svg className={`w-3 h-3 transition-transform ${showUpdateArn ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className={`h-3 w-3 transition-transform ${showUpdateArn ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
-                {scanQueued && (
-                  <div className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                    Scan queued
-                  </div>
-                )}
-                <button
-                  onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(); }}
-                  disabled={remove.isPending}
-                  className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-                >
-                  {remove.isPending ? "Removing…" : "Remove account"}
-                </button>
-              </div>
+              <button
+                onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(); }}
+                disabled={remove.isPending}
+                className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+              >
+                {remove.isPending ? "Removing…" : "Remove account"}
+              </button>
             </div>
           </div>
         )}
       </div>
 
       {/* Posture snapshot sidebar */}
-      <div ref={snapshotRef} className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5 flex flex-col" style={lockedHeight ? { height: lockedHeight } : undefined}>
-        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-3">Posture Snapshot</div>
+      <div className="flex h-full flex-col rounded-xl border border-zinc-200 bg-white px-5 py-5 shadow-sm">
+        <div className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">Posture Snapshot</div>
         {hasScanned ? (
           <>
-            <div className="grid grid-cols-2 gap-2.5 mb-3">
+            <div className="mb-3 grid grid-cols-2 gap-2.5">
               <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-4 flex flex-col items-center justify-center text-center">
                 <div className="text-4xl font-bold text-red-600 tabular-nums">{findingsData ? critHigh : "…"}</div>
                 <div className="text-xs text-red-500 font-medium mt-1">critical · high</div>
@@ -292,8 +333,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
                 <div className="text-xs text-amber-500 font-medium mt-1">medium</div>
               </div>
             </div>
-            <div className="flex-1" />
-            <div className="space-y-3 pt-2">
+            <div className="space-y-3">
               {[
                 { label: "SOC 2", pct: soc2.data },
                 { label: "CIS AWS L1", pct: cis.data },

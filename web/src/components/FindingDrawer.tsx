@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
@@ -251,7 +251,7 @@ aws s3api put-public-access-block \\
   },
 
   "s3.bucket.no_https_policy": {
-    why: "Without a deny-HTTP bucket policy, clients can request objects over unencrypted HTTP. Data in transit is exposed to interception.",
+    why: "A deny-HTTP bucket policy is defense in depth — it blocks the rare client that still uses http:// even though AWS SDKs, CLI, and Terraform default to HTTPS. Auditors often expect this as evidence of encryption in transit.",
     console: ["Open S3 → select the bucket", 'Click "Permissions" tab → "Bucket policy"', "Add or update the policy to include a Deny statement with the condition below", "Save the policy"],
     cli: `# Apply an HTTPS-only bucket policy
 aws s3api put-bucket-policy --bucket <bucket-name> --policy '{
@@ -270,7 +270,7 @@ aws s3api put-bucket-policy --bucket <bucket-name> --policy '{
     }
   }]
 }'`,
-    risk: "HTTP requests transmit credentials and data in plaintext. Even internal traffic should be encrypted in transit.",
+    risk: "Low practical blast radius for modern apps. Main value is compliance (CIS/SOC2) and blocking misconfigured legacy scripts that hard-code http:// URLs.",
   },
 
   "s3.bucket.no_kms": {
@@ -872,7 +872,7 @@ function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
   }
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-3">
       {items.map((row, i) => {
         const policyName = String(row.policy ?? row.policy_name ?? "Unnamed policy");
         const policyType = String(row.type ?? row.policy_type ?? "policy");
@@ -884,11 +884,11 @@ function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
           serviceCounts.set(service, (serviceCounts.get(service) ?? 0) + 1);
         });
         return (
-          <details key={`${policyName}-${i}`} className="group rounded-lg border border-zinc-200 bg-white open:bg-zinc-50/40">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
+          <details key={`${policyName}-${i}`} className="group overflow-hidden rounded-lg border border-zinc-200 bg-white open:bg-zinc-50/40">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5">
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-zinc-900">{policyName}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                <div className="truncate text-sm font-semibold leading-5 text-zinc-900">{policyName}</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs leading-5 text-zinc-500">
                   <span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 uppercase tracking-wide">{policyType.replace("_", " ")}</span>
                   <span>{actions.length} dangerous action{actions.length === 1 ? "" : "s"}</span>
                 </div>
@@ -897,11 +897,11 @@ function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </summary>
-            <div className="border-t border-zinc-200 px-3.5 py-3.5">
-              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+            <div className="border-t border-zinc-200 px-4 py-4">
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                 Grouped dangerous actions
               </div>
-              <div className="mb-3 flex flex-wrap gap-1.5">
+              <div className="mb-3.5 flex flex-wrap gap-1.5">
                 {Array.from(serviceCounts.entries()).map(([service, count]) => (
                   <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
                     {serviceLabel(service)} · {count} action{count === 1 ? "" : "s"}
@@ -945,34 +945,191 @@ function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: st
   );
 }
 
+function evidenceFieldLabel(key: string) {
+  return key.replace(/_/g, " ");
+}
+
+const EVIDENCE_LABELS: Record<string, string> = {
+  disabled_regions: "Disabled regions",
+  enabled_regions: "Enabled regions",
+  region_count: "Regions",
+  inline_policies_with_wildcard: "Inline policies",
+  attached_policies_with_wildcard: "Attached policies",
+  sources: "Sources",
+  account_id: "Account ID",
+  bucket_name: "Bucket",
+  trail_name: "Trail",
+  home_region: "Home region",
+  key_id: "Key ID",
+  user_name: "User",
+  group_id: "Security group",
+  group_name: "Group name",
+  vpc_id: "VPC",
+  db_instance_id: "DB instance",
+  volume_id: "Volume",
+  role_arn: "Role ARN",
+  block_public_acls: "Block public ACLs",
+  ignore_public_acls: "Ignore public ACLs",
+  block_public_policy: "Block public policy",
+  restrict_public_buckets: "Restrict public buckets",
+};
+
+const AWS_REGION_LABELS: Record<string, string> = {
+  "af-south-1": "Cape Town",
+  "ap-east-1": "Hong Kong",
+  "ap-northeast-1": "Tokyo",
+  "ap-northeast-2": "Seoul",
+  "ap-northeast-3": "Osaka",
+  "ap-south-1": "Mumbai",
+  "ap-south-2": "Hyderabad",
+  "ap-southeast-1": "Singapore",
+  "ap-southeast-2": "Sydney",
+  "ap-southeast-3": "Jakarta",
+  "ap-southeast-4": "Melbourne",
+  "ca-central-1": "Canada",
+  "ca-west-1": "Calgary",
+  "eu-central-1": "Frankfurt",
+  "eu-central-2": "Zurich",
+  "eu-north-1": "Stockholm",
+  "eu-south-1": "Milan",
+  "eu-south-2": "Spain",
+  "eu-west-1": "Ireland",
+  "eu-west-2": "London",
+  "eu-west-3": "Paris",
+  "il-central-1": "Tel Aviv",
+  "me-central-1": "UAE",
+  "me-south-1": "Bahrain",
+  "mx-central-1": "Mexico",
+  "sa-east-1": "São Paulo",
+  "us-east-1": "N. Virginia",
+  "us-east-2": "Ohio",
+  "us-west-1": "N. California",
+  "us-west-2": "Oregon",
+};
+
+function evidenceLabel(key: string, evidence: Record<string, unknown>) {
+  if (key === "disabled_regions" && Array.isArray(evidence.disabled_regions)) {
+    return `Disabled regions (${evidence.disabled_regions.length})`;
+  }
+  const base = EVIDENCE_LABELS[key] ?? evidenceFieldLabel(key);
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
+
+function isIsoDateString(value: string) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+}
+
+function formatEvidenceDate(value: string) {
+  if (!isIsoDateString(value)) return value;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
+  const timePart = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(d);
+  return `${datePart} at ${timePart} UTC`;
+}
+
+function evidenceValueIsRich(key: string, value: unknown) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function RegionPills({ regions }: { regions: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const previewLimit = 8;
+  const sorted = [...regions].sort((a, b) => (AWS_REGION_LABELS[a] ?? a).localeCompare(AWS_REGION_LABELS[b] ?? b));
+  const hidden = sorted.length - previewLimit;
+  const visible = expanded || hidden <= 0 ? sorted : sorted.slice(0, previewLimit);
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        {visible.map((code) => {
+          const name = AWS_REGION_LABELS[code];
+          return (
+            <div
+              key={code}
+              title={code}
+              className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2.5 py-2"
+            >
+              <span className="truncate text-xs font-medium text-zinc-800">{name ?? code}</span>
+              {name && <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-400">{code}</span>}
+            </div>
+          );
+        })}
+      </div>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+        >
+          {expanded ? "Show fewer regions" : `Show all ${sorted.length} regions`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function StringPills({ items, tone = "neutral" }: { items: string[]; tone?: "neutral" | "warn" }) {
+  const cls =
+    tone === "warn"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-zinc-200 bg-zinc-50 text-zinc-700";
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((item) => (
+        <span key={item} className={`inline-flex max-w-full items-center rounded-lg border px-2.5 py-1.5 text-xs font-medium leading-snug ${cls}`}>
+          <span className="break-words">{item}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function EvidenceValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+  if (value === null || value === undefined) {
+    const isDateField = fieldKey.includes("last") || fieldKey.includes("date") || fieldKey.includes("used") || fieldKey.includes("inactive");
+    return <span className="text-sm text-zinc-400">{isDateField ? "Never" : "None"}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-sm text-zinc-400">None</span>;
+    if (fieldKey.includes("region")) return <RegionPills regions={value as string[]} />;
+    if (typeof value[0] === "string") {
+      const tone = fieldKey.includes("wildcard") || fieldKey === "sources" ? "warn" : "neutral";
+      return <StringPills items={value as string[]} tone={tone} />;
+    }
+  }
+
+  if (typeof value === "boolean") {
+    return (
+      <span className={`text-sm font-medium ${value ? "text-emerald-700" : "text-red-600"}`}>
+        {value ? "Yes" : "No"}
+      </span>
+    );
+  }
+
+  const text = formatEvidenceDate(String(value));
+  const mono = /arn|_id$|(^|_)id$|key_id|region/i.test(fieldKey);
+  return <span className={`text-sm leading-5 text-zinc-700 ${mono ? "font-mono break-all" : ""}`}>{text}</span>;
+}
+
+function evidenceSectionTitle(key: string) {
+  const label = evidenceFieldLabel(key);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unknown>; checkId: string }) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
   const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
-  const scalars = entries.filter(([, v]) => !Array.isArray(v) || typeof v[0] !== "object" || v[0] === null);
+  const scalars = entries
+    .filter(([, v]) => !Array.isArray(v) || typeof v[0] !== "object" || v[0] === null)
+    .filter(([k]) => !(k === "region_count" && Array.isArray(evidence.disabled_regions)));
   const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
   const unusedServices = evidence.unused_services as string[] | undefined;
   const removable = evidence.removable_statements as RemovableStatement[] | undefined;
-  function isIsoDateString(value: string) {
-    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
-  }
-  function formatMaybeDate(value: string) {
-    if (!isIsoDateString(value)) return value;
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
-    const timePart = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(d);
-    return `${datePart} at ${timePart} UTC`;
-  }
-  function renderScalar(k: string, v: unknown): string {
-    if (v === null || v === undefined) {
-      const isDateField = k.includes("last") || k.includes("date") || k.includes("used") || k.includes("inactive");
-      return isDateField ? "Never" : "—";
-    }
-    if (Array.isArray(v)) return v.join(", ");
-    return formatMaybeDate(String(v));
-  }
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {unusedServices && unusedServices.length > 0 && (
         <div>
           <div className="mb-2 text-sm font-semibold text-zinc-700">
@@ -985,20 +1142,29 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
         </div>
       )}
       {scalars.length > 0 && (
-        <div className="overflow-hidden rounded-lg border border-zinc-200">
-          {scalars.map(([k, v], i) => (
-            <div key={k} className={`flex gap-4 px-4 py-3 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
-              <span className="w-36 flex-shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500">{k.replace(/_/g, " ")}</span>
-              <span className={`break-all text-sm leading-6 text-zinc-600 ${/arn|_id$|(^|_)id$|key_id/i.test(k) ? "font-mono text-zinc-700" : "font-normal"}`}>
-                {renderScalar(k, v)}
-              </span>
-            </div>
-          ))}
+        <div className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+          {scalars.map(([k, v]) => {
+            const rich = evidenceValueIsRich(k, v);
+            if (rich) {
+              return (
+                <div key={k} className="px-4 py-3.5">
+                  <div className="mb-2.5 text-xs font-medium text-zinc-500">{evidenceLabel(k, evidence)}</div>
+                  <EvidenceValue fieldKey={k} value={v} />
+                </div>
+              );
+            }
+            return (
+              <div key={k} className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-4 px-4 py-3.5">
+                <span className="text-xs font-medium leading-5 text-zinc-500">{evidenceLabel(k, evidence)}</span>
+                <EvidenceValue fieldKey={k} value={v} />
+              </div>
+            );
+          })}
         </div>
       )}
       {objectLists.map(([k, items]) => (
         <div key={k}>
-          <div className="mb-2 text-sm font-semibold text-zinc-700">{k.replace(/_/g, " ")}</div>
+          <div className="mb-2.5 text-sm font-semibold text-zinc-700">{evidenceSectionTitle(k)}</div>
           {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
         </div>
       ))}
@@ -1053,6 +1219,33 @@ type AttachedPolicyAnalysis = {
   has_wildcard_action: boolean;
   action: "detach_and_replace" | "edit";
 };
+
+function iamPolicyConsoleUrl(policyArn: string): string {
+  return `https://console.aws.amazon.com/iam/home#/policies/details/${encodeURIComponent(policyArn)}`;
+}
+
+function iamRolePermissionsConsoleUrl(roleArn: string): string {
+  const match = roleArn.match(/:role\/(.+)$/);
+  const roleName = match ? match[1] : "";
+  return `https://console.aws.amazon.com/iam/home#/roles/details/${encodeURIComponent(roleName)}?section=permissions`;
+}
+
+function ConsoleLink({ href, children, title }: { href: string; children: React.ReactNode; title: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+      className="inline-flex flex-shrink-0 items-center gap-1 text-xs font-medium text-sky-600 hover:text-sky-800 hover:underline"
+    >
+      {children}
+      <svg className="h-3 w-3 opacity-70" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+      </svg>
+    </a>
+  );
+}
 
 type BlastRadiusData = {
   resource_type: string;
@@ -1120,6 +1313,8 @@ type BlastRadiusData = {
   is_logging?: boolean;
   log_validation_enabled?: boolean;
   kms_key_id?: string | null;
+  trail_count?: number;
+  existing_trails?: { name: string; home_region: string; is_multi_region: boolean; is_logging: boolean }[];
   // vpc fields (vpc_id and region reused from security_group fields above)
   instance_count?: number;
   // iam root / password policy fields
@@ -1128,6 +1323,7 @@ type BlastRadiusData = {
   password_reuse_prevention?: number | null;
   // s3 account block fields
   public_bucket_count?: number;
+  public_bucket_names?: string[];
   // guardduty fields
   disabled_regions?: string[];
   warnings: string[];
@@ -1139,7 +1335,7 @@ const confidenceConfig = {
   low: { label: "Active — proceed with caution", color: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500", desc: "Resource was actively used in the last 30 days." },
 };
 
-function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "caution" | "warning" } {
+function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; type: "safe" | "caution" | "warning" } {
   const { resource_type, confidence } = data;
 
   if (resource_type === "iam_role") {
@@ -1182,8 +1378,30 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
   if (resource_type === "security_group") {
     const running = data.running_count ?? 0;
     const total = data.total_count ?? 0;
-    if (running > 0) return { text: `Restrict with care — ${running} running instance${running !== 1 ? "s" : ""} will be affected (${total} total).`, type: "warning" };
-    if (total > 0) return { text: `${total} instance${total !== 1 ? "s" : ""} attached, none running — safe to modify.`, type: "caution" };
+    if (running > 0) {
+      return {
+        text: `Restrict with care — ${running} running instance${running !== 1 ? "s" : ""} use this group (${total} total).`,
+        type: "warning",
+      };
+    }
+    if (total > 0) {
+      if (data.is_default) {
+        return {
+          text: `${total} instance${total !== 1 ? "s" : ""} attached to this default SG (none running) — confirm explicit SG assignments before clearing rules.`,
+          type: "caution",
+        };
+      }
+      return {
+        text: `${total} instance${total !== 1 ? "s" : ""} attached, none running — safe to modify.`,
+        type: "caution",
+      };
+    }
+    if (data.is_default) {
+      return {
+        text: "Safe to clear rules — no instances use this VPC's default security group. An empty default SG is recommended so future launches without an explicit group stay locked down.",
+        type: "safe",
+      };
+    }
     return { text: "No instances attached to this security group — safe to update.", type: "safe" };
   }
 
@@ -1195,6 +1413,12 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
   }
 
   if (resource_type === "s3_bucket") {
+    if (checkId === "s3.bucket.no_https_policy") {
+      return {
+        text: "Safe to enable — AWS SDKs, CLI, and Terraform already use HTTPS. Only clients with explicit http:// URLs would be denied.",
+        type: "safe",
+      };
+    }
     if (confidence === "high") return { text: "Safe to enable — enabling S3 access logging has no impact on bucket access or application behaviour.", type: "safe" };
     if (confidence === "low") return { text: "Review before applying — bucket may have public access patterns that depend on current settings.", type: "warning" };
     return { text: "Verify before applying — this change may affect applications accessing the bucket. See warnings below.", type: "caution" };
@@ -1218,10 +1442,7 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
   }
 
   if (resource_type === "ebs_encryption_default") {
-    const count = data.existing_unencrypted_count ?? 0;
-    return count > 0
-      ? { text: `Safe to enable — only affects new volumes. ${count} existing unencrypted volume(s) must be migrated separately.`, type: "caution" }
-      : { text: "Safe to enable — only affects volumes created after this change. No existing volumes are impacted.", type: "safe" };
+    return { text: "Safe to enable — only affects volumes created after this change.", type: "safe" };
   }
 
   if (resource_type === "cloudtrail_trail") {
@@ -1229,11 +1450,18 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     return { text: "Verify CloudTrail's delivery role has the required KMS permissions before applying.", type: "caution" };
   }
 
+  if (resource_type === "cloudtrail_account") {
+    if ((data.trail_count ?? 0) === 0) {
+      return { text: "No CloudTrail trails found — safe to create a new multi-region trail. No existing logging to disrupt.", type: "safe" };
+    }
+    return { text: "Existing trails don't meet the multi-region + logging requirement — enable a compliant trail or fix the ones below.", type: "caution" };
+  }
+
   if (resource_type === "vpc") {
     const count = data.instance_count ?? 0;
     return count > 0
-      ? { text: `Safe to enable — flow logs add visibility without affecting network traffic. ${count} instance(s) in this VPC will be covered.`, type: "safe" }
-      : { text: "Safe to enable — no instances in this VPC, low traffic cost expected.", type: "safe" };
+      ? { text: "Safe to enable — flow logs add visibility without affecting network traffic.", type: "safe" }
+      : { text: "Safe to enable — no instances in this VPC yet.", type: "safe" };
   }
 
   if (resource_type === "iam_root") {
@@ -1298,13 +1526,24 @@ function VerdictIcon({ type }: { type: "safe" | "caution" | "warning" }) {
   );
 }
 
+function InfoNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs leading-relaxed text-zinc-600">
+      <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+      </svg>
+      <span>{children}</span>
+    </div>
+  );
+}
+
 function BlastRadiusSection({ accountId, finding }: { accountId: string; finding: Finding }) {
   const [enabled, setEnabled] = useState(false);
   const { data, isLoading, error } = useQuery<BlastRadiusData>({
-    queryKey: ["blast-radius", accountId, finding.resource_arn, finding.check_id],
+    queryKey: ["blast-radius", accountId, finding.resource_arn, finding.check_id, finding.last_seen],
     queryFn: () => api(`/v1/accounts/${accountId}/blast-radius?resource_arn=${encodeURIComponent(finding.resource_arn)}&check_id=${encodeURIComponent(finding.check_id)}`),
     enabled,
-    staleTime: Infinity,
+    staleTime: 0,
   });
 
   if (!enabled) {
@@ -1330,15 +1569,24 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs text-red-500">{String(error)}</div>;
   if (!data) return null;
 
-  const conf = confidenceConfig[data.confidence];
-
-  const verdict = buildVerdict(data);
+  const verdict = buildVerdict(data, finding.check_id);
+  const conf = confidenceConfig[
+    finding.check_id === "s3.bucket.no_https_policy" || verdict.type === "safe"
+      ? "high"
+      : data.confidence
+  ];
   const vs = verdictStyle[verdict.type];
   const normalizedVerdict = verdict.text.toLowerCase().replace(/\s+/g, " ").trim();
   function warningKey(text: string) {
     const n = text.toLowerCase().replace(/\s+/g, " ").trim();
     if ((n.includes("scoping down resource: *") || n.includes("scoping resource: *")) && (n.includes("specific arn") || n.includes("specific resource"))) {
       return "scope-resource-star";
+    }
+    if (n.includes("running instance") && (n.includes("downtime") || n.includes("replacing") || n.includes("detaching"))) {
+      return "ebs-running-downtime";
+    }
+    if (n.includes("bucket") && n.includes("public access") && n.includes("account") && n.includes("block")) {
+      return "s3-public-bucket-block";
     }
     return n;
   }
@@ -1354,7 +1602,9 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         .filter((k) => k.last_used && k.days_ago != null)
         .map((k) => `Access key ${k.key_id} shows API activity ${k.days_ago} days ago via ${k.last_used_service ?? "unknown service"}${k.last_used_region ? ` (${k.last_used_region})` : ""} — deactivate keys before disabling user`)
     : [];
-  const warningRows = [...baseWarnings, ...keyUsageWarnings].filter((warning) => {
+  const allNotices = [...baseWarnings, ...keyUsageWarnings];
+  const infoRows = verdict.type === "safe" ? allNotices : [];
+  const warningRows = verdict.type === "safe" ? [] : allNotices.filter((warning) => {
     const key = warningKey(warning);
     if (key === verdictKey) return false;
     if (seen.has(key)) return false;
@@ -1377,6 +1627,18 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
           <span className={vs.icon}><VerdictIcon type={verdict.type} /></span>
           <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
         </div>
+
+        {data.resource_type === "vpc" && (
+          <InfoNote>
+            {(data.instance_count ?? 0) === 0
+              ? "Log volume and cost are negligible until workloads are added."
+              : `${data.instance_count} instance${data.instance_count !== 1 ? "s" : ""} in this VPC will be covered. Flow logs deliver to CloudWatch Logs or S3 — budget ~$0.50/GB for CloudWatch ingestion.`}
+          </InfoNote>
+        )}
+
+        {infoRows.map((note, i) => (
+          <InfoNote key={i}>{note}</InfoNote>
+        ))}
 
         {/* Warnings */}
         {warningRows.length > 0 && (
@@ -1460,11 +1722,20 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
                         </span>
                       )}
                     </div>
-                    <span className={`flex-shrink-0 text-xs font-medium ${
-                      pol.action === "detach_and_replace" ? "text-amber-600" : "text-sky-600"
-                    }`}>
+                    <ConsoleLink
+                      href={
+                        pol.action === "detach_and_replace"
+                          ? iamRolePermissionsConsoleUrl(finding.resource_arn)
+                          : iamPolicyConsoleUrl(pol.policy_arn)
+                      }
+                      title={
+                        pol.action === "detach_and_replace"
+                          ? "Open role permissions in AWS Console to detach this managed policy"
+                          : "Open policy in AWS Console to edit"
+                      }
+                    >
                       {pol.action === "detach_and_replace" ? "Detach + replace" : "Edit policy"}
-                    </span>
+                    </ConsoleLink>
                   </div>
                   <div className="px-3 py-2.5 space-y-2">
                     {pol.unused_services.length > 0 && (
@@ -1622,6 +1893,30 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
           </div>
         )}
 
+        {/* CloudTrail account: existing non-compliant trails */}
+        {data.resource_type === "cloudtrail_account" && (data.trail_count ?? 0) > 0 && (
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              {(data.existing_trails ?? []).map((trail) => (
+                <div key={trail.name} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs">
+                  <div className="min-w-0">
+                    <div className="truncate font-mono font-medium text-zinc-800">{trail.name}</div>
+                    <div className="mt-0.5 text-zinc-400">{trail.home_region}</div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                    <span className={`rounded border px-1.5 py-0.5 font-medium ${trail.is_logging ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-zinc-200 bg-white text-zinc-500"}`}>
+                      {trail.is_logging ? "Logging" : "Stopped"}
+                    </span>
+                    <span className={`rounded border px-1.5 py-0.5 font-medium ${trail.is_multi_region ? "border-blue-200 bg-blue-50 text-blue-700" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                      {trail.is_multi_region ? "Multi-region" : "Single-region"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* CloudTrail trail: metadata grid */}
         {data.resource_type === "cloudtrail_trail" && (
           <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1682,32 +1977,30 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
           </div>
         )}
 
-        {/* S3 account-level block: bucket count */}
-        {data.resource_type === "s3_account_block" && (
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-xs">
-            <div className="font-medium text-zinc-400 mb-0.5">Buckets without bucket-level block</div>
-            <div className={`text-2xl font-bold tabular-nums ${(data.public_bucket_count ?? 0) > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-              {data.public_bucket_count ?? 0}
+        {/* S3 account-level block: affected buckets */}
+        {data.resource_type === "s3_account_block" && (data.public_bucket_count ?? 0) > 0 && (
+          <div>
+            <div className="mb-2.5 text-xs font-medium text-zinc-500">
+              Affected buckets ({data.public_bucket_count})
             </div>
-            <p className="mt-1.5 text-zinc-400 leading-relaxed">These buckets rely on object ACLs or policies alone. Enabling the account-level block overrides both.</p>
+            <div className="flex flex-wrap gap-2">
+              {(data.public_bucket_names ?? []).map((name) => (
+                <span key={name} className="inline-flex max-w-full items-center rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 font-mono text-xs text-zinc-700">
+                  <span className="truncate">{name}</span>
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
         {/* GuardDuty: disabled regions */}
         {data.resource_type === "guardduty" && data.disabled_regions && data.disabled_regions.length > 0 && (
           <div>
-            <div className="text-sm font-semibold text-zinc-700 mb-2">Disabled in {data.disabled_regions.length} region(s)</div>
-            <div className="flex flex-wrap gap-1.5">
-              {data.disabled_regions.map((r) => (
-                <span key={r} className="rounded bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-500">{r}</span>
-              ))}
+            <div className="mb-2.5 text-xs font-medium text-zinc-500">
+              Disabled regions ({data.disabled_regions.length})
             </div>
+            <RegionPills regions={data.disabled_regions} />
           </div>
-        )}
-
-        {/* Config / SecurityHub / AccessAnalyzer: simple info */}
-        {(data.resource_type === "aws_config" || data.resource_type === "securityhub" || data.resource_type === "access_analyzer") && (
-          <p className="text-xs text-zinc-500 leading-relaxed">Enabling this service adds security visibility. No existing resources, applications, or IAM policies are affected.</p>
         )}
 
         {/* S3 bucket: posture grid */}
@@ -1773,14 +2066,28 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {/* Security group: metadata + affected instances */}
         {data.resource_type === "security_group" && (
           <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
-                <div className="font-medium text-zinc-400 mb-0.5">Group</div>
-                <div className="font-mono text-zinc-700">{data.group_name ?? data.group_id}</div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 min-w-0">
+                <div className="font-medium text-zinc-400 mb-0.5">Security group</div>
+                <div className="font-mono text-zinc-700 truncate" title={data.group_id}>{data.group_id}</div>
+                {data.is_default && (
+                  <div className="mt-1">
+                    <span className="rounded border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                      Default
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
-                <div className="font-medium text-zinc-400 mb-0.5">VPC · Region</div>
-                <div className="font-mono text-zinc-700 truncate">{data.vpc_id ?? "—"} · {data.region}</div>
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 min-w-0">
+                <div className="font-medium text-zinc-400 mb-0.5">VPC</div>
+                <div className="font-mono text-zinc-700 truncate" title={data.vpc_id ?? undefined}>{data.vpc_id ?? "—"}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 min-w-0">
+                <div className="font-medium text-zinc-400 mb-0.5">Region</div>
+                <div className="text-zinc-700 truncate" title={data.region}>{AWS_REGION_LABELS[data.region ?? ""] ?? data.region}</div>
+                {data.region && AWS_REGION_LABELS[data.region] && (
+                  <div className="mt-0.5 font-mono text-[10px] text-zinc-400 truncate">{data.region}</div>
+                )}
               </div>
             </div>
 
@@ -1816,7 +2123,11 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
                 </div>
               </div>
             ) : (
-              <div className="text-xs text-zinc-400">No instances currently attached to this security group.</div>
+              <div className="text-xs text-zinc-400">
+                {data.is_default
+                  ? "No instances in this region are attached to this VPC's default security group."
+                  : "No instances currently attached to this security group."}
+              </div>
             )}
           </div>
         )}
@@ -1826,16 +2137,40 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 }
 
 type Tab = "overview" | "remediation" | "whatif";
-type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; statements_removed?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
+type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
+
+function policyChangeSummary(data: GeneratedPolicy) {
+  const removed = data.statements_removed ?? 0;
+  const modified = data.statements_modified ?? 0;
+  const usedActions = data.used_actions?.length ?? 0;
+  const usedServices = data.used_services?.length ?? 0;
+  const parts: string[] = [];
+  if (removed) parts.push(`${removed} statement${removed !== 1 ? "s" : ""} removed`);
+  if (modified) {
+    if (data.granularity === "action" && usedActions) {
+      parts.push(`${modified} wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedActions} used action${usedActions !== 1 ? "s" : ""}`);
+    } else {
+      parts.push(`${modified} wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedServices} used service${usedServices !== 1 ? "s" : ""}`);
+    }
+  }
+  return parts.length ? parts.join(" · ") : "No changes";
+}
 
 type PolicyStatement = { Sid?: string; Effect?: string; Action?: string | string[]; Resource?: string | string[]; [k: string]: unknown };
 
-function PolicyDiffView({ original, cleaned }: { original: Record<string, unknown>; cleaned: Record<string, unknown> }) {
+function PolicyDiffView({ original, cleaned, granularity }: { original: Record<string, unknown>; cleaned: Record<string, unknown>; granularity?: "action" | "service" }) {
   const sections = Object.entries(original).map(([name, origDoc]) => {
     const origStmts: PolicyStatement[] = (origDoc as any)?.Statement ?? [];
     const cleanStmts: PolicyStatement[] = (cleaned as any)?.[name]?.Statement ?? [];
-    const cleanSet = new Set(cleanStmts.map((s) => JSON.stringify(s)));
-    return { name, statements: origStmts.map((stmt) => ({ stmt, removed: !cleanSet.has(JSON.stringify(stmt)) })) };
+    const statements = origStmts.map((stmt, i) => {
+      const clean = cleanStmts[i];
+      const origJson = JSON.stringify(stmt);
+      const cleanJson = clean ? JSON.stringify(clean) : null;
+      if (!clean) return { kind: "removed" as const, stmt, clean: null };
+      if (origJson === cleanJson) return { kind: "unchanged" as const, stmt, clean };
+      return { kind: "modified" as const, stmt, clean };
+    });
+    return { name, statements };
   });
 
   return (
@@ -1847,22 +2182,39 @@ function PolicyDiffView({ original, cleaned }: { original: Record<string, unknow
             {statements.map((s, i) => {
               const actions = s.stmt.Action ? (Array.isArray(s.stmt.Action) ? s.stmt.Action : [s.stmt.Action]) : [];
               const resources = s.stmt.Resource ? (Array.isArray(s.stmt.Resource) ? s.stmt.Resource : [s.stmt.Resource]) : [];
+              const cleanActions = s.clean?.Action ? (Array.isArray(s.clean.Action) ? s.clean.Action : [s.clean.Action]) : [];
+              const border =
+                s.kind === "removed" ? "border-red-200 bg-red-50" : s.kind === "modified" ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50";
               return (
-                <div key={i} className={`rounded-lg border px-3 py-2.5 text-xs ${s.removed ? "border-red-200 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
-                  {s.removed && (
+                <div key={i} className={`rounded-lg border px-3 py-2.5 text-xs ${border}`}>
+                  {s.kind === "removed" && (
                     <div className="mb-2 flex items-center gap-1.5">
                       <span className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-red-500">Removed — no usage in 90 days</span>
                     </div>
                   )}
+                  {s.kind === "modified" && (
+                    <div className="mb-2 flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                        Narrowed — scoped to used {granularity === "action" ? "actions" : "services"}
+                      </span>
+                    </div>
+                  )}
                   <div className="space-y-1">
-                    {s.stmt.Sid && <div><span className="text-zinc-400">Sid: </span><span className={`font-medium ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Sid}</span></div>}
-                    <div><span className="text-zinc-400">Effect: </span><span className={`font-medium ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Effect}</span></div>
+                    {s.stmt.Sid && <div><span className="text-zinc-400">Sid: </span><span className={`font-medium ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Sid}</span></div>}
+                    <div><span className="text-zinc-400">Effect: </span><span className={`font-medium ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Effect}</span></div>
                     {actions.length > 0 && (
-                      <div><span className="text-zinc-400">Actions: </span><span className={`font-mono break-all ${s.removed ? "text-red-600 line-through" : "text-zinc-700"}`}>{actions.join(", ")}</span></div>
+                      <div>
+                        <span className="text-zinc-400">Actions: </span>
+                        <span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : s.kind === "modified" ? "text-zinc-500 line-through" : "text-zinc-700"}`}>{actions.join(", ")}</span>
+                        {s.kind === "modified" && cleanActions.length > 0 && (
+                          <div className="mt-1 font-mono break-all text-amber-800">{cleanActions.join(", ")}</div>
+                        )}
+                      </div>
                     )}
                     {resources.length > 0 && (
-                      <div><span className="text-zinc-400">Resource: </span><span className={`font-mono break-all ${s.removed ? "text-red-600 line-through" : "text-zinc-600"}`}>{resources.join(", ")}</span></div>
+                      <div><span className="text-zinc-400">Resource: </span><span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-600"}`}>{resources.join(", ")}</span></div>
                     )}
                   </div>
                 </div>
@@ -1878,7 +2230,12 @@ function PolicyDiffView({ original, cleaned }: { original: Record<string, unknow
 function GeneratePolicySection({ accountId, finding }: { accountId: string; finding: Finding }) {
   const [enabled, setEnabled] = useState(false);
   const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
-  const { data, isLoading, error } = useQuery<GeneratedPolicy>({ queryKey: ["generated-policy", accountId, finding.resource_arn], queryFn: () => api(`/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}`), enabled, staleTime: Infinity });
+  const { data, isLoading, error } = useQuery<GeneratedPolicy>({
+    queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen],
+    queryFn: () => api(`/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}`),
+    enabled,
+    staleTime: 0,
+  });
 
   return (
     <div>
@@ -1886,7 +2243,7 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
         <div className="text-sm font-semibold text-zinc-700">Suggested policy</div>
         {!enabled && <button onClick={() => setEnabled(true)} className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900">Generate</button>}
       </div>
-      {!enabled && <p className="text-xs leading-relaxed text-zinc-400">Vigil will strip unused service statements from inline policies and show you the cleaned version, ready to apply.</p>}
+      {!enabled && <p className="text-xs leading-relaxed text-zinc-400">Vigil replaces wildcard actions with the specific API calls recorded in the last 90 days, or removes unused service statements from inline policies.</p>}
       {enabled && isLoading && <div className="py-3 text-xs text-zinc-400">Generating…</div>}
       {enabled && error && <div className="py-2 text-xs text-red-500">{String(error)}</div>}
       {enabled && data && !data.has_inline_policies && (
@@ -1896,7 +2253,7 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-zinc-500">
-              {data.statements_removed} statement{data.statements_removed !== 1 ? "s" : ""} removed
+              {policyChangeSummary(data)}
             </span>
             <div className="flex gap-1 rounded-lg bg-zinc-100 p-0.5">
               {(["diff", "cleaned", "original"] as const).map((v) => (
@@ -1906,8 +2263,18 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
               ))}
             </div>
           </div>
-          {view === "diff" && <PolicyDiffView original={data.original_policies} cleaned={data.cleaned_policies} />}
+          {view === "diff" && <PolicyDiffView original={data.original_policies} cleaned={data.cleaned_policies} granularity={data.granularity} />}
           {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
+          {data.granularity === "service" && (
+            <p className="text-xs leading-relaxed text-zinc-400">
+              Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or use Access Analyzer for action-level generation on wildcard policies.
+            </p>
+          )}
+          {data.granularity === "action" && (
+            <p className="text-xs leading-relaxed text-zinc-400">
+              Resource stays <span className="font-mono">*</span> — narrowing to specific ARNs requires knowing which resources each action needs.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -1947,48 +2314,6 @@ function CliBlock({ code }: { code: string }) {
   );
 }
 
-function SnoozeButton({ findingId, onDone }: { findingId: string; onDone: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [snoozed, setSnoozed] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  async function snooze(days: number) {
-    await api(`/v1/findings/${findingId}/snooze`, { method: "POST", body: JSON.stringify({ days }) });
-    setSnoozed(true);
-    setOpen(false);
-    setTimeout(onDone, 800);
-  }
-
-  return (
-    <div ref={ref} className="relative flex-1">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className={`w-full rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${snoozed ? "border-amber-200 bg-amber-50 text-amber-700" : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"}`}
-      >
-        {snoozed ? "Ignored" : "Ignore"}
-      </button>
-      {open && (
-        <div className="absolute bottom-full mb-1.5 right-0 z-10 min-w-[140px] rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
-          {([7, 30, 90] as const).map((d) => (
-            <button key={d} onClick={() => snooze(d)} className="block w-full px-4 py-2.5 text-left text-sm text-zinc-700 hover:bg-zinc-50 transition-colors">
-              {d} days
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () => void }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -2023,7 +2348,7 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
         onClick={() => setOpen(true)}
         className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${done ? "border-violet-200 bg-violet-50 text-violet-700" : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"}`}
       >
-        {done ? "Excepted" : "Exception"}
+        {done ? "Approved" : "Exception"}
       </button>
       {open && (
         <div className="fixed inset-0 z-[70] flex items-end justify-end">
@@ -2092,7 +2417,7 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
   );
 }
 
-export function FindingDrawer({ finding, accountId, onClose, onAction, resolved, verifying }: { finding: Finding | null; accountId: string | null; onClose: () => void; onAction: (id: string, action: "recheck" | "resolve" | "ignore") => void; resolved?: boolean; verifying?: boolean }) {
+export function FindingDrawer({ finding, accountId, onClose, onAction, resolved, verifying }: { finding: Finding | null; accountId: string | null; onClose: () => void; onAction: (id: string, action: "recheck" | "resolve") => void; resolved?: boolean; verifying?: boolean }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [remTab, setRemTab] = useState<"console" | "cli">("console");
   const [countdown, setCountdown] = useState(5);
@@ -2211,11 +2536,11 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
           <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"><div className="mb-1.5 text-sm font-semibold text-zinc-800">Risk</div><p className="text-sm leading-6 text-zinc-600">{rem.risk}</p></div>
         </div>
         {hasEvidence && <div>
-          <div className="mb-2 pl-0.5 text-sm font-semibold text-zinc-700">Scan details</div>
+          <div className="mb-2 text-sm font-semibold text-zinc-700">Scan details</div>
           <EvidenceSection evidence={finding.evidence} checkId={finding.check_id} />
         </div>}
         {showPolicyGen && <GeneratePolicySection accountId={accountId!} finding={finding} />}
-        <div className="flex items-center gap-3 border-t border-zinc-200/70 pt-3 pb-1 text-xs text-zinc-400">
+        <div className="flex items-center gap-3 border-t border-zinc-200/70 pt-4 pb-1 text-xs text-zinc-400">
           <span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span>
           <span className="text-zinc-300">·</span>
           <span>Last seen {new Date(finding.last_seen).toLocaleDateString()}</span>
@@ -2244,7 +2569,6 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     <div className="flex gap-2 border-t border-stone-200 bg-stone-50 px-7 py-5">
       <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700">Resolve</button>
       <button disabled={verifying} onClick={() => onAction(finding.id, "recheck")} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50">{verifying && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{verifying ? "Verifying…" : "Verify"}</button>
-      <SnoozeButton findingId={finding.id} onDone={onClose} />
       <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
     {resolved && (

@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { GITHUB_SYNC_KEY, useIntegrationSyncState } from "../hooks/useIntegrationSyncState";
+import { useAccountScanRun } from "../hooks/useAccountScanRun";
 
 type GitHubProvider = {
   id: string;
@@ -66,7 +68,16 @@ export default function GitHubIntegration() {
     queryFn: () => api<GitHubProvider | null>("/v1/integrations/github"),
   });
 
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<{ id: string; status: string }[]>("/v1/accounts"),
+  });
+  const connectedAccountId = accounts.data?.find((a) => a.status === "connected")?.id;
+  const { isSyncing } = useIntegrationSyncState("github");
+  const { isRunning: awsScanRunning } = useAccountScanRun(connectedAccountId);
+
   const sync = useMutation({
+    mutationKey: GITHUB_SYNC_KEY,
     mutationFn: async () =>
       api<SyncStats>("/v1/integrations/github/sync", {
         method: "POST",
@@ -75,6 +86,7 @@ export default function GitHubIntegration() {
     onSuccess: (stats) => {
       setLastSync(stats);
       qc.invalidateQueries({ queryKey: ["github-provider"] });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }), 300);
     },
   });
 
@@ -171,6 +183,25 @@ export default function GitHubIntegration() {
         </div>
       )}
 
+      {(isSyncing || awsScanRunning) && (
+        <div className="overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/80">
+          <div className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-indigo-800">
+            <svg className="h-4 w-4 shrink-0 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+            <span className="font-semibold">
+              {isSyncing && awsScanRunning
+                ? "Syncing GitHub and running AWS scan"
+                : isSyncing
+                  ? "Syncing GitHub evidence"
+                  : "AWS compliance scan running"}
+            </span>
+            <span className="text-indigo-600/75">— safe to leave this page</span>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[1.18fr_0.82fr]">
         <div className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-5">
@@ -235,10 +266,10 @@ export default function GitHubIntegration() {
                   </Link>
                   <button
                     onClick={() => sync.mutate()}
-                    disabled={sync.isPending || syncTargets.length === 0}
-                    className="rounded-lg bg-zinc-950 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+                    disabled={isSyncing || syncTargets.length === 0}
+                    className="rounded-lg bg-zinc-950 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {sync.isPending ? "Syncing..." : "Sync"}
+                    {isSyncing ? "Syncing…" : "Sync"}
                   </button>
                 </div>
               </div>

@@ -37,7 +37,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // S3
   { id: "s3.account.public_access_not_blocked", label: "Account public access not blocked", severity: "high", description: "Enable account-level S3 Block Public Access." },
   { id: "s3.bucket.public_access_not_blocked", label: "Public access not blocked", severity: "high", description: "Enable all four Block Public Access settings." },
-  { id: "s3.bucket.no_https_policy", label: "No HTTPS-only policy", severity: "medium", description: "Deny requests where aws:SecureTransport is false." },
+  { id: "s3.bucket.no_https_policy", label: "No HTTPS-only policy", severity: "low", description: "Deny plain HTTP — defense in depth; modern SDKs already use HTTPS." },
   { id: "s3.bucket.no_kms", label: "Not encrypted with KMS", severity: "medium", description: "Use SSE-KMS for encryption at rest." },
   { id: "s3.bucket.no_logging", label: "Access logging disabled", severity: "low", description: "Enable server access logging for audit visibility." },
   // KMS

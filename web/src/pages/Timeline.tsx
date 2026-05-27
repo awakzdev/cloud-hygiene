@@ -195,6 +195,12 @@ function EventRow({ evt }: { evt: TimelineEvent }) {
   );
 }
 
+const TIMELINE_WINDOWS = [
+  { value: 7, label: "Last 7 days" },
+  { value: 30, label: "Last 30 days" },
+  { value: 90, label: "Last 90 days" },
+] as const;
+
 export default function Timeline() {
   const [days, setDays] = useState(30);
 
@@ -229,36 +235,43 @@ export default function Timeline() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-4">
-        {connected.length > 1 && (
-          <select
-            value={effectiveAccountId}
-            onChange={e => setAccountId(e.target.value)}
-            className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 shadow-sm"
-          >
-            {connected.map(a => (
-              <option key={a.id} value={a.id}>{a.label}</option>
-            ))}
-          </select>
-        )}
-        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white overflow-hidden shadow-sm">
-          {[7, 30, 90].map(d => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                days === d
-                  ? "bg-zinc-900 text-white"
-                  : "text-zinc-600 hover:bg-zinc-50"
-              }`}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {connected.length > 1 && (
+            <select
+              value={effectiveAccountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              aria-label="AWS account"
+              className="h-[42px] appearance-none rounded-xl border border-zinc-200 bg-white px-3 pr-8 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] outline-none transition hover:border-zinc-300 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
             >
-              {d}d
-            </button>
-          ))}
+              {connected.map((a) => (
+                <option key={a.id} value={a.id}>{a.label}</option>
+              ))}
+            </select>
+          )}
+
+          <div className="relative">
+            <select
+              value={days}
+              onChange={(e) => setDays(Number(e.target.value))}
+              aria-label="Timeline window"
+              className="h-[42px] appearance-none rounded-xl border border-zinc-200 bg-white pl-3 pr-8 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] outline-none transition hover:border-zinc-300 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+            >
+              {TIMELINE_WINDOWS.map((window) => (
+                <option key={window.value} value={window.value}>
+                  {window.label}
+                </option>
+              ))}
+            </select>
+            <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
         </div>
+
         {data && (
-          <span className="text-sm text-zinc-500">
-            {total} events · {correlated.length} correlated
+          <span className="text-sm tabular-nums text-zinc-500">
+            {total} event{total !== 1 ? "s" : ""} · {correlated.length} correlated
           </span>
         )}
       </div>

@@ -12,6 +12,11 @@ from sqlalchemy.orm import Session
 from app.core.aws import verify_account
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.iam_usage import (
+    unused_services_from_usages,
+    used_actions_from_usages,
+    used_services_from_usages,
+)
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
@@ -190,15 +195,41 @@ def latest_scan_run(account_id: str, p=Depends(current_principal), db: Session =
     )
 
 
-def _clean_policy_doc(doc: dict, unused_set: set[str]) -> tuple[dict, int]:
-    """Return (cleaned_doc, removed_statement_count)."""
+def _actions_for_service(used_actions: list[str], service: str) -> list[str]:
+    prefix = f"{service.lower()}:"
+    return sorted(a for a in used_actions if a.lower().startswith(prefix))
+
+
+def _dedupe_actions(actions: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for action in actions:
+        key = action.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(action)
+    return out
+
+
+def _clean_policy_doc(
+    doc: dict,
+    unused_set: set[str],
+    used_set: set[str],
+    used_actions: list[str],
+) -> tuple[dict, int, int]:
+    """Return (cleaned_doc, removed_statement_count, modified_statement_count)."""
     doc = copy.deepcopy(doc)
     stmts = doc.get("Statement", [])
     if isinstance(stmts, dict):
         stmts = [stmts]
 
+    used_action_keys = {a.lower() for a in used_actions}
+    has_action_data = bool(used_actions)
+
     new_stmts = []
     removed = 0
+    modified = 0
     for stmt in stmts:
         if stmt.get("Effect", "Allow") != "Allow":
             new_stmts.append(stmt)
@@ -206,15 +237,50 @@ def _clean_policy_doc(doc: dict, unused_set: set[str]) -> tuple[dict, int]:
         actions = stmt.get("Action", [])
         if isinstance(actions, str):
             actions = [actions]
-        kept = [a for a in actions if a == "*" or a.split(":")[0].lower() not in unused_set]
+
+        if any(a == "*" for a in actions):
+            if has_action_data:
+                narrowed = list(used_actions)
+            elif used_set:
+                narrowed = sorted(f"{svc}:*" for svc in used_set)
+            else:
+                removed += 1
+                continue
+            stmt = copy.deepcopy(stmt)
+            stmt["Action"] = narrowed if len(narrowed) > 1 else narrowed[0]
+            new_stmts.append(stmt)
+            modified += 1
+            continue
+
+        kept: list[str] = []
+        for action in actions:
+            if action.endswith(":*") and ":" in action:
+                svc = action.split(":")[0].lower()
+                svc_actions = _actions_for_service(used_actions, svc)
+                if svc_actions:
+                    kept.extend(svc_actions)
+                elif not has_action_data and svc not in unused_set:
+                    kept.append(action)
+                continue
+            svc = action.split(":")[0].lower() if ":" in action else ""
+            if has_action_data:
+                if action.lower() in used_action_keys:
+                    kept.append(action)
+            elif svc not in unused_set:
+                kept.append(action)
+
+        kept = _dedupe_actions(kept)
         if not kept:
             removed += 1
             continue
+        stmt = copy.deepcopy(stmt)
         stmt["Action"] = kept if len(kept) > 1 else kept[0]
+        if kept != actions:
+            modified += 1
         new_stmts.append(stmt)
 
     doc["Statement"] = new_stmts
-    return doc, removed
+    return doc, removed, modified
 
 
 @router.get("/{account_id}/roles/generated-policy")
@@ -243,14 +309,10 @@ def generate_role_policy(
     ).all()
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=threshold_days)
-    unused_set = {
-        u.service for u in usages
-        if u.last_authenticated is None or u.last_authenticated < cutoff
-    }
-    used_set = {
-        u.service for u in usages
-        if u.last_authenticated is not None and u.last_authenticated >= cutoff
-    }
+    unused_set = unused_services_from_usages(usages, cutoff)
+    used_set = used_services_from_usages(usages, cutoff)
+    used_actions = used_actions_from_usages(usages, cutoff)
+    granularity = "action" if used_actions else "service"
 
     inline = role.inline_policies or {}
     if not inline:
@@ -259,23 +321,30 @@ def generate_role_policy(
             "has_inline_policies": False,
             "unused_services": sorted(unused_set),
             "used_services": sorted(used_set),
+            "used_actions": used_actions,
+            "granularity": granularity,
             "note": "Role has no inline policies. Permissions come from attached managed policies — review with list-attached-role-policies.",
         }
 
     cleaned_policies: dict = {}
     total_removed = 0
+    total_modified = 0
     for policy_name, doc in inline.items():
-        cleaned, removed = _clean_policy_doc(doc, unused_set)
+        cleaned, removed, modified = _clean_policy_doc(doc, unused_set, used_set, used_actions)
         cleaned_policies[policy_name] = cleaned
         total_removed += removed
+        total_modified += modified
 
     return {
         "role_arn": role_arn,
         "has_inline_policies": True,
         "unused_services": sorted(unused_set),
         "used_services": sorted(used_set),
+        "used_actions": used_actions,
+        "granularity": granularity,
         "threshold_days": threshold_days,
         "statements_removed": total_removed,
+        "statements_modified": total_modified,
         "original_policies": inline,
         "cleaned_policies": cleaned_policies,
     }
@@ -541,8 +610,10 @@ def blast_radius(
         warnings = []
         if running:
             warnings.append(f"{len(running)} running instance(s) currently exposed via this security group rule")
-        if sg.is_default:
-            warnings.append("This is the default security group — removing rules may affect all instances in the VPC that use defaults")
+        elif sg.is_default and affected:
+            warnings.append(
+                f"{len(affected)} instance(s) use this default security group — confirm each has an explicit SG before clearing rules"
+            )
 
         return {
             "resource_type": "security_group",
@@ -631,9 +702,8 @@ def blast_radius(
                 warnings.append("Bucket has no default encryption — enabling SSE-KMS will not re-encrypt existing objects")
 
         elif check_id == "s3.bucket.no_https_policy":
-            warnings.append(
-                "Adds a Deny for aws:SecureTransport=false — any SDK, CLI, or app connecting over plain HTTP will receive 403. Verify all access paths use HTTPS before applying"
-            )
+            confidence = "high"
+            # Verdict covers this — no separate warning box (avoids "safe" + amber caution).
 
         elif check_id == "s3.bucket.public_access_not_blocked":
             if not bucket.public_access_blocked:
@@ -715,10 +785,6 @@ def blast_radius(
         confidence = "low" if running else ("medium" if attached_instances else "high")
 
         warnings = ["Encryption requires a snapshot, an encrypted copy, and a new volume — cannot be done in place"]
-        if running:
-            warnings.append(
-                f"{len(running)} running instance(s) attached — detaching and replacing the volume causes downtime unless the volume is non-root"
-            )
 
         return {
             "resource_type": "ebs_volume",
@@ -738,16 +804,11 @@ def blast_radius(
         unencrypted = db.scalars(
             select(EbsVolume).where(EbsVolume.account_id == acc.id, EbsVolume.encrypted == False)  # noqa: E712
         ).all()
-        warnings = []
-        if unencrypted:
-            warnings.append(
-                f"{len(unencrypted)} existing unencrypted volume(s) — enabling default encryption does not retrofit them; each must be migrated separately"
-            )
         return {
             "resource_type": "ebs_encryption_default",
             "confidence": "high",
             "existing_unencrypted_count": len(unencrypted),
-            "warnings": warnings,
+            "warnings": [],
         }
 
     # ── RDS Instance ─────────────────────────────────────────────────────────
@@ -790,6 +851,28 @@ def blast_radius(
 
     # ── CloudTrail ───────────────────────────────────────────────────────────
     if check_id.startswith("cloudtrail.trail."):
+        if check_id == "cloudtrail.trail.not_enabled":
+            trails = db.scalars(
+                select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)
+            ).all()
+            return {
+                "resource_type": "cloudtrail_account",
+                "confidence": "high",
+                "trail_count": len(trails),
+                "existing_trails": [
+                    {
+                        "name": t.name,
+                        "home_region": t.home_region,
+                        "is_multi_region": t.is_multi_region,
+                        "is_logging": t.is_logging,
+                    }
+                    for t in trails
+                ],
+                "warnings": [
+                    "Creating a trail stores events in S3 — budget ~$2/month per 100k events for typical startup API call volume",
+                ],
+            }
+
         trail = db.scalar(
             select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id, CloudTrailTrail.arn == resource_arn)
         )
@@ -797,14 +880,13 @@ def blast_radius(
             raise HTTPException(status.HTTP_404_NOT_FOUND, "trail not found — run a scan first")
 
         warnings: list[str] = []
-        if check_id == "cloudtrail.trail.not_enabled":
-            confidence = "high"
-            warnings.append("Creating a trail stores events in S3 — budget ~$2/month per 100k events for typical startup API call volume")
-        elif check_id == "cloudtrail.trail.no_log_validation":
+        if check_id == "cloudtrail.trail.no_log_validation":
             confidence = "high"
         elif check_id == "cloudtrail.trail.no_kms":
             confidence = "medium"
             warnings.append("The CloudTrail delivery role must have kms:GenerateDataKey and kms:Decrypt on the chosen key — verify the role policy before applying")
+        else:
+            confidence = "high"
 
         return {
             "resource_type": "cloudtrail_trail",
@@ -842,9 +924,7 @@ def blast_radius(
             "vpc_id": vpc.vpc_id,
             "region": vpc.region,
             "instance_count": instance_count,
-            "warnings": [
-                "Flow logs deliver to CloudWatch Logs or S3 — budget ~$0.50/GB for CloudWatch ingestion in active VPCs"
-            ] if instance_count > 0 else [],
+            "warnings": [],
         }
 
     # ── IAM Root ─────────────────────────────────────────────────────────────
@@ -901,17 +981,12 @@ def blast_radius(
             select(S3Bucket).where(S3Bucket.account_id == acc.id, S3Bucket.public_access_blocked == False)  # noqa: E712
         ).all() if block else []
 
-        warnings: list[str] = []
-        if public_buckets:
-            warnings.append(
-                f"{len(public_buckets)} bucket(s) not blocking public access at the bucket level — enabling the account-level block overrides these and may break static website hosting or public-read buckets"
-            )
-
         return {
             "resource_type": "s3_account_block",
             "confidence": "low" if public_buckets else "medium",
             "public_bucket_count": len(public_buckets),
-            "warnings": warnings,
+            "public_bucket_names": sorted(b.name for b in public_buckets),
+            "warnings": [],
         }
 
     # ── Account-level service enables (GuardDuty, Config, SecurityHub, AccessAnalyzer)

@@ -26,10 +26,13 @@ def _removable_statements(inline_policies: dict, unused_set: set[str]) -> list[d
             actions = stmt.get("Action", [])
             if isinstance(actions, str):
                 actions = [actions]
-            matching = [
-                a for a in actions
-                if a == "*" or a.split(":")[0].lower() in unused_set
-            ]
+            if any(a == "*" for a in actions):
+                matching = ["* (wildcard — narrow to used services)"]
+            else:
+                matching = [
+                    a for a in actions
+                    if a.split(":")[0].lower() in unused_set
+                ]
             if not matching:
                 continue
             resources = stmt.get("Resource", ["*"])

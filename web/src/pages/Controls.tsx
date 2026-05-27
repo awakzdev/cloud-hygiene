@@ -14,7 +14,6 @@ type ControlRow = {
   title: string;
   description: string;
   guidance: string | null;
-  narrative: string | null;
   check_ids: string[];
   status: "pass" | "fail" | "no_data";
   finding_count: number;
@@ -34,38 +33,35 @@ const AUDIT_WINDOWS = [
   { value: 365, label: "Last 365 days" },
 ];
 
-const statusBadge: Record<string, string> = {
-  pass: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  fail: "bg-red-50 text-red-600 border-red-200",
-  no_data: "bg-zinc-50 text-zinc-500 border-zinc-200",
+const statusPill: Record<string, string> = {
+  pass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  fail: "border-red-200 bg-red-50 text-red-600",
+  no_data: "border-zinc-200 bg-zinc-50 text-zinc-500",
 };
 
-const statusLabel: Record<string, string> = {
-  pass: "Pass",
-  fail: "Fail",
-  no_data: "No data",
+const statusAccent: Record<string, string> = {
+  pass: "border-l-emerald-300/80",
+  fail: "border-l-red-300/80",
+  no_data: "border-l-zinc-200",
 };
 
-function StatusIcon({ status }: { status: string }) {
-  if (status === "pass") {
-    return (
-      <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-      </svg>
-    );
+const statusExpandedBg: Record<string, string> = {
+  pass: "bg-emerald-50/20",
+  fail: "bg-red-50/15",
+  no_data: "bg-zinc-50/40",
+};
+
+function statusPillLabel(status: string) {
+  if (status === "no_data") return "N/A";
+  return status;
+}
+
+function shortFamilyLabel(label: string) {
+  const parts = label.split(" ");
+  if (parts.length >= 2 && /^(CC\d|CIS|A\.\d)/.test(parts[0])) {
+    return parts.slice(0, 2).join(" ");
   }
-  if (status === "fail") {
-    return (
-      <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-    </svg>
-  );
+  return label;
 }
 
 type ControlGroup = {
@@ -132,23 +128,6 @@ function shortControlTitle(title: string) {
   return parts.length > 1 ? parts.slice(1).join("—").trim() : title;
 }
 
-function totalFindings(group: ControlGroup) {
-  return group.rows.reduce((sum, row) => sum + row.finding_count, 0);
-}
-
-function findingBadgeClass(count: number) {
-  const base = "inline-flex w-[7rem] items-center justify-center rounded-md border px-2.5 py-1 text-xs tabular-nums";
-  if (count >= 50) return `${base} border-red-300 bg-red-100 font-bold text-red-700`;
-  if (count >= 10) return `${base} border-red-200 bg-red-50 font-semibold text-red-700`;
-  return `${base} border-red-100 bg-red-50/70 font-semibold text-red-600`;
-}
-
-function familyCardClass(active: boolean, group: ControlGroup) {
-  const activeClass = active ? "border-zinc-400 bg-white shadow-sm ring-1 ring-zinc-900/5" : "border-zinc-200 bg-white hover:border-zinc-300 hover:bg-zinc-50/50";
-  const accentClass = group.failed > 0 ? "border-l-red-200" : group.noData === group.rows.length ? "border-l-zinc-300" : "border-l-emerald-200";
-  return `flex min-h-[10rem] flex-col rounded-xl border border-l-4 ${activeClass} ${accentClass} p-3.5 text-left transition-colors`;
-}
-
 function findingLabel(count: number) {
   return `${count} finding${count === 1 ? "" : "s"}`;
 }
@@ -180,11 +159,8 @@ function checkAreas(checkIds: string[]) {
   return Array.from(new Set(areas));
 }
 
-function compactSentence(text: string | null | undefined, fallback: string) {
-  const raw = (text || fallback).replace(/^Evidence:\s*/i, "").trim();
-  const first = raw.match(/[^.!?]+[.!?]/)?.[0] ?? raw;
-  if (first.length <= 150) return first;
-  return `${first.slice(0, 147).trim()}...`;
+function stripEvidencePrefix(text: string) {
+  return text.replace(/^Evidence:\s*/i, "").trim();
 }
 
 function controlTheme(control: ControlRow) {
@@ -215,55 +191,11 @@ function nextStep(control: ControlRow) {
   return "Review the open findings and remediate the mapped checks blocking this control.";
 }
 
-function NarrativeBlock({ text, controlId }: { text: string; controlId: string }) {
-  const [copied, setCopied] = useState(false);
-
-  function copy() {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-          Audit Response — {controlId}
-        </div>
-        <button
-          onClick={copy}
-          className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-900 transition-colors"
-          title="Copy to clipboard"
-        >
-          {copied ? (
-            <>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-              Copied
-            </>
-          ) : (
-            <>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-              Copy
-            </>
-          )}
-        </button>
-      </div>
-      <p className="text-sm text-zinc-700 leading-relaxed">{text}</p>
-    </div>
-  );
-}
-
 export default function Controls() {
   const navigate = useNavigate();
   const [framework, setFramework] = useState("soc2");
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState<string | null>(null);
-  const [copiedControlId, setCopiedControlId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [period, setPeriod] = useState(90);
 
@@ -288,10 +220,16 @@ export default function Controls() {
   const failed = rows.filter((r) => r.status === "fail").length;
   const noData = rows.filter((r) => r.status === "no_data").length;
   const total = rows.length;
-  const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+  const passPct = total > 0 ? (passed / total) * 100 : 0;
+  const failPct = total > 0 ? (failed / total) * 100 : 0;
+  const noDataPct = total > 0 ? (noData / total) * 100 : 0;
   const groupedRows = useMemo(() => groupControls(rows, framework), [rows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
-  const selectedFramework = FRAMEWORKS.find((fw) => fw.id === framework) ?? FRAMEWORKS[0];
+  const topBlocker = useMemo(() => {
+    const failing = rows.filter((row) => row.status === "fail");
+    if (failing.length === 0) return null;
+    return failing.reduce((worst, row) => (row.finding_count > worst.finding_count ? row : worst));
+  }, [rows]);
 
   async function downloadPack() {
     if (!connectedAccount) return;
@@ -317,390 +255,284 @@ export default function Controls() {
     }
   }
 
-  function copyAuditResponse(control: ControlRow) {
-    if (!control.narrative) return;
-    navigator.clipboard.writeText(control.narrative);
-    setCopiedControlId(control.id);
-    setTimeout(() => setCopiedControlId(null), 2000);
-  }
-
   return (
-    <div className="w-full space-y-4 px-8 py-5">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Compliance</h1>
-          <p className="mt-1 text-sm text-zinc-500">Control status against selected frameworks.</p>
+    <div className="w-full px-8 py-7">
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            {controls.isLoading ? (
+              "Loading control status…"
+            ) : total === 0 ? (
+              "Control status against selected frameworks."
+            ) : (
+              <>
+                <span className="font-medium text-zinc-700">
+                  {passed} of {total} passing
+                </span>
+                {failed > 0 && (
+                  <>
+                    {" · "}
+                    <span className="text-red-600">{failed} failing</span>
+                  </>
+                )}
+                {noData > 0 && (
+                  <>
+                    {" · "}
+                    <span>{noData} no data</span>
+                  </>
+                )}
+                {topBlocker && (
+                  <>
+                    {" · "}
+                    <span className="text-zinc-600">
+                      start with {topBlocker.control_id} ({findingLabel(topBlocker.finding_count)})
+                    </span>
+                  </>
+                )}
+              </>
+            )}
+          </p>
+          {!controls.isLoading && total > 0 && (
+            <div className="mt-2.5 flex h-1 max-w-sm overflow-hidden rounded-full bg-zinc-100">
+              {passPct > 0 && (
+                <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${passPct}%` }} />
+              )}
+              {failPct > 0 && (
+                <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${failPct}%` }} />
+              )}
+              {noDataPct > 0 && (
+                <div className="h-full bg-zinc-300 transition-all duration-500" style={{ width: `${noDataPct}%` }} />
+              )}
+            </div>
+          )}
         </div>
 
-        <div className="inline-flex items-center self-start rounded-lg border border-zinc-200 bg-white p-1 shadow-sm" aria-label="Framework">
-          {FRAMEWORKS.map((fw) => (
-            <button
-              key={fw.id}
-              onClick={() => {
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <div className="inline-flex items-center rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" aria-label="Framework">
+            {FRAMEWORKS.map((fw) => (
+              <button
+                key={fw.id}
+                onClick={() => {
                 setFramework(fw.id);
                 setSelectedFamilyKey(null);
                 setExpanded(null);
-                setDetailsOpen(null);
               }}
-              className={`rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${
-                framework === fw.id
-                  ? "bg-zinc-900 text-white shadow-sm"
-                  : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-              }`}
+                className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                  framework === fw.id
+                    ? "bg-zinc-950 text-white shadow-sm"
+                    : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+                }`}
+              >
+                {fw.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative">
+            <select
+              id="audit-window"
+              value={period}
+              onChange={(e) => setPeriod(Number(e.target.value))}
+              aria-label="Audit window"
+              className="h-[42px] appearance-none rounded-xl border border-zinc-200 bg-white pl-3 pr-8 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] outline-none transition hover:border-zinc-300 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
             >
-              {fw.label}
-            </button>
-          ))}
+              {AUDIT_WINDOWS.map((window) => (
+                <option key={window.value} value={window.value}>
+                  {window.label}
+                </option>
+              ))}
+            </select>
+            <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+
+          <button
+            onClick={downloadPack}
+            disabled={downloading || !connectedAccount}
+            className="inline-flex h-[42px] items-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {downloading ? (
+              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            {downloading ? "Generating…" : "Download package"}
+          </button>
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-        <div className="grid lg:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)]">
-          <div className="p-4">
-            <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight text-zinc-950">{selectedFramework.postureLabel}</h2>
-              <p className="mt-0.5 text-xs text-zinc-500">{selectedFramework.fullLabel} controls evaluated from current evidence.</p>
-            </div>
-          </div>
-
-            <div className="mt-3 flex flex-col gap-3">
-              <div className="flex items-end gap-2">
-                <div className="text-3xl font-semibold leading-none tracking-tight text-zinc-950 tabular-nums">
-                  {controls.isLoading ? "..." : `${passRate}%`}
-                </div>
-                <div className="pb-0.5 text-xs font-medium text-zinc-500">pass rate</div>
-              </div>
-
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-700"
-                  style={{ width: controls.isLoading ? "0%" : `${passRate}%` }}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 border-t border-zinc-100 pt-2 sm:grid-cols-4 sm:divide-x sm:divide-zinc-100">
-                {[
-                  { value: failed, label: "failing controls", valueClass: "text-red-600" },
-                  { value: passed, label: "passing controls", valueClass: "text-emerald-700" },
-                  { value: noData, label: "no-data controls", valueClass: "text-zinc-600" },
-                  { value: total, label: "total controls", valueClass: "text-zinc-900" },
-                ].map((item) => (
-                  <div key={item.label} className="border-t border-zinc-100 px-3 py-0.5 first:border-t-0 first:pl-0 sm:border-t-0">
-                    <div className={`text-base font-semibold tabular-nums ${controls.isLoading ? "text-zinc-300" : item.valueClass}`}>
-                      {controls.isLoading ? "..." : item.value}
-                    </div>
-                    <div className="text-[11px] font-medium text-zinc-500">{item.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-zinc-100 bg-zinc-50/50 p-4 lg:border-l lg:border-t-0">
-            <div>
-              <h2 className="text-sm font-semibold text-zinc-950">Audit export</h2>
-              <p className="mt-1 text-xs leading-5 text-zinc-500">
-                Download an evidence package for the selected audit window. Includes findings, snapshots, and PDF report.
-              </p>
-            </div>
-
-            <div className="pt-3">
-              <label className="block text-[11px] font-semibold uppercase tracking-wide text-zinc-400" htmlFor="audit-window">
-                Audit window
-              </label>
-              <div className="relative mt-1.5">
-                <select
-                  id="audit-window"
-                  value={period}
-                  onChange={(e) => setPeriod(Number(e.target.value))}
-                  className="h-8 w-full appearance-none rounded-lg border border-zinc-200 bg-white px-3 pr-9 text-sm font-medium text-zinc-800 shadow-sm outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-950/[0.06]"
-                >
-                  {AUDIT_WINDOWS.map((window) => (
-                    <option key={window.value} value={window.value}>
-                      {window.label}
-                    </option>
-                  ))}
-                </select>
-                <svg className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-
-              <button
-                onClick={downloadPack}
-                disabled={downloading || !connectedAccount}
-                className="mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-900 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400"
-              >
-                {downloading ? (
-                  <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                  </svg>
-                ) : (
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                )}
-                {downloading ? "Generating package..." : "Download package"}
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <div>
-            <h2 className="text-base font-semibold text-zinc-950">Control families</h2>
-            <p className="mt-1 text-sm text-zinc-500">{selectedFramework.label} controls grouped by audit area.</p>
-          </div>
-        </div>
-
+      <section>
         {controls.isLoading && (
-          <div className="rounded-xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">Loading controls...</div>
+          <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">Loading controls…</div>
         )}
         {!controls.isLoading && rows.length === 0 && (
-          <div className="rounded-xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
+          <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
             No controls found.{!connectedAccount && " Connect an AWS account to see compliance status."}
           </div>
         )}
 
-        {!controls.isLoading && groupedRows.length > 0 && (
-          <>
-            <div className="grid gap-3 xl:grid-cols-3">
-              {groupedRows.map((group) => {
-                const isSelected = selectedGroup?.key === group.key;
-                const findings = totalFindings(group);
-                const previewRows = (group.failed > 0 ? group.rows.filter((row) => row.status === "fail") : group.rows).slice(0, 3);
+        {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
+          <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
+            <div className="flex flex-col gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" role="tablist" aria-label="Control families">
+                {groupedRows.map((group) => {
+                  const isSelected = selectedGroup.key === group.key;
+                  return (
+                    <button
+                      key={group.key}
+                      role="tab"
+                      aria-selected={isSelected}
+                      title={group.label}
+                      onClick={() => {
+                        setSelectedFamilyKey(group.key);
+                        setExpanded(null);
+                      }}
+                      className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                        isSelected
+                          ? "bg-zinc-950 text-white shadow-sm"
+                          : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+                      }`}
+                    >
+                      {shortFamilyLabel(group.label)}
+                      {group.failed > 0 && (
+                        <span className={isSelected ? "text-white/70" : "text-red-500"}> · {group.failed}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="shrink-0 text-xs font-medium text-zinc-400">{selectedGroup.label}</span>
+            </div>
+
+            <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-100 px-4 py-2 sm:px-5">
+              <span className="w-3.5" />
+              <span className="w-[52px]" />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Control</span>
+              <span className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Findings</span>
+            </div>
+
+            <div className="divide-y divide-zinc-100">
+              {selectedGroup.rows.map((ctrl) => {
+                const isExpanded = expanded === ctrl.id;
+                const areas = checkAreas(ctrl.check_ids);
                 return (
-                  <button
-                    key={group.key}
-                    onClick={() => {
-                      setSelectedFamilyKey(group.key);
-                      setExpanded(null);
-                      setDetailsOpen(null);
-                    }}
-                    className={familyCardClass(isSelected, group)}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-[15px] font-semibold leading-6 text-zinc-950">{group.label}</h3>
-                        <p className="text-xs text-zinc-400">{group.rows.length} controls in scope</p>
-                      </div>
-                      <span className={`rounded-md border px-2 py-1 text-xs font-semibold ${
-                        group.failed > 0
-                          ? "border-red-100 bg-red-50 text-red-600"
-                          : group.noData === group.rows.length
-                            ? "border-zinc-200 bg-zinc-50 text-zinc-500"
-                          : "border-emerald-100 bg-emerald-50 text-emerald-700"
-                      }`}>
-                        {group.failed > 0 ? `${group.failed} failing` : group.noData === group.rows.length ? "No data" : "All clear"}
+                  <div key={ctrl.id}>
+                    <button
+                      onClick={() => setExpanded(isExpanded ? null : ctrl.id)}
+                      className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 py-3 pl-4 pr-4 text-left transition-colors sm:pl-5 sm:pr-5 ${statusAccent[ctrl.status]} ${
+                        isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/80"
+                      }`}
+                    >
+                      <svg
+                        className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${isExpanded ? "text-zinc-600" : "-rotate-90 text-zinc-400"}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+
+                      <span
+                        className={`inline-block w-[52px] shrink-0 rounded border py-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${statusPill[ctrl.status]}`}
+                      >
+                        {statusPillLabel(ctrl.status)}
                       </span>
-                    </div>
 
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-left">
-                      <div>
-                        <div className="text-lg font-semibold tabular-nums text-red-600">{group.failed}</div>
-                        <div className="text-xs text-zinc-500">failing</div>
-                      </div>
-                      <div>
-                        <div className="text-lg font-semibold tabular-nums text-emerald-700">{group.passed}</div>
-                        <div className="text-xs text-zinc-500">passing</div>
-                      </div>
-                      <div>
-                        <div className="text-lg font-semibold tabular-nums text-zinc-800">{findings}</div>
-                        <div className="text-xs text-zinc-500">findings</div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 space-y-1.5">
-                      {previewRows.map((ctrl) => (
-                        <div key={ctrl.id} className="flex items-center justify-between gap-3 text-xs">
-                          <span className="truncate text-zinc-700">
-                            <span className="font-mono text-xs font-semibold text-zinc-500">{ctrl.control_id}</span>{" "}
-                            {shortControlTitle(ctrl.title)}
-                          </span>
-                          <span className={`shrink-0 font-semibold tabular-nums ${
-                            ctrl.status === "fail" ? "text-red-600" : ctrl.status === "pass" ? "text-emerald-700" : "text-zinc-400"
-                          }`}>
-                            {ctrl.status === "fail" ? ctrl.finding_count : statusLabel[ctrl.status]}
-                          </span>
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-zinc-900">
+                          <span className="font-mono text-xs font-medium text-zinc-500">{ctrl.control_id}</span>
+                          <span className="mx-1.5 text-zinc-300">·</span>
+                          {shortControlTitle(ctrl.title)}
                         </div>
-                      ))}
-                    </div>
-                  </button>
+                      </div>
+
+                      <div className="shrink-0 text-right tabular-nums">
+                        {ctrl.status === "fail" ? (
+                          <span className={`text-sm font-semibold ${ctrl.finding_count >= 10 ? "text-red-600" : "text-red-500"}`}>
+                            {ctrl.finding_count}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-medium text-zinc-300">—</span>
+                        )}
+                      </div>
+                    </button>
+
+                    {isExpanded && (
+                      <div className={`border-t border-zinc-100/80 px-4 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold leading-snug text-zinc-900">{failureSummary(ctrl)}</p>
+                            <p className="mt-1.5 text-sm leading-relaxed text-zinc-600">{nextStep(ctrl)}</p>
+                          </div>
+                          {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
+                            <button
+                              onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
+                              className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-700"
+                            >
+                              View {findingLabel(ctrl.finding_count)}
+                              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+
+                        {areas.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {areas.map((area) => (
+                              <span key={area} className="rounded-md bg-white/80 px-2 py-0.5 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
+                                {area}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-950/[0.03]">
+                          <p className="text-sm leading-relaxed text-zinc-600">{ctrl.description}</p>
+
+                          {(ctrl.guidance || ctrl.check_ids.length > 0) && (
+                            <div className="mt-3 border-t border-zinc-100 pt-3">
+                              {ctrl.guidance && (
+                                <>
+                                  <p className="vigil-kicker mb-1.5">Evidence to collect</p>
+                                  <p className="text-sm leading-relaxed text-zinc-800">{stripEvidencePrefix(ctrl.guidance)}</p>
+                                </>
+                              )}
+
+                              {ctrl.check_ids.length > 0 && (
+                                <div className={ctrl.guidance ? "mt-3 border-t border-zinc-100 pt-3" : ""}>
+                                  <p className="vigil-kicker mb-2">
+                                    {ctrl.check_ids.length} mapped check{ctrl.check_ids.length === 1 ? "" : "s"}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1">
+                                    {ctrl.check_ids.map((cid) => (
+                                      <code
+                                        key={cid}
+                                        className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] leading-5 text-zinc-600"
+                                      >
+                                        {cid}
+                                      </code>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
-
-            {selectedGroup && (
-              <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
-                <div className="flex items-start justify-between gap-4 border-b border-zinc-100 bg-white px-4 py-3">
-                  <div>
-                    <h3 className="text-base font-semibold text-zinc-950">Selected family: {selectedGroup.label}</h3>
-                    <p className="mt-1 text-sm text-zinc-500">
-                      {selectedGroup.rows.length} controls · {selectedGroup.failed} failing · {selectedGroup.passed} passing · {totalFindings(selectedGroup)} findings
-                    </p>
-                  </div>
-                </div>
-
-                <div className="divide-y divide-zinc-100">
-                  {selectedGroup.rows.map((ctrl) => {
-                    const isExpanded = expanded === ctrl.id;
-                    return (
-                      <div key={ctrl.id}>
-                        <button
-                          onClick={() => {
-                            setExpanded(isExpanded ? null : ctrl.id);
-                            setDetailsOpen(null);
-                          }}
-                          className={`grid w-full grid-cols-[1.75rem_4.75rem_minmax(0,1fr)_7rem_1.25rem] items-center gap-2.5 px-4 py-3 text-left transition-colors hover:bg-zinc-50 group ${
-                            isExpanded ? "bg-zinc-50/70" : "bg-white"
-                          }`}
-                        >
-                          <div className={`flex h-7 w-7 items-center justify-center rounded-full border ${statusBadge[ctrl.status]}`}>
-                            <StatusIcon status={ctrl.status} />
-                          </div>
-
-                          <span className="font-mono text-xs font-semibold text-zinc-500">{ctrl.control_id}</span>
-
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium leading-6 text-zinc-950">{shortControlTitle(ctrl.title)}</div>
-                            <div className="text-xs text-zinc-400">{statusLabel[ctrl.status]}</div>
-                          </div>
-
-                          <div className="justify-self-end">
-                            {ctrl.status === "fail" && (
-                              <span className={findingBadgeClass(ctrl.finding_count)}>{findingLabel(ctrl.finding_count)}</span>
-                            )}
-                            {ctrl.status === "pass" && (
-                              <span className="inline-flex w-[6rem] items-center justify-center rounded-md border border-emerald-100 bg-emerald-50/70 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                                All clear
-                              </span>
-                            )}
-                            {ctrl.status === "no_data" && (
-                              <span className="inline-flex w-[6rem] items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-400">
-                                No data
-                              </span>
-                            )}
-                          </div>
-
-                          <svg
-                            className={`h-4 w-4 justify-self-end text-zinc-300 transition-transform group-hover:text-zinc-500 ${isExpanded ? "rotate-180" : ""}`}
-                            fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-
-                        {isExpanded && (
-                          <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 pb-4 pt-3">
-                            <div className={`grid gap-4 ${detailsOpen === ctrl.id ? "2xl:grid-cols-[minmax(0,0.95fr)_minmax(380px,1.05fr)]" : ""}`}>
-                              <div className="space-y-3 md:pl-[6.75rem]">
-                                <div>
-                                  <p className="text-[15px] font-medium leading-6 text-zinc-950">{failureSummary(ctrl)}</p>
-                                  <p className="mt-1 text-sm leading-6 text-zinc-600">{nextStep(ctrl)}</p>
-                                </div>
-
-                                {checkAreas(ctrl.check_ids).length > 0 && (
-                                  <div>
-                                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Top affected areas</div>
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {checkAreas(ctrl.check_ids).slice(0, 6).map((area) => (
-                                        <span key={area} className="rounded-md border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600">
-                                          {area}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
-                                  <span>
-                                    <span className="font-medium text-zinc-700">Evidence expected:</span>{" "}
-                                    {compactSentence(ctrl.guidance, ctrl.description)}
-                                  </span>
-                                  <span>
-                                    <span className="font-medium text-zinc-700">Checks mapped:</span>{" "}
-                                    {ctrl.check_ids.length}
-                                  </span>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
-                                    <button
-                                      onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
-                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-zinc-800"
-                                    >
-                                      View {findingLabel(ctrl.finding_count)}
-                                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                                      </svg>
-                                    </button>
-                                  )}
-                                  {ctrl.narrative && (
-                                    <button
-                                      onClick={() => copyAuditResponse(ctrl)}
-                                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
-                                    >
-                                      {copiedControlId === ctrl.id ? "Copied response" : "Copy audit response"}
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => setDetailsOpen(detailsOpen === ctrl.id ? null : ctrl.id)}
-                                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-950"
-                                  >
-                                    {detailsOpen === ctrl.id ? "Hide details" : "Show details"}
-                                    <svg
-                                      className={`h-3.5 w-3.5 transition-transform ${detailsOpen === ctrl.id ? "rotate-180" : ""}`}
-                                      fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
-                                    >
-                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                    </svg>
-                                  </button>
-                                </div>
-                              </div>
-
-                              {detailsOpen === ctrl.id && (
-                                <aside className="space-y-3 border-t border-zinc-200 pt-4 2xl:border-l 2xl:border-t-0 2xl:pl-5 2xl:pt-0">
-                                  <p className="text-sm leading-6 text-zinc-600">{ctrl.description}</p>
-
-                                  {ctrl.guidance && (
-                                    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3">
-                                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Full guidance</div>
-                                      <p className="text-sm leading-6 text-zinc-700">{ctrl.guidance}</p>
-                                    </div>
-                                  )}
-
-                                  {ctrl.narrative && (
-                                    <NarrativeBlock text={ctrl.narrative} controlId={ctrl.control_id} />
-                                  )}
-
-                                  {ctrl.check_ids.length > 0 && (
-                                    <div>
-                                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">Mapped check IDs</div>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {ctrl.check_ids.map((cid) => (
-                                          <span key={cid} className="rounded-md border border-zinc-200 bg-white px-2 py-0.5 font-mono text-xs text-zinc-600">
-                                            {cid}
-                                          </span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                </aside>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-          </>
+          </div>
         )}
       </section>
 

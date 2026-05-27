@@ -1,6 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api";
+import { useAccountScanRun } from "../hooks/useAccountScanRun";
+import { useIntegrationSyncState } from "../hooks/useIntegrationSyncState";
 
 type ProviderSummary = {
   id: string;
@@ -36,6 +39,15 @@ function GitLabMark({ className = "h-6 w-6" }: { className?: string }) {
   );
 }
 
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={`animate-spin ${className}`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
 type IntegrationCardProps = {
   name: string;
   description: string;
@@ -44,10 +56,12 @@ type IntegrationCardProps = {
   href: string;
   provider: ProviderSummary | null | undefined;
   isLoading: boolean;
+  isSyncing: boolean;
 };
 
-function IntegrationCard({ name, description, icon, iconBg, href, provider, isLoading }: IntegrationCardProps) {
+function IntegrationCard({ name, description, icon, iconBg, href, provider, isLoading, isSyncing }: IntegrationCardProps) {
   const connected = !!provider;
+
   return (
     <div className="flex flex-col rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
       <div className="flex items-start justify-between gap-4">
@@ -61,17 +75,27 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
           </div>
         </div>
         <span
-          className={`mt-0.5 shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
-            connected
-              ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-              : "bg-zinc-100 text-zinc-500 ring-zinc-200"
+          className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
+            isSyncing
+              ? "bg-indigo-50 text-indigo-700 ring-indigo-200"
+              : connected
+                ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                : "bg-zinc-100 text-zinc-500 ring-zinc-200"
           }`}
         >
-          {isLoading ? "—" : connected ? "Connected" : "Not connected"}
+          {isSyncing && <Spinner className="h-3 w-3" />}
+          {isLoading ? "—" : isSyncing ? "Syncing" : connected ? "Connected" : "Not connected"}
         </span>
       </div>
 
-      {connected && provider && (
+      {isSyncing && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-sm text-indigo-800">
+          <Spinner className="h-3.5 w-3.5 text-indigo-500" />
+          <span>Collecting evidence from {name}…</span>
+        </div>
+      )}
+
+      {connected && provider && !isSyncing && (
         <div className="mt-5 grid grid-cols-[minmax(0,1.35fr)_minmax(72px,0.65fr)_minmax(72px,0.65fr)] gap-4 border-t border-zinc-100 pt-4 text-sm">
           {[
             { label: "Last sync", value: formatSync(provider.last_synced_at) },
@@ -99,6 +123,9 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
 }
 
 export default function Integrations() {
+  const qc = useQueryClient();
+  const prevScanStatus = useRef<string | null>(null);
+
   const github = useQuery({
     queryKey: ["github-provider"],
     queryFn: () => api<ProviderSummary | null>("/v1/integrations/github"),
@@ -109,6 +136,27 @@ export default function Integrations() {
     queryFn: () => api<ProviderSummary | null>("/v1/integrations/gitlab"),
   });
 
+  const accounts = useQuery({
+    queryKey: ["accounts"],
+    queryFn: () => api<{ id: string; status: string }[]>("/v1/accounts"),
+  });
+  const connectedAccountId = accounts.data?.find((a) => a.status === "connected")?.id;
+  const { isRunning: awsScanRunning, scanStatus } = useAccountScanRun(connectedAccountId);
+  const githubSync = useIntegrationSyncState("github");
+  const gitlabSync = useIntegrationSyncState("gitlab");
+
+  useEffect(() => {
+    if (prevScanStatus.current === "running" && scanStatus === "ok") {
+      qc.invalidateQueries({ queryKey: ["github-provider"] });
+      qc.invalidateQueries({ queryKey: ["gitlab-provider"] });
+      qc.invalidateQueries({ queryKey: ["controls"] });
+      qc.invalidateQueries({ queryKey: ["findings"] });
+    }
+    prevScanStatus.current = scanStatus;
+  }, [scanStatus, qc]);
+
+  const showActivityBanner = githubSync.isSyncing || gitlabSync.isSyncing || awsScanRunning;
+
   return (
     <div className="mx-auto max-w-6xl space-y-8">
       <div>
@@ -117,6 +165,28 @@ export default function Integrations() {
           Connect identity and change-management sources to collect compliance evidence alongside AWS.
         </p>
       </div>
+
+      {showActivityBanner && (
+        <div className="overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/80">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-3 text-sm text-indigo-800">
+            <Spinner className="h-4 w-4 shrink-0 text-indigo-500" />
+            <span className="font-semibold">
+              {[
+                githubSync.isSyncing && "GitHub sync",
+                gitlabSync.isSyncing && "GitLab sync",
+                awsScanRunning && "AWS scan",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              {" in progress"}
+            </span>
+            <span className="text-indigo-600/75">— findings and compliance refresh when complete</span>
+          </div>
+          <div className="h-0.5 bg-indigo-100">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-indigo-400" />
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         <IntegrationCard
@@ -127,6 +197,7 @@ export default function Integrations() {
           href="/integrations/github"
           provider={github.data ?? null}
           isLoading={github.isLoading}
+          isSyncing={githubSync.isSyncing}
         />
         <IntegrationCard
           name="GitLab"
@@ -136,6 +207,7 @@ export default function Integrations() {
           href="/integrations/gitlab"
           provider={gitlab.data ?? null}
           isLoading={gitlab.isLoading}
+          isSyncing={gitlabSync.isSyncing}
         />
       </div>
     </div>

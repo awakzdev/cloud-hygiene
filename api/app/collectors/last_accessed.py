@@ -19,8 +19,8 @@ from app.models import AwsAccount, IamPermUsage, IamRole
 
 log = structlog.get_logger()
 
-_COLLECT_WAIT = 3    # seconds to wait after submitting all jobs before collecting
-_POLL_MAX = 5        # collect-phase retries per job (5s max per job)
+_COLLECT_WAIT = 8    # seconds to wait after submitting all jobs before collecting
+_POLL_MAX = 12       # collect-phase retries per job
 _ROLE_LIMIT = 100    # process up to 100 non-service roles per scan
 
 
@@ -80,9 +80,22 @@ def _collect_job(db: Session, iam, account_id, role_arn: str, job_id: str) -> in
 
 
 def _upsert(db: Session, account_id, principal_arn: str, svc: dict) -> None:
-    # Extract action names from ACTION_LEVEL response (absent in SERVICE_LEVEL)
+    service_ns = (svc.get("ServiceNamespace") or "").lower()
     action_entries = svc.get("ActionLastAccessed", [])
-    actions = [a["ActionName"] for a in action_entries if a.get("ActionName")] if action_entries else None
+    actions = None
+    if action_entries:
+        actions = []
+        for a in action_entries:
+            name = a.get("ActionName")
+            la = a.get("LastAuthenticated")
+            if not name or la is None:
+                continue
+            if ":" not in name and service_ns:
+                name = f"{service_ns}:{name}"
+            if hasattr(la, "isoformat"):
+                la = la.isoformat()
+            actions.append({"action": name, "last_authenticated": la})
+        actions = actions or None
 
     stmt = pg_insert(IamPermUsage).values(
         id=uuid.uuid4(),

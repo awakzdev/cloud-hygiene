@@ -660,6 +660,25 @@ policy analysis, onboarding empty state.
 5. TOTP MFA (deferred to Phase 1.5)
 6. Phase 3 is now **complete** — all GitHub/GitLab checks, identity evidence, change management evidence, timeline correlation, and CI/CD pipeline collection are shipped
 
+**Session 14 additions (2026-05-27):**
+- **Finding drawer / What If polish**: deduplicated verdict vs warning vs info boxes (S3 HTTPS, EBS default encryption, AWS Config, default SG); green verdict + zinc info pattern (VPC flow logs cost, service-enable costs); SG metadata shows `sg-` id + Default badge with separate VPC and Region fields
+- **IAM least-privilege policy generation**: wildcard `Action: *` narrows to per-action grants from IAM last-accessed (`actions_json` with service prefix fix); `iam_usage.py` helper; collector poll wait increased; Generate/What If cache busts on `last_seen`
+- **What If console links**: attached-policy "Edit policy" / "Detach + replace" open IAM Console
+- **CloudTrail account blast radius**: account-level handler for synthetic trail ARN
+- **Findings UX**: removed Snooze/Ignored tabs; scan progress bar; Compliance/Accounts/Integrations polish
+- **S3 HTTPS finding**: severity lowered to low; messaging reframed as defense-in-depth
+- **Timeline period selector**: replaced cramped 7d/30d/90d button group with Compliance-matching dropdown ("Last 7/30/90 days")
+- **Tests**: `test_policy_clean.py`, `test_iam_usage.py` (46+ checks passing)
+
+**Remaining gaps after session 14:**
+
+1. `alembic upgrade head` — migrations 0019–0024 (run on next deploy)
+2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+3. Hetzner deploy (deferred)
+4. Stripe (deferred)
+5. TOTP MFA (deferred to Phase 1.5)
+6. Re-scan production account to populate action-level `actions_json` after collector fix
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change

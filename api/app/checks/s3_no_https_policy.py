@@ -21,8 +21,8 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             check_id=CHECK_ID,
             resource_arn=b.arn,
             title=f"S3 bucket `{b.name}` has no HTTPS-only bucket policy",
-            severity="medium",
-            risk_score=score("medium"),
+            severity="low",
+            risk_score=score("low"),
             evidence={"bucket_name": b.name},
         )
         for b in rows

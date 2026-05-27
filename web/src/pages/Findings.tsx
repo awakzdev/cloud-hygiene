@@ -4,6 +4,8 @@ import { useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
+import ScanProgressBar from "../components/ScanProgressBar";
+import { saveScanDurationMs, useScanProgress } from "../hooks/useScanProgress";
 
 type Finding = {
   id: string;
@@ -147,7 +149,7 @@ const checkDescriptions: Record<string, string> = {
   "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
   "s3.account.public_access_not_blocked": "Enable account-level S3 Block Public Access to guard every bucket by default.",
   "s3.bucket.public_access_not_blocked": "Enable all four Block Public Access settings to prevent accidental exposure.",
-  "s3.bucket.no_https_policy": "Add a bucket policy that denies requests where aws:SecureTransport is false.",
+  "s3.bucket.no_https_policy": "Add a deny-HTTP bucket policy — low blast radius; blocks legacy http:// clients, not modern SDKs.",
   "s3.bucket.no_kms": "Enable SSE-KMS to use customer-managed keys for encryption at rest.",
   "s3.bucket.no_logging": "Enable server access logging for audit and forensic visibility.",
   "kms.key.no_rotation": "Enable annual automatic rotation for customer-managed KMS keys.",
@@ -185,8 +187,21 @@ const checkDescriptions: Record<string, string> = {
   "gitlab.repo.insufficient_reviews": "Merge requests merged with fewer approvals than required.",
 };
 
-const statusTabs = ["open", "excepted", "ignored", "resolved", "all"] as const;
+const statusTabs = ["open", "excepted", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
+
+const statusTabLabels: Record<StatusTab, string> = {
+  open: "Open",
+  excepted: "Exceptions",
+  resolved: "Resolved",
+  all: "All",
+};
+
+function emptyFindingsLabel(status: StatusTab): string {
+  if (status === "all") return "No findings";
+  if (status === "excepted") return "No exceptions";
+  return `No ${status} findings`;
+}
 type SeverityFilter = "all" | "critical_high" | "medium" | "low";
 type SortKey = "severity" | "score" | "first_seen";
 
@@ -544,12 +559,19 @@ export default function Findings() {
   const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
   const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
   const isRunning = scanStatus === "running" && !scanStuck;
+  const isScanActive = scanTriggered || isRunning;
+  const scanProgress = useScanProgress(isScanActive, isRunning ? scanStartedAt : null);
 
   useEffect(() => {
-    if (prevScanStatus.current === "running" && scanStatus === "ok") qc.invalidateQueries({ queryKey: ["findings"] });
+    if (prevScanStatus.current === "running" && scanStatus === "ok") {
+      qc.invalidateQueries({ queryKey: ["findings"] });
+      if (scanRun.data?.started_at && scanRun.data?.finished_at) {
+        saveScanDurationMs(scanRun.data.started_at, scanRun.data.finished_at);
+      }
+    }
     if (scanStatus === "running") setScanTriggered(false);
     prevScanStatus.current = scanStatus;
-  }, [scanStatus, qc]);
+  }, [scanStatus, qc, scanRun.data?.started_at, scanRun.data?.finished_at]);
 
   useEffect(() => {
     if (isRefreshing && !q.isFetching) {
@@ -570,7 +592,7 @@ export default function Findings() {
     onError: () => setScanTriggered(false),
   });
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "recheck" | "resolve" | "ignore" }) =>
+    mutationFn: ({ id, action }: { id: string; action: "recheck" | "resolve" }) =>
       api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
     onSuccess: (_data, { action }) => {
       if (action === "recheck") {
@@ -689,28 +711,37 @@ export default function Findings() {
         </div>
       </div>
 
-      {isRunning && <div className="mb-4 inline-flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700"><svg className="h-3.5 w-3.5 flex-shrink-0 animate-spin opacity-70" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>Scan running — findings will refresh automatically on completion.</div>}
+      {isScanActive && (
+        <ScanProgressBar
+          phase={isRunning ? "running" : "starting"}
+          progress={scanProgress.progress}
+          elapsedMs={scanProgress.elapsedMs}
+          remainingMs={scanProgress.remainingMs}
+          finishing={scanProgress.finishing}
+          indeterminate={scanProgress.indeterminate}
+        />
+      )}
       {scanStatus === "error" && scanRun.data?.error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><span className="font-semibold">Last scan failed:</span> {scanRun.data.error}</div>}
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {summaryCards.map((card) => (
           <button
             key={card.key}
             onClick={() => setSeverityFilter(card.key)}
-            className={`group relative overflow-hidden rounded-2xl border px-5 py-4 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md ${card.glow || "bg-white"} ${severityFilter === card.key ? "border-zinc-300 ring-4 ring-zinc-950/[0.04]" : "border-zinc-200"}`}
+            className={`group relative overflow-hidden rounded-xl border px-4 py-3 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:border-zinc-300 hover:shadow-md ${card.glow || "bg-white"} ${severityFilter === card.key ? "border-zinc-300 ring-2 ring-zinc-950/[0.04]" : "border-zinc-200"}`}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{card.label}</span>
-              <span className={`h-2 w-2 rounded-full ${card.dot}`} />
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.13em] text-zinc-500">{card.label}</span>
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${card.dot}`} />
             </div>
-            <div className={`text-[2.75rem] font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div>
-            <div className="mt-2.5 text-xs font-medium text-zinc-500 tabular-nums">{card.hint}</div>
+            <div className={`text-[2rem] font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div>
+            <div className="mt-1.5 truncate text-xs font-medium tabular-nums text-zinc-500">{card.hint}</div>
           </button>
         ))}
       </div>
 
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex w-fit items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold capitalize transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"}`}>{s}</button>)}</div>
+        <div className="flex w-fit items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"}`}>{statusTabLabels[s]}</button>)}</div>
         <div className="flex items-center gap-2">
           <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} />
           <div className="flex h-10 items-center gap-0.5 rounded-xl border border-zinc-200 bg-white px-1.5 shadow-sm">{(["severity", "score", "first_seen"] as SortKey[]).map((k) => <button key={k} onClick={() => toggleSort(k)} className={`inline-flex h-7 items-center gap-1 rounded-lg px-3 text-sm font-medium transition-all ${sortKey === k ? "bg-zinc-100 text-zinc-950 font-semibold" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"}`}>{sortLabel(k)}{sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}</button>)}</div>
@@ -718,7 +749,7 @@ export default function Findings() {
       </div>
 
       {q.isLoading && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">Loading…</div>}
-      {!q.isLoading && rows.length === 0 && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center"><p className="text-sm font-semibold text-zinc-700">No {status} findings</p><p className="mt-1 text-sm text-zinc-400">{status === "open" ? "Run a scan to check your account for IAM issues." : "Nothing to show here."}</p></div>}
+      {!q.isLoading && rows.length === 0 && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center"><p className="text-sm font-semibold text-zinc-700">{emptyFindingsLabel(status)}</p><p className="mt-1 text-sm text-zinc-400">{status === "open" ? "Run a scan to check your account for IAM issues." : "Nothing to show here."}</p></div>}
 
       {rows.length > 0 && (
         <div className="space-y-2.5 pb-8">

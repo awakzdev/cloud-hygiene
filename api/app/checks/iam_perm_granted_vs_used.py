@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.checks.base import FindingDraft, score
+from app.core.iam_usage import used_actions_from_usages
 from app.models import IamPermUsage, IamRole
 
 CHECK_ID = "iam.perm.granted_vs_used"
@@ -78,11 +79,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
         ).all()
 
         # Build set of action names used in the last 90 days (ACTION_LEVEL data)
-        used_actions: set[str] = set()
-        for u in usages:
-            if u.last_authenticated and u.last_authenticated >= cutoff:
-                for a in (u.actions_json or []):
-                    used_actions.add(a.lower())
+        used_actions = {a.lower() for a in used_actions_from_usages(usages, cutoff)}
 
         # If no action-level data at all, skip — collector may not have run yet
         if not any(u.actions_json for u in usages):
