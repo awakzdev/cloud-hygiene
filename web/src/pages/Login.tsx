@@ -47,63 +47,47 @@ function readStoredMfaToken(): string | null {
   return sessionStorage.getItem(MFA_STORAGE_KEY);
 }
 
-const SAMPLE_PREVIEW_ROWS = [
-  {
-    title: "Control status summary",
-    detail: "Pass / needs review per SOC 2 control with evidence completeness",
-    mock: (
-      <div className="mt-2 space-y-1.5 rounded-lg border border-white/10 bg-black/20 p-2.5">
-        {[
-          { id: "CC6.1", status: "PASS", tone: "text-emerald-400 bg-emerald-500/15" },
-          { id: "CC6.3", status: "REVIEW", tone: "text-amber-400 bg-amber-500/15" },
-          { id: "CC7.2", status: "REVIEW", tone: "text-amber-400 bg-amber-500/15" },
-        ].map((row) => (
-          <div key={row.id} className="flex items-center justify-between gap-2 text-[11px]">
-            <span className="font-mono text-zinc-300">{row.id}</span>
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${row.tone}`}>{row.status}</span>
-          </div>
-        ))}
+const CONTROL_STATUS_MOCK = (
+  <div className="mt-1.5 space-y-1 rounded-lg border border-white/10 bg-black/20 p-2">
+    {[
+      { id: "CC6.1", status: "Pass", tone: "text-emerald-400 bg-emerald-500/15" },
+      { id: "CC6.3", status: "Review", tone: "text-amber-400 bg-amber-500/15" },
+      { id: "CC7.2", status: "Review", tone: "text-amber-400 bg-amber-500/15" },
+    ].map((row) => (
+      <div key={row.id} className="flex items-center justify-between gap-2 text-[10px]">
+        <span className="font-mono text-zinc-300">{row.id}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[9px] font-medium ${row.tone}`}>{row.status}</span>
       </div>
-    ),
-  },
-  {
-    title: "Timeline of evidence changes",
-    detail: "Finding opened, resolved, and scan events across the audit period",
-    mock: (
-      <div className="mt-2 space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5">
-        {[
-          { time: "Apr 12", event: "Scan completed" },
-          { time: "Apr 18", event: "Finding opened · IAM role wildcard" },
-          { time: "May 02", event: "Exception approved until Q3" },
-        ].map((row) => (
-          <div key={row.time} className="flex gap-2 text-[11px]">
-            <span className="shrink-0 font-mono text-zinc-500">{row.time}</span>
-            <span className="text-zinc-300">{row.event}</span>
-          </div>
-        ))}
-      </div>
-    ),
-  },
-  {
-    title: "Exceptions and auditor notes",
-    detail: "Approved risk acceptance with approver, expiry, and control narrative",
-    mock: (
-      <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed text-amber-100/90">
-        <p className="font-medium text-amber-200/90">CC6.6 · Legacy batch role</p>
-        <p className="mt-1 text-zinc-400">
-          Exception approved by CTO until Aug 2026. Raw JSON in{" "}
-          <span className="font-mono text-zinc-300">controls/CC6.6/exceptions.json</span>
-        </p>
-      </div>
-    ),
-  },
-] as const;
+    ))}
+  </div>
+);
 
-function LoginBrand() {
+const TIMELINE_EXCEPTIONS_MOCK = (
+  <div className="mt-1.5 space-y-1.5 rounded-lg border border-white/10 bg-black/20 p-2">
+    {[
+      { time: "Apr 18", event: "Finding opened · IAM wildcard" },
+      { time: "May 02", event: "Exception approved until Q3" },
+    ].map((row) => (
+      <div key={row.time} className="flex gap-2 text-[10px]">
+        <span className="shrink-0 font-mono text-zinc-500">{row.time}</span>
+        <span className="text-zinc-300">{row.event}</span>
+      </div>
+    ))}
+    <div className="rounded border border-amber-500/15 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-100/80">
+      CC6.6 exception · approver on file until Aug 2026
+    </div>
+  </div>
+);
+
+function LoginBrand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="flex items-center gap-3 mb-8">
-      <img src="/favicon.png" alt="Vigil" className="w-12 h-12 object-contain lg:w-14 lg:h-14" />
-      <span className="text-white text-xl font-semibold tracking-tight">Vigil</span>
+    <div className={`flex items-center gap-2.5 ${compact ? "mb-6" : "mb-8 lg:mb-10"}`}>
+      <img
+        src="/favicon.png"
+        alt="Vigil"
+        className={compact ? "w-10 h-10 object-contain" : "w-11 h-11 object-contain lg:w-12 lg:h-12"}
+      />
+      <span className="text-white text-lg font-semibold tracking-tight lg:text-xl">Vigil</span>
     </div>
   );
 }
@@ -112,43 +96,59 @@ function SampleEvidencePanel({
   loading,
   error,
   onDownload,
+  compact = false,
 }: {
   loading: boolean;
   error: string | null;
   onDownload: () => void;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+        <p className="text-sm font-medium text-zinc-200">Sample SOC 2 evidence pack</p>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          Preview control status, timeline, and exceptions before you sign in.
+        </p>
+        {error && (
+          <p className="mt-2 text-xs text-red-400">{error}</p>
+        )}
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={loading}
+          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-400/30 bg-transparent px-3 py-2 text-xs font-medium text-indigo-200/90 transition hover:border-indigo-400/50 hover:bg-indigo-500/5 disabled:opacity-60"
+        >
+          {loading ? "Preparing…" : "Preview sample evidence pack"}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-indigo-400/20 bg-white/[0.04] p-6 shadow-2xl shadow-black/40 backdrop-blur-sm lg:p-8">
-      <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-indigo-500/10 blur-2xl" />
-      <div className="pointer-events-none absolute -bottom-10 -left-6 h-28 w-28 rounded-full bg-violet-500/10 blur-2xl" />
-
+    <div className="relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.03] p-4 shadow-lg shadow-black/20 backdrop-blur-sm lg:p-5">
       <div className="relative">
-        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-400/25 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
-          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-          </svg>
-          Sample evidence pack
-        </div>
-
-        <h2 className="text-xl font-semibold tracking-tight text-white lg:text-2xl">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">Product preview</p>
+        <h2 className="mt-1 text-base font-semibold tracking-tight text-zinc-100">
           See what Vigil generates
         </h2>
-        <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-400">
-          Download a sample SOC 2 evidence pack with control status, timeline, exceptions, and raw evidence references.
+        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          Sample SOC 2 pack with control status, timeline, exceptions, and evidence references.
         </p>
 
-        <div className="mt-6 space-y-4">
-          {SAMPLE_PREVIEW_ROWS.map((row) => (
-            <div key={row.title} className="rounded-xl border border-white/10 bg-black/20 p-3.5">
-              <p className="text-sm font-medium text-zinc-100">{row.title}</p>
-              <p className="mt-0.5 text-xs text-zinc-500">{row.detail}</p>
-              {row.mock}
-            </div>
-          ))}
+        <div className="mt-3 space-y-2.5">
+          <div className="rounded-lg border border-white/10 bg-black/15 p-2.5">
+            <p className="text-xs font-medium text-zinc-200">Control status summary</p>
+            {CONTROL_STATUS_MOCK}
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/15 p-2.5">
+            <p className="text-xs font-medium text-zinc-200">Timeline and exceptions</p>
+            {TIMELINE_EXCEPTIONS_MOCK}
+          </div>
         </div>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+          <div className="mt-2.5 rounded-lg border border-red-500/25 bg-red-500/10 px-2.5 py-2 text-xs text-red-300">
             {error}
           </div>
         )}
@@ -157,15 +157,15 @@ function SampleEvidencePanel({
           type="button"
           onClick={onDownload}
           disabled={loading}
-          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/30 transition hover:bg-indigo-500 disabled:opacity-60"
+          className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-indigo-400/35 bg-indigo-500/5 px-3 py-2 text-xs font-medium text-indigo-200 transition hover:border-indigo-400/55 hover:bg-indigo-500/10 disabled:opacity-60"
         >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3" />
           </svg>
-          {loading ? "Preparing download…" : "Download sample evidence pack"}
+          {loading ? "Preparing…" : "Preview sample evidence pack"}
         </button>
 
-        <p className="mt-3 text-center text-xs text-zinc-500">No account required · ZIP + PDF · synthetic demo data</p>
+        <p className="mt-2 text-center text-[10px] text-zinc-600">No account required · synthetic demo data</p>
       </div>
     </div>
   );
@@ -383,14 +383,14 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 lg:p-10">
-      <div className="w-full max-w-5xl">
-        <div className="grid items-start gap-8 lg:grid-cols-2 lg:gap-12 lg:items-center">
-          {/* Login column */}
-          <div className="w-full max-w-sm mx-auto lg:mx-0 lg:max-w-none">
-            <LoginBrand />
+    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 lg:p-8">
+      <div className="w-full max-w-4xl">
+        <LoginBrand />
 
-            <div className="bg-white rounded-2xl shadow-2xl p-8">
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.82fr)] lg:gap-7">
+          {/* Login — primary surface */}
+          <div className="w-full max-w-md mx-auto lg:mx-0 lg:max-w-none">
+            <div className="rounded-2xl bg-white p-8 shadow-2xl shadow-black/25 ring-1 ring-white/10">
               <h1 className="text-lg font-semibold text-zinc-900 mb-1">
                 {mode === "login" ? "Welcome back" : "Create your account"}
               </h1>
@@ -448,7 +448,7 @@ export default function Login() {
             )}
 
             <button
-              className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-60"
+              className="w-full rounded-lg bg-zinc-900 py-3 text-sm font-semibold text-white shadow-md shadow-zinc-900/20 transition hover:bg-zinc-800 disabled:opacity-60"
               disabled={loading}
             >
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
@@ -507,14 +507,24 @@ export default function Login() {
           </div>
           </div>
 
-          {/* Sample preview column */}
-          <div className="w-full max-w-sm mx-auto lg:max-w-none lg:mx-0 order-last lg:order-none">
+          {/* Sample preview — secondary, desktop only inline */}
+          <div className="hidden lg:block lg:pt-0">
             <SampleEvidencePanel
               loading={sampleLoading}
               error={sampleError}
               onDownload={downloadSamplePack}
             />
           </div>
+        </div>
+
+        {/* Mobile / tablet: compact sample below login */}
+        <div className="mt-6 lg:hidden max-w-md mx-auto">
+          <SampleEvidencePanel
+            compact
+            loading={sampleLoading}
+            error={sampleError}
+            onDownload={downloadSamplePack}
+          />
         </div>
       </div>
     </div>
