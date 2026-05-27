@@ -1,0 +1,46 @@
+{
+	# Production logging — emits JSON to stdout for collection by Docker.
+	log {
+		output stdout
+		format json
+	}
+
+	# Don't auto-issue staging certs unless explicitly overridden.
+	# email is required for ACME; override via env.
+	email {$CADDY_ACME_EMAIL:hello@cloud-castles.com}
+}
+
+# Replace `vigil.example.com` with the customer-facing domain once DNS is ready.
+# Caddy will auto-provision TLS via Let's Encrypt as long as A/AAAA records
+# point at this host and ports 80/443 are open.
+{$CADDY_DOMAIN:vigil.example.com} {
+	encode zstd gzip
+
+	# Security headers (belt-and-braces; app sets these too).
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# API + health.
+	# Caddy automatically forwards X-Forwarded-For + X-Forwarded-Proto to
+	# the upstream; X-Real-IP is non-standard so we set it explicitly.
+	handle /v1/* {
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote_host}
+		}
+	}
+	handle /healthz {
+		reverse_proxy api:8000
+	}
+
+	# Static frontend — Vite dev server in dev profile; replace with a
+	# static-served build (Caddy `file_server`) when you add a prod web image.
+	handle {
+		reverse_proxy web:5173
+	}
+}
