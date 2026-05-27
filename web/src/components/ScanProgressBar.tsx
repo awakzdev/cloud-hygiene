@@ -1,4 +1,4 @@
-import { formatScanDuration, formatScanFinishTime } from "../hooks/useScanProgress";
+import { formatScanDuration } from "../hooks/useScanProgress";
 
 type ScanProgressBarProps = {
   phase: "starting" | "running";
@@ -22,7 +22,7 @@ function scanProgressDetail({
   if (remainingMs != null && remainingMs > 0) {
     const elapsedPart =
       phase === "starting" ? "Queued" : `${formatScanDuration(elapsedMs)} elapsed`;
-    return `${elapsedPart} · ~${formatScanDuration(remainingMs)} left · finish ~${formatScanFinishTime(remainingMs)}`;
+    return `${elapsedPart} · ~${formatScanDuration(remainingMs)} left`;
   }
   if (phase === "starting") {
     return "Queued · waiting for worker";

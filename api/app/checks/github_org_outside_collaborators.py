@@ -3,22 +3,16 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.checks._identity_helpers import _providers_of_type
 from app.checks.base import FindingDraft, score
-from app.models.github import IdentityProvider
 
 CHECK_ID = "github.org.outside_collaborators"
 
 
 def run(db: Session, account_id) -> list[FindingDraft]:
-    providers = db.scalars(
-        select(IdentityProvider).where(
-            IdentityProvider.org_id == account_id,
-            IdentityProvider.type == "github",
-        )
-    ).all()
+    providers = _providers_of_type(db, account_id, "github")
 
     out: list[FindingDraft] = []
     for provider in providers:

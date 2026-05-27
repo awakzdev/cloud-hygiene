@@ -579,6 +579,10 @@ class TestOutsideCollaborators:
     def test_flags_when_collaborators_present(self, mock_db):
         from app.checks import github_org_outside_collaborators
         acc_id = uuid.uuid4()
+        org_id = uuid.uuid4()
+        acc = MagicMock()
+        acc.org_id = org_id
+        mock_db.get.return_value = acc
         mock_db.scalars.return_value.all.return_value = [
             self._provider(collaborators=[{"login": "ext-user", "id": 99}])
         ]
@@ -589,12 +593,18 @@ class TestOutsideCollaborators:
 
     def test_no_finding_when_empty(self, mock_db):
         from app.checks import github_org_outside_collaborators
+        acc = MagicMock()
+        acc.org_id = uuid.uuid4()
+        mock_db.get.return_value = acc
         mock_db.scalars.return_value.all.return_value = [self._provider(collaborators=[])]
         drafts = github_org_outside_collaborators.run(mock_db, uuid.uuid4())
         assert drafts == []
 
     def test_skips_when_not_yet_collected(self, mock_db):
         from app.checks import github_org_outside_collaborators
+        acc = MagicMock()
+        acc.org_id = uuid.uuid4()
+        mock_db.get.return_value = acc
         mock_db.scalars.return_value.all.return_value = [self._provider()]
         drafts = github_org_outside_collaborators.run(mock_db, uuid.uuid4())
         assert drafts == []

@@ -87,6 +87,28 @@ _CHECK_BY_ID = {mod.CHECK_ID: mod for mod in ALL_CHECKS}
 
 log = structlog.get_logger()
 
+# Collectors added in session 18 — all zero after a successful scan usually means
+# the customer's CFN stack was not updated with new read-only actions.
+SESSION_18_STAT_KEYS = (
+    "acm_certificates",
+    "lambda_functions",
+    "secrets_manager_secrets",
+    "ssm_parameters",
+    "elb_load_balancers",
+    "dynamodb_tables",
+    "sns_topics",
+    "sqs_queues",
+    "ebs_snapshots",
+    "ec2_amis",
+)
+
+
+def _cfn_permissions_likely_stale(stats: dict) -> bool:
+    has_baseline = (stats.get("s3_buckets") or 0) > 0 or (stats.get("ec2_instances") or 0) > 0
+    if not has_baseline:
+        return False
+    return all((stats.get(k) or 0) == 0 for k in SESSION_18_STAT_KEYS)
+
 
 def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
     """Snapshot all collected entities for this scan run into evidence_snapshots."""
@@ -523,6 +545,8 @@ def run_scan(account_id: str) -> dict:
             "drafts": len(drafts),
             "snapshots": snap_count,
         }
+        if _cfn_permissions_likely_stale(stats):
+            final_stats["cfn_permissions_stale"] = True
         if check_errors:
             final_stats["check_errors"] = check_errors
         run.stats = final_stats

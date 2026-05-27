@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
 
 type Finding = {
   id: string;
@@ -1978,6 +1979,34 @@ type BlastRadiusData = {
   public_bucket_names?: string[];
   // guardduty fields
   disabled_regions?: string[];
+  // identity (GitHub/GitLab)
+  provider_type?: string;
+  org?: string;
+  username?: string;
+  source?: string;
+  email?: string | null;
+  mfa_enabled?: boolean | null;
+  repo?: string;
+  default_branch?: string;
+  has_branch_protection?: boolean;
+  required_reviews?: number;
+  recent_merge_count?: number;
+  active_member_count?: number;
+  outside_collaborator_count?: number;
+  // session-18 resource detail
+  snapshot_id?: string;
+  is_public?: boolean;
+  image_id?: string;
+  domain_name?: string;
+  expires_at?: string | null;
+  days_until_expiry?: number | null;
+  function_name?: string;
+  runtime?: string | null;
+  has_dlq?: boolean;
+  access_logs_enabled?: boolean;
+  ssl_policy?: string | null;
+  lb_type?: string | null;
+  name?: string;
   warnings: string[];
 };
 
@@ -2018,6 +2047,12 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   }
 
   if (resource_type === "iam_user") {
+    if (checkId === "iam.user.no_mfa") {
+      return {
+        text: "Safe to require — MFA applies to console sign-in only; IAM access keys and programmatic access are unchanged until keys are rotated separately.",
+        type: "safe",
+      };
+    }
     if (confidence === "high") {
       return data.days_inactive != null
         ? { text: `Safe to disable — user inactive for ${data.days_inactive} days.`, type: "safe" }
@@ -2153,6 +2188,15 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   }
 
   if (resource_type === "cloudtrail_trail") {
+    if (checkId === "cloudtrail.trail.s3_bucket_public") {
+      return { text: "Remove public access immediately — assume audit logs may have been exposed while the bucket was public.", type: "warning" };
+    }
+    if (checkId === "cloudtrail.trail.s3_bucket_no_logging") {
+      return { text: "Safe to enable — S3 access logging on the log bucket adds visibility with no impact on CloudTrail delivery.", type: "safe" };
+    }
+    if (checkId === "cloudtrail.trail.no_cloudwatch_logs") {
+      return { text: "Safe to enable — real-time alerting only; does not change existing S3 log delivery.", type: "safe" };
+    }
     if (confidence === "high") return { text: "Safe to enable — no application impact. Note: CloudTrail storage in S3 incurs a small ongoing cost.", type: "safe" };
     return { text: "Verify CloudTrail's delivery role has the required KMS permissions before applying.", type: "caution" };
   }
@@ -2202,6 +2246,36 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   if (resource_type === "iam_perm_granted_vs_used") {
     if (confidence === "high") return { text: "No service usage recorded in 90 days — high confidence unused permissions can be removed safely.", type: "safe" };
     return { text: "Some services were recently used — verify application behaviour before removing unused permission grants.", type: "caution" };
+  }
+
+  if (resource_type === "identity_org") {
+    if (checkId?.endsWith("outside_collaborators")) {
+      return { text: "Review each outside collaborator — revoking access may break contractors, auditors, or CI bots using personal accounts.", type: "caution" };
+    }
+    if (checkId?.endsWith("mfa_not_enforced")) {
+      return { text: "Org-wide MFA enforcement blocks password-only logins — members must enroll before next sign-in.", type: "caution" };
+    }
+    return { text: "Removing dormant members revokes access to all org repositories — confirm with owners first.", type: "caution" };
+  }
+
+  if (resource_type === "identity_user") {
+    if (checkId?.endsWith("mfa_not_enforced")) {
+      return { text: "Safe to require MFA — affects console login only; personal access tokens and SSH keys keep working until rotated.", type: "safe" };
+    }
+    return { text: "Suspending this member immediately revokes repository access — verify they are not on-call or release owner.", type: "caution" };
+  }
+
+  if (resource_type === "identity_repo") {
+    if (checkId?.endsWith("no_branch_protection")) {
+      return { text: "Branch protection blocks direct pushes to the default branch — coordinate with teams using hotfix workflows.", type: "caution" };
+    }
+    if (checkId?.endsWith("no_env_protection")) {
+      return { text: "Environment protection pauses production deploys until approved — align with release managers before enabling.", type: "caution" };
+    }
+    if (checkId?.endsWith("self_merge_allowed") || checkId?.endsWith("insufficient_reviews")) {
+      return { text: "Tighter review rules slow merges but reduce unreviewed code reaching default branch.", type: "caution" };
+    }
+    return { text: "Low risk — adding CODEOWNERS or review rules does not rewrite history or block existing open PRs.", type: "safe" };
   }
 
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
@@ -2839,6 +2913,124 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             )}
           </div>
         )}
+
+        {data.resource_type === "ebs_snapshot" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Snapshot</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.snapshot_id ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Encrypted</div>
+              <div className={`font-mono font-medium ${data.encrypted ? "text-emerald-700" : "text-red-600"}`}>{data.encrypted ? "Yes" : "No"}</div>
+            </div>
+          </div>
+        )}
+
+        {data.resource_type === "ec2_ami" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 col-span-2">
+              <div className="font-medium text-zinc-400 mb-0.5">AMI</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.image_id ?? data.name ?? "—"}</div>
+            </div>
+          </div>
+        )}
+
+        {data.resource_type === "acm_certificate" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 col-span-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Domain</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.domain_name ?? "—"}</div>
+            </div>
+            {data.days_until_expiry != null && (
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">Expires in</div>
+                <div className={`font-mono font-medium ${data.days_until_expiry <= 7 ? "text-red-600" : "text-amber-700"}`}>{data.days_until_expiry}d</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {data.resource_type === "lambda_function" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 col-span-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Function</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.function_name ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Runtime</div>
+              <div className="font-mono font-medium text-zinc-700">{data.runtime ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">DLQ</div>
+              <div className={`font-mono font-medium ${data.has_dlq ? "text-emerald-700" : "text-zinc-500"}`}>{data.has_dlq ? "Yes" : "No"}</div>
+            </div>
+          </div>
+        )}
+
+        {data.resource_type === "elb_load_balancer" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 col-span-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Load balancer</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.name ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Access logs</div>
+              <div className={`font-mono font-medium ${data.access_logs_enabled ? "text-emerald-700" : "text-zinc-500"}`}>{data.access_logs_enabled ? "On" : "Off"}</div>
+            </div>
+            {data.ssl_policy && (
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">TLS policy</div>
+                <div className="font-mono text-[10px] text-zinc-700 truncate">{data.ssl_policy}</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(data.resource_type === "sns_topic" || data.resource_type === "sqs_queue") && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-600">
+            Region <span className="font-mono font-medium text-zinc-800">{data.region ?? "—"}</span>
+            {" · "}
+            KMS <span className={`font-mono font-medium ${data.kms_encrypted ? "text-emerald-700" : "text-zinc-500"}`}>{data.kms_encrypted ? "enabled" : "not enabled"}</span>
+          </div>
+        )}
+
+        {data.resource_type === "identity_repo" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2 col-span-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Repository</div>
+              <div className="font-mono font-medium text-zinc-700 truncate">{data.repo ?? "—"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Default branch</div>
+              <div className="font-mono font-medium text-zinc-700">{data.default_branch ?? "main"}</div>
+            </div>
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+              <div className="font-medium text-zinc-400 mb-0.5">Protection</div>
+              <div className={`font-mono font-medium ${data.has_branch_protection ? "text-emerald-700" : "text-zinc-500"}`}>
+                {data.has_branch_protection ? `${data.required_reviews ?? 0} reviews` : "None"}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {data.resource_type === "identity_user" && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-600">
+            <span className="font-mono font-medium text-zinc-800">{data.username}</span>
+            {data.source && <> @ {data.source}</>}
+            {data.days_inactive != null && <> · inactive {data.days_inactive}d</>}
+          </div>
+        )}
+
+        {data.resource_type === "identity_org" && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-600">
+            {data.provider_type === "github" ? "GitHub" : "GitLab"} org{" "}
+            <span className="font-mono font-medium text-zinc-800">{data.org}</span>
+            {(data.outside_collaborator_count ?? 0) > 0 && (
+              <> · {data.outside_collaborator_count} outside collaborator(s)</>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3241,70 +3433,13 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "sqs.queue": "SQS Queue",
     "ec2.ami": "EC2 AMI",
     "ec2.ebs.snapshot": "EBS Snapshot",
+    "github.org": "GitHub Organization",
+    "github.repo": "GitHub Repository",
+    "gitlab.org": "GitLab Group",
+    "gitlab.repo": "GitLab Project",
   };
   const category = Object.entries(categoryLabel).find(([prefix]) => finding.check_id.startsWith(prefix))?.[1] ?? "Finding";
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
-  const BLAST_RADIUS_CHECKS = new Set([
-    "iam.role.unassumed_90d",
-    "iam.role.wildcard_action",
-    "iam.perm.granted_vs_used",
-    "iam.role.unused_services_90d",
-    "iam.role.trust_wildcard",
-    "iam.access_key.unused_90d",
-    "iam.access_key.no_rotation_90d",
-    "iam.access_key.multiple_active",
-    "iam.user.inactive_90d",
-    "ec2.security_group.unrestricted_ssh",
-    "ec2.security_group.unrestricted_rdp",
-    "ec2.security_group.default_allows_traffic",
-    "kms.key.no_rotation",
-    "s3.bucket.no_kms",
-    "s3.bucket.no_https_policy",
-    "s3.bucket.public_access_not_blocked",
-    "s3.bucket.no_logging",
-    "rds.instance.no_encryption",
-    "rds.instance.publicly_accessible",
-    "rds.instance.no_automated_backup",
-    "ec2.instance.imdsv2_not_required",
-    "ec2.ebs.volume_unencrypted",
-    "ec2.ebs.encryption_not_default",
-    "cloudtrail.trail.not_enabled",
-    "cloudtrail.trail.no_log_validation",
-    "cloudtrail.trail.no_kms",
-    "vpc.flow_logs.not_enabled",
-    "iam.root.no_mfa",
-    "iam.root.has_access_keys",
-    "iam.root.usage",
-    "iam.account.password_policy_weak",
-    "s3.account.public_access_not_blocked",
-    "guardduty.detector.not_enabled",
-    "aws.config.not_enabled",
-    "aws.securityhub.not_enabled",
-    "aws.access_analyzer.not_enabled",
-    "iam.policy.wildcard_resource",
-    "iam.policy.unattached",
-    "dynamodb.table.no_encryption",
-    "dynamodb.table.no_pitr",
-    "s3.bucket.no_default_encryption",
-    "s3.bucket.no_mfa_delete",
-    "ec2.ebs.snapshot_public",
-    "ec2.ebs.snapshot_unencrypted",
-    "ec2.ami.public",
-    "cloudtrail.trail.s3_bucket_public",
-    "cloudtrail.trail.no_cloudwatch_logs",
-    "cloudtrail.trail.s3_bucket_no_logging",
-    "acm.certificate.expiring",
-    "lambda.function.deprecated_runtime",
-    "lambda.function.no_dlq",
-    "rds.instance.no_deletion_protection",
-    "rds.instance.no_multi_az",
-    "secretsmanager.secret.no_rotation",
-    "ssm.parameter.plaintext_secret",
-    "elb.load_balancer.no_access_logs",
-    "elb.load_balancer.weak_tls_policy",
-    "sns.topic.no_encryption",
-    "sqs.queue.no_encryption",
-  ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
   const tabs: { id: Tab; label: string }[] = [

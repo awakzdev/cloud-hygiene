@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import ScanProgressBar from "../components/ScanProgressBar";
 import ConfirmDialog from "../components/ConfirmDialog";
+import CfnPermissionsBanner from "../components/CfnPermissionsBanner";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Account = {
@@ -122,6 +123,14 @@ function StatPill({ value, label, href, highlight }: { value: number | string; l
     return <a href={href} className={cls}>{inner}</a>;
   }
   return <div className={cls}>{inner}</div>;
+}
+
+function MetricStrip({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={`flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 ${className ?? ""}`}>
+      {children}
+    </div>
+  );
 }
 
 function ComplianceBadge({ pct, label }: { pct: number | null | undefined; label: string }) {
@@ -313,17 +322,23 @@ function AccountCard({
           />
         )}
 
+        {connected && !isScanActive && scanRun.data?.cfn_permissions_stale && (
+          <CfnPermissionsBanner cfnLaunchUrl={acc.cfn_launch_url} className="mt-2.5" />
+        )}
+
         {/* Posture strip — visible when scanned, no expand needed */}
         {hasStats && (
           <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-3">
-            <StatPill value={critHigh} label="Crit + high" highlight={critHigh > 0} />
-            <StatPill value={medium} label="Medium" />
-            <StatPill value={open} label="Open" href="/findings" highlight />
-            <div className="ml-auto flex flex-wrap gap-1.5">
+            <MetricStrip>
+              <StatPill value={critHigh} label="Crit + high" highlight={critHigh > 0} />
+              <StatPill value={medium} label="Medium" />
+              <StatPill value={open} label="Open" href="/findings" highlight />
+            </MetricStrip>
+            <MetricStrip>
               <ComplianceBadge pct={soc2.data} label="SOC 2" />
               <ComplianceBadge pct={cis.data} label="CIS" />
               <ComplianceBadge pct={iso.data} label="ISO" />
-            </div>
+            </MetricStrip>
           </div>
         )}
 

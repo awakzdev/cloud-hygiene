@@ -18,6 +18,7 @@ from app.core.iam_usage import (
     used_services_from_usages,
 )
 from app.core.security import current_principal
+from app.services.blast_radius_identity import blast_radius_identity
 from app.models import AssumeRoleAudit, AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.github import IdentityProvider, PullRequest, Repo
@@ -183,6 +184,7 @@ class ScanRunOut(BaseModel):
     error_type: str | None = None  # exception class name
     findings_opened: int
     findings_resolved: int
+    cfn_permissions_stale: bool = False
 
 
 @router.get("/{account_id}/scan-runs/latest", response_model=ScanRunOut | None)
@@ -209,6 +211,7 @@ def latest_scan_run(account_id: str, p=Depends(current_principal), db: Session =
         error_type=stats.get("error_type"),
         findings_opened=run.findings_opened or 0,
         findings_resolved=run.findings_resolved or 0,
+        cfn_permissions_stale=bool(stats.get("cfn_permissions_stale")),
     )
 
 
@@ -1419,6 +1422,12 @@ def blast_radius(
             "kms_encrypted": queue.kms_encrypted,
             "warnings": ["Producers and consumers need KMS permissions after enabling encryption"],
         }
+
+    if check_id.startswith("github.") or check_id.startswith("gitlab."):
+        try:
+            return blast_radius_identity(db, acc, check_id, resource_arn, now=now)
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid identity resource_arn: {resource_arn}")
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")
 

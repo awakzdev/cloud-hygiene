@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 19)_
+_Last updated: 2026-05-27 (session 21)_
 
 ---
 
@@ -125,7 +125,7 @@ only, and only to say it's out of scope.
 - **What If? tab**: blast radius analysis for IAM role/user/key findings — confidence score, service usage pills (active=red/unused=gray), per-attached-policy breakdown (removable vs keep, AWS/Custom badge, detach+replace vs edit action)
 - **What If? for SG findings**: shows affected instances list with instance type + state (running=red), running count, VPC/region metadata.
 - CLI commands auto-interpolate actual role/user/key names from the finding ARN
-- Scan status polling (5s) + auto-refresh findings on completion; Re-scan unlocks after 5 min if stuck
+- Scan status polling (3s while active) + `useTriggeredScan` hook — progress persists across page navigation (sessionStorage + in-memory pending); Accounts page background-polls; Re-scan unlocks after 5 min if stuck
 - Onboarding empty state when no account connected — 3-step guide + link to AWS Accounts
 - CSV export (`GET /v1/exports/findings.csv`)
 - Update role ARN in connected state (expandable panel, reuses verify mutation)
@@ -140,9 +140,9 @@ only, and only to say it's out of scope.
 
 ### Frontend
 - Login page: email/password + GitHub SSO + Google SSO
-- AWS Accounts page — multi-account support, per-account SOC2 + CIS + ISO 27001 score bars, pending-account UX, remove account
+- AWS Accounts page — multi-account support, per-account findings + compliance metric strips, scan progress on card, official AWS logo (`/aws.png`), styled remove-account confirm dialog, pending-account UX
 - Findings page (grouped, severity-aware, multi-tag filter, URL-synced `?checks=`, smooth accordion animation, severity-tinted expanded rows)
-- Controls/Compliance page (SOC2 + CIS AWS L1 + ISO 27001 framework toggle, evidence pack download)
+- Controls/Compliance page (SOC2 + CIS AWS L1 + ISO 27001; pass-rate cards, status filters, questionnaire template copy, evidence preview, mapped checks — no Re-scan/Refresh in header; scan only from Accounts/Findings)
 - Settings page (check enable/disable per group, weekly digest toggle + recipient email)
 - Account settings page (password + GitHub)
 - Reference page (`/reference`) — searchable table of all supported search keys, resource types, check IDs, ARN patterns
@@ -243,7 +243,7 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 |---|---|
 | CORS `*` in dev | locked to `API_PUBLIC_URL` in prod via `APP_ENV` |
 | CFN URL pinned to repo `main` | pin to release tag before beta (`CFN_TEMPLATE_URL` env now exists) |
-| Collector permission errors silent in UI | surface when CFN stack is stale (session 18 collectors) |
+| Stale CFN stack | `cfn_permissions_stale` on scan + banner on Accounts/Findings when session-18 collectors all empty |
 | Multi-account support | One-account limit removed; schema was already multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
 | `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
@@ -783,6 +783,21 @@ scope and intentionally absent from that list.
 **Session 19 additions (2026-05-27):**
 - **Nav reorder**: Findings above Compliance in sidebar — Findings is the stronger daily-driver surface; Compliance page is functional but minimal UI until a dedicated polish pass
 
+**Session 21 additions (2026-05-27):**
+- **What If**: all AWS + session-18 gap + GitHub/GitLab checks in `blastRadiusChecks.ts`; `iam.user.no_mfa`; identity blast-radius backend; gap-resource detail in drawer
+- **Stale CFN UX**: `cfn_permissions_stale` on scan stats + banner on Accounts/Findings
+- **Accounts**: two metric strips (findings | compliance)
+- **Scan progress**: removed `finish ~TIME` from progress bar
+- **Minor**: Vite `manualChunks`; `.env.example` notes for `ALLOW_SSO_SIGNUP` + `CFN_TEMPLATE_URL`
+
+**Session 20 additions (2026-05-27)** — merged to `staging`:
+- **Compliance polish** (`feat/compliance-polish` → `staging`): framework pass-rate cards, status filters, questionnaire template (pass/fail/no_data), evidence preview, mapped checks grouping, duplicate summary line removed; Re-scan + Refresh removed from Compliance header
+- **Scan progress** (`useTriggeredScan`): cross-page persistence via sessionStorage; no longer clears pending state on stale `ok` scan row; `refetchOnMount: always` on scan-runs query
+- **Findings drawer**: collapsible granted/unused services, Action vs Resource wildcard notes, CloudTrail-aware copy, `iam.policy.wildcard_resource` skips Vigil scan role + IAM last-accessed APIs
+- **Accounts UX**: compact header layout, `ConfirmDialog` for remove, AWS wordmark asset (`web/public/aws.png`), separate findings vs compliance metric strips
+- **Settings**: alert email placeholder → `Email Address`
+- **Nav**: Findings 2nd in sidebar (after Accounts)
+
 ---
 
 ## Canonical remaining work
@@ -792,31 +807,17 @@ lists in this file are historical context only — when they conflict with
 this section, this section wins. Update *here* when items land or new
 work surfaces.
 
+**All product code from sessions 20–21 is shipped.** Remaining work is founder/AWS
+clicks only (plus optional prod env toggles when you deploy).
+
 **Founder-blocking (need a click, not code):**
 
-1. **Update CloudFormation stack** in the connected AWS account so the
-   read-only role includes the new permissions from session 18. Do this
-   *before* re-scan — without it, new collectors return empty (no error
-   surfaced to UI yet).
-2. **Re-scan the connected AWS account** — populates `actions_json` for
-   least-privilege policy generation AND runs all 21 new gap checks.
-   One button on Accounts page.
+1. **Update CloudFormation stack** in the connected AWS account (`infra/cfn/vigil-readonly-role.yaml` session-18 permissions). Use the launch URL on Accounts or the link in the stale-CFN banner.
+2. **Re-scan** — populates session-18 gap checks, `actions_json` for least-privilege, and clears `cfn_permissions_stale` when collectors return data.
 
-**Product — when Compliance UI is ready to lead:**
+**Shipped (sessions 20–21):** compliance polish · What If full coverage (`blastRadiusChecks.ts` + identity API) · stale CFN banner · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
 
-3. ~~**Compliance page polish**~~ — **shipped** on `feat/compliance-polish`: pass-rate
-   stats, status filters, search, scan/refresh, audit narrative copy, evidence
-   preview, evidence pack sidebar, human-readable mapped checks. Nav can move
-   Compliance back above Findings when ready.
-
-**Polish / minor:**
-
-4. **What If for session-18 gap checks** — 21 new checks not yet in
-   `BLAST_RADIUS_CHECKS` (core What If tab already ships for 38+ checks).
-5. Web bundle size warning (Vite). Split route bundles or accept.
-6. `ALLOW_SSO_SIGNUP=False` when signup funnel should be locked.
-7. Pin `CFN_TEMPLATE_URL` to versioned S3 object when YAML stabilises.
-8. Surface collector permission errors in scan UI when CFN stack is stale.
+**Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object. Nav order (Findings 2nd) is intentional unless you want controls-first demos.
 
 ### Phase 3 — GitHub integration (3 weeks)
 

@@ -11,6 +11,7 @@ export type ScanRunLatest = {
   error?: string | null;
   failed_at?: string | null;
   error_type?: string | null;
+  cfn_permissions_stale?: boolean;
 };
 
 const STARTING_TIMEOUT_MS = 3 * 60 * 1000;

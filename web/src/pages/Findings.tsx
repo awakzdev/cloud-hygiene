@@ -5,6 +5,7 @@ import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
+import CfnPermissionsBanner from "../components/CfnPermissionsBanner";
 import { checkLabels } from "../data/checkLabels";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
@@ -30,7 +31,7 @@ type FindingPage = {
   next_cursor: string | null;
 };
 
-type Account = { id: string; status: string };
+type Account = { id: string; status: string; cfn_launch_url?: string };
 
 const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups";
 
@@ -491,7 +492,8 @@ export default function Findings() {
     refetchInterval: verifying ? 3000 : false,
   });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
-  const connectedId = accounts.data?.find((a) => a.status === "connected")?.id;
+  const connectedAccount = accounts.data?.find((a) => a.status === "connected");
+  const connectedId = connectedAccount?.id;
 
   const {
     scanRun,
@@ -647,6 +649,9 @@ export default function Findings() {
           finishing={scanProgress.finishing}
           indeterminate={scanProgress.indeterminate}
         />
+      )}
+      {!isScanActive && scanRun.data?.cfn_permissions_stale && (
+        <CfnPermissionsBanner cfnLaunchUrl={connectedAccount?.cfn_launch_url} className="mb-4" />
       )}
       {scanStatus === "error" && scanRun.data?.error && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
