@@ -157,6 +157,21 @@ def trigger_scan(account_id: str, p=Depends(current_principal), db: Session = De
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
     if acc.status != "connected":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "account not connected")
+
+    # Dedup: if a scan is already running for this account and started within the
+    # last 30 min, return that one instead of queueing a duplicate. Older runs
+    # are presumed stuck (worker restart, etc.) and a fresh scan is allowed.
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+    existing = db.scalar(
+        select(ScanRun)
+        .where(ScanRun.account_id == acc.id)
+        .where(ScanRun.status == "running")
+        .where(ScanRun.started_at >= cutoff)
+        .order_by(ScanRun.started_at.desc())
+    )
+    if existing:
+        return {"job_id": str(existing.id), "deduped": True}
+
     job = run_scan.delay(str(acc.id))
     return {"job_id": job.id}
 

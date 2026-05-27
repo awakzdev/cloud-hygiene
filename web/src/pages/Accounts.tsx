@@ -119,11 +119,11 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const iso = useComplianceScore("iso27001", hasScanned);
 
   return (
-    <div className="grid grid-cols-[1fr_280px] items-stretch gap-4">
+    <div className="flex items-start gap-3">
       {/* Main card */}
-      <div className="flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         {/* Account header */}
-        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-5">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-orange-50 ring-1 ring-orange-100">
               <AwsProviderIcon />
@@ -228,15 +228,16 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 
         {/* Connected state */}
         {acc.status === "connected" && (
-          <div className="flex flex-1 flex-col px-6 py-5 space-y-4">
+          <div className="flex flex-col">
+            <div className="space-y-3 px-5 py-4">
             {/* Info tiles */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
-                <div className="text-xs text-zinc-400 uppercase tracking-wide font-medium mb-1">Open findings</div>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+                <div className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-0.5">Open findings</div>
                 <div className="font-semibold text-sm text-zinc-800">{findingsData ? totalOpen : "…"}</div>
               </div>
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
-                <div className="text-xs text-zinc-400 uppercase tracking-wide font-medium mb-1">External ID</div>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+                <div className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-0.5">External ID</div>
                 <div className="font-mono text-xs text-zinc-600 truncate" title={acc.external_id}>{acc.external_id}</div>
               </div>
             </div>
@@ -281,8 +282,10 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               </div>
             )}
 
+            </div>
+
             {/* Actions */}
-            <div className="mt-auto flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
+            <div className="flex items-center justify-between gap-3 border-t border-zinc-100 px-5 py-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={() => scan.mutate()}
@@ -319,51 +322,51 @@ function AccountCard({ acc, findingsData, onRemoved }: {
       </div>
 
       {/* Posture snapshot sidebar */}
-      <div className="flex h-full flex-col rounded-xl border border-zinc-200 bg-white px-5 py-5 shadow-sm">
-        <div className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-400">Posture Snapshot</div>
+      <div className="flex w-[252px] shrink-0 flex-col self-stretch rounded-xl border border-zinc-200 bg-white px-4 py-3.5 shadow-sm">
+        <div className="mb-2.5 shrink-0 text-[11px] font-semibold uppercase tracking-widest text-zinc-400">Posture Snapshot</div>
         {hasScanned ? (
-          <>
-            <div className="mb-3 grid grid-cols-2 gap-2.5">
-              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-4 flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-bold text-red-600 tabular-nums">{findingsData ? critHigh : "…"}</div>
-                <div className="text-xs text-red-500 font-medium mt-1">critical · high</div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-center">
+                <div className="text-[26px] font-bold text-red-600 tabular-nums leading-none">{findingsData ? critHigh : "…"}</div>
+                <div className="mt-1.5 text-[11px] font-medium text-red-500">critical · high</div>
               </div>
-              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-4 flex flex-col items-center justify-center text-center">
-                <div className="text-4xl font-bold text-amber-600 tabular-nums">{findingsData ? medium : "…"}</div>
-                <div className="text-xs text-amber-500 font-medium mt-1">medium</div>
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-amber-100 bg-amber-50 px-3 py-2.5 text-center">
+                <div className="text-[26px] font-bold text-amber-600 tabular-nums leading-none">{findingsData ? medium : "…"}</div>
+                <div className="mt-1.5 text-[11px] font-medium text-amber-500">medium</div>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="mt-2.5 shrink-0 space-y-1.5 border-t border-zinc-100 pt-2.5">
               {[
                 { label: "SOC 2", pct: soc2.data },
                 { label: "CIS AWS L1", pct: cis.data },
                 { label: "ISO 27001", pct: iso.data },
               ].map(({ label, pct }) => (
-                <div key={label} className="flex items-center gap-2.5">
-                  <span className="text-xs font-medium text-zinc-600 w-[72px] shrink-0">{label}</span>
-                  <div className="flex-1 h-2 rounded-full overflow-hidden bg-emerald-100">
+                <div key={label} className="flex items-center gap-2">
+                  <span className="w-[68px] shrink-0 text-[11px] font-medium text-zinc-600">{label}</span>
+                  <div className="h-1.5 min-w-0 flex-1 rounded-full bg-emerald-100 overflow-hidden">
                     <div className={`h-full rounded-full transition-all duration-500 ${scoreColor(pct)}`} style={{ width: `${pct ?? 0}%` }} />
                   </div>
-                  <span className="text-xs font-semibold tabular-nums text-zinc-700 w-8 text-right shrink-0">
+                  <span className="w-8 shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-700">
                     {pct == null ? "—" : `${pct}%`}
                   </span>
                 </div>
               ))}
             </div>
-          </>
+          </div>
         ) : (
-          <div className="flex flex-col gap-2.5">
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
+          <div className="flex min-h-0 flex-1 flex-col gap-2.5">
+            <div className="grid min-h-0 flex-1 grid-cols-2 gap-2">
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
                 <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
                 <div className="text-[11px] text-zinc-300 font-medium mt-0.5">critical · high</div>
               </div>
-              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
+              <div className="flex h-full flex-col items-center justify-center rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
                 <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
                 <div className="text-[11px] text-zinc-300 font-medium mt-0.5">medium</div>
               </div>
             </div>
-            <p className="text-[12px] text-zinc-400 leading-relaxed">
+            <p className="shrink-0 text-[12px] text-zinc-400 leading-relaxed">
               {acc.status === "connected"
                 ? "Run a scan to see posture data."
                 : "Awaiting verification — posture data will appear after the first scan."}
@@ -406,7 +409,7 @@ export default function Accounts() {
               onClick={() => create.mutate()}
               disabled={create.isPending || hasPending}
               title={hasPending ? "Finish setting up the pending account first" : undefined}
-              className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-5 py-2.5 text-sm font-semibold text-zinc-700 shadow-sm hover:border-zinc-300 hover:bg-zinc-50 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

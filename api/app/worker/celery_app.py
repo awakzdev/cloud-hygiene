@@ -1,5 +1,6 @@
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
 
 from app.core.config import get_settings
 
@@ -22,9 +23,22 @@ celery_app.conf.update(
             "task": "app.worker.tasks.scan_all_accounts",
             "schedule": crontab(hour=6, minute=0),
         },
+        "reap-stuck-scan-runs": {
+            "task": "app.worker.tasks.reap_stuck_scan_runs",
+            "schedule": crontab(minute="*/15"),
+        },
         "weekly-digest-monday": {
             "task": "app.worker.tasks.send_weekly_digests",
             "schedule": crontab(hour=9, minute=0, day_of_week=1),  # Monday 9am UTC
         },
     },
 )
+
+
+@worker_ready.connect
+def _reap_on_startup(**_kwargs):
+    """Mark any ScanRun stuck in 'running' as failed when a worker boots.
+    Prior in-flight scans don't survive worker restarts."""
+    from app.worker.tasks import reap_stuck_scan_runs
+
+    reap_stuck_scan_runs.delay(max_age_minutes=0)

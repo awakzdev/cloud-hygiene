@@ -536,6 +536,34 @@ def scan_all_accounts() -> dict:
         db.close()
 
 
+@celery_app.task(name="app.worker.tasks.reap_stuck_scan_runs")
+def reap_stuck_scan_runs(max_age_minutes: int = 30) -> dict:
+    """Mark ScanRuns stuck in 'running' as failed.
+
+    Called on worker startup with max_age_minutes=0 (any in-flight scan from a
+    prior process is dead) and periodically with the default to catch scans
+    that hang silently (network stall, OOM, etc.)."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+        stale = db.scalars(
+            select(ScanRun)
+            .where(ScanRun.status == "running")
+            .where(ScanRun.started_at < cutoff)
+        ).all()
+        now = datetime.now(timezone.utc)
+        for run in stale:
+            run.status = "error"
+            run.finished_at = now
+            run.error = "scan interrupted (worker restart or timeout)"
+        if stale:
+            db.commit()
+            log.info("reap_stuck_scan_runs", count=len(stale), max_age_minutes=max_age_minutes)
+        return {"reaped": len(stale)}
+    finally:
+        db.close()
+
+
 @celery_app.task(name="app.worker.tasks.send_weekly_digests")
 def send_weekly_digests() -> dict:
     """Send Monday digest to all org members with a connected account."""

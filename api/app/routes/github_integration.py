@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.models.aws_account import AwsAccount
 from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
 from app.services.github_sync import provider_config, set_provider_config, sync_github_provider
 
@@ -23,11 +22,6 @@ router = APIRouter()
 settings = get_settings()
 
 
-def _trigger_scans_for_org(db: Session, org_id: str) -> None:
-    from app.worker.tasks import run_scan  # avoid circular import
-    accounts = db.scalars(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(org_id))).all()
-    for acc in accounts:
-        run_scan.delay(str(acc.id))
 
 _GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 _GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -402,7 +396,6 @@ def sync_github(body: GitHubSyncIn, p=Depends(current_principal), db: Session = 
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"GitHub sync failed: {detail}") from e
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
-    _trigger_scans_for_org(db, p["org_id"])
     return GitHubSyncOut(**stats.__dict__)
 
 
