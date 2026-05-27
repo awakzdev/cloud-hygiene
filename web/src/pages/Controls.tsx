@@ -44,14 +44,6 @@ const AUDIT_WINDOWS = [
   { value: 365, label: "Last 365 days" },
 ];
 
-const EVIDENCE_PACK_ITEMS = [
-  "README with scan metadata and account context",
-  "INDEX.csv — pass/fail per control with finding counts",
-  "Per-control JSON evidence snapshots",
-  "PDF compliance summary report",
-  "exceptions.json for approved deviations",
-];
-
 type StatusFilter = "all" | "pass" | "fail" | "no_data";
 
 const statusPill: Record<string, string> = {
@@ -165,45 +157,6 @@ function findingLabel(count: number) {
   return `${count} finding${count === 1 ? "" : "s"}`;
 }
 
-function checkAreas(checkIds: string[]) {
-  const areas = checkIds.map((id) => {
-    if (id.startsWith("iam.user")) return "IAM users";
-    if (id.startsWith("iam.role")) return "IAM roles";
-    if (id.startsWith("iam.access_key")) return "Access keys";
-    if (id.startsWith("iam.root")) return "Root account";
-    if (id.startsWith("iam.policy")) return "IAM policies";
-    if (id.includes("dormant_members")) return "Dormant org members";
-    if (id.startsWith("github.org")) return "GitHub org access";
-    if (id.startsWith("github.repo")) return "GitHub change controls";
-    if (id.startsWith("gitlab.org")) return "GitLab group access";
-    if (id.startsWith("gitlab.repo")) return "GitLab change controls";
-    if (id.startsWith("s3.")) return "S3 buckets";
-    if (id.startsWith("cloudtrail.")) return "CloudTrail";
-    if (id.startsWith("guardduty.")) return "GuardDuty";
-    if (id.startsWith("aws.config")) return "AWS Config";
-    if (id.startsWith("aws.securityhub")) return "Security Hub";
-    if (id.startsWith("vpc.")) return "VPC flow logs";
-    if (id.startsWith("ec2.security_group")) return "Security groups";
-    if (id.startsWith("ec2.")) return "EC2";
-    if (id.startsWith("rds.")) return "RDS";
-    if (id.startsWith("kms.")) return "KMS";
-    if (id.startsWith("lambda.")) return "Lambda";
-    if (id.startsWith("acm.")) return "ACM certificates";
-    if (id.startsWith("dynamodb.")) return "DynamoDB";
-    if (id.startsWith("secretsmanager.")) return "Secrets Manager";
-    if (id.startsWith("ssm.")) return "SSM parameters";
-    if (id.startsWith("elb.")) return "Load balancers";
-    if (id.startsWith("sns.")) return "SNS";
-    if (id.startsWith("sqs.")) return "SQS";
-    return id.split(".")[0]?.toUpperCase() || "Mapped checks";
-  });
-  return Array.from(new Set(areas));
-}
-
-function stripEvidencePrefix(text: string) {
-  return text.replace(/^Evidence:\s*/i, "").trim();
-}
-
 function controlTheme(control: ControlRow) {
   const ids = control.check_ids.join(" ");
   if (/iam|github\.org|gitlab\.org/.test(ids)) return "identity-related";
@@ -214,22 +167,27 @@ function controlTheme(control: ControlRow) {
   return "mapped";
 }
 
-function failureSummary(control: ControlRow) {
-  if (control.status === "pass") return `${control.control_id} is passing with no open findings mapped to this control.`;
-  if (control.status === "no_data") return `${control.control_id} cannot be evaluated because scan data is not available yet.`;
-  return `${control.control_id} failed because ${control.finding_count} ${controlTheme(control)} ${control.finding_count === 1 ? "finding is" : "findings are"} open.`;
-}
-
-function nextStep(control: ControlRow) {
-  if (control.status === "pass") return "Keep this control in the evidence package for audit review.";
-  if (control.status === "no_data") return "Run a scan or connect the required evidence source to evaluate this control.";
+function controlSummary(control: ControlRow): string {
+  if (control.status === "pass") {
+    return "Passing — no open findings. Keep in the evidence pack for audit review.";
+  }
+  if (control.status === "no_data") {
+    return "Not evaluated yet — run a scan or connect the required evidence source.";
+  }
   const theme = controlTheme(control);
-  if (theme === "identity-related") return "Review the open findings and remediate stale, untracked, or over-permissive identities.";
-  if (theme === "change-management") return "Review the open findings and restore required review, ownership, and branch protection controls.";
-  if (theme === "monitoring and logging") return "Review the open findings and enable the missing monitoring or audit-log controls.";
-  if (theme === "data-protection") return "Review the open findings and fix missing encryption, retention, or storage protection controls.";
-  if (theme === "network-exposure") return "Review the open findings and remove public or unrestricted network exposure.";
-  return "Review the open findings and remediate the mapped checks blocking this control.";
+  const action =
+    theme === "identity-related"
+      ? "Remediate stale or over-permissive identities."
+      : theme === "change-management"
+        ? "Restore branch protection and review requirements."
+        : theme === "monitoring and logging"
+          ? "Enable the missing monitoring or audit-log controls."
+          : theme === "data-protection"
+            ? "Fix encryption, retention, or storage protection gaps."
+            : theme === "network-exposure"
+              ? "Remove public or unrestricted network exposure."
+              : "Remediate the mapped checks blocking this control.";
+  return `${control.finding_count} open ${theme} ${control.finding_count === 1 ? "finding" : "findings"}. ${action}`;
 }
 
 function formatEvidenceDate(iso: string) {
@@ -247,51 +205,52 @@ function lastScanLabel(iso: string) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function familyPassLabel(group: ControlGroup) {
-  const total = group.rows.length;
-  const passed = group.passed;
-  return `${passed}/${total}`;
-}
-
 function LoadingSkeleton() {
   return (
-    <div className="animate-pulse space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-24 rounded-2xl border border-zinc-200 bg-zinc-50" />
-        ))}
-      </div>
-      <div className="h-12 rounded-xl border border-zinc-200 bg-zinc-50" />
+    <div className="animate-pulse space-y-4">
+      <div className="h-10 rounded-xl border border-zinc-200 bg-zinc-50" />
       <div className="h-96 rounded-2xl border border-zinc-200 bg-zinc-50" />
     </div>
   );
 }
 
 function MappedChecksList({ checkIds }: { checkIds: string[] }) {
+  const [open, setOpen] = useState(false);
   const [showIds, setShowIds] = useState(false);
 
   return (
-    <div>
-      <div className="mb-2.5 flex items-center justify-between gap-3">
+    <div className="border-t border-zinc-100 pt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-left"
+      >
         <p className="vigil-kicker">
           {checkIds.length} mapped check{checkIds.length === 1 ? "" : "s"}
         </p>
-        <button
-          type="button"
-          onClick={() => setShowIds((v) => !v)}
-          className="text-[11px] font-semibold text-zinc-500 transition hover:text-zinc-800"
-        >
-          {showIds ? "Hide IDs" : "Show IDs"}
-        </button>
-      </div>
-      <ul className="space-y-2">
-        {checkIds.map((cid) => (
-          <li key={cid} className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2">
-            <p className="text-sm font-medium text-zinc-800">{labelForCheck(cid)}</p>
-            {showIds && <code className="mt-1 block font-mono text-[10px] text-zinc-400">{cid}</code>}
-          </li>
-        ))}
-      </ul>
+        <span className="text-[11px] font-semibold text-zinc-500">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <>
+          <div className="mb-2 mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowIds((v) => !v)}
+              className="text-[11px] font-semibold text-zinc-500 transition hover:text-zinc-800"
+            >
+              {showIds ? "Hide IDs" : "Show IDs"}
+            </button>
+          </div>
+          <ul className="space-y-2">
+            {checkIds.map((cid) => (
+              <li key={cid} className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2">
+                <p className="text-sm font-medium text-zinc-800">{labelForCheck(cid)}</p>
+                {showIds && <code className="mt-1 block font-mono text-[10px] text-zinc-400">{cid}</code>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -538,13 +497,6 @@ export default function Controls() {
     }
   }
 
-  const statusFilters: { id: StatusFilter; label: string; count: number }[] = [
-    { id: "all", label: "All", count: total },
-    { id: "fail", label: "Failing", count: failed },
-    { id: "pass", label: "Passing", count: passed },
-    { id: "no_data", label: "No data", count: noData },
-  ];
-
   if (!accounts.isLoading && !connectedAccount) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-8 py-20 text-center">
@@ -579,6 +531,9 @@ export default function Controls() {
                 {" "}
                 · Last scan {lastScanLabel(scanRun.data?.finished_at ?? connectedAccount!.last_scan_at!)}
               </span>
+            )}
+            {passRate != null && (
+              <span className={`font-medium ${passRateColor(passRate)}`}> · {passRate}% passing</span>
             )}
           </p>
         </div>
@@ -649,137 +604,68 @@ export default function Controls() {
           {controls.isLoading && <LoadingSkeleton />}
 
           {!controls.isLoading && total > 0 && (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <button
-                type="button"
-                onClick={() => setStatusFilter("all")}
-                className={`rounded-2xl border px-5 py-4 text-left shadow-sm transition hover:ring-2 hover:ring-zinc-200 ${
-                  statusFilter === "all" ? "border-zinc-300 bg-white ring-2 ring-zinc-200" : "border-zinc-200 bg-white shadow-zinc-950/[0.03]"
-                }`}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Pass rate</p>
-                <p className={`mt-1 text-3xl font-bold tabular-nums ${passRate == null ? "text-zinc-300" : passRateColor(passRate)}`}>
-                  {passRate == null ? "—" : `${passRate}%`}
-                </p>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-100">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${passRate == null ? "bg-zinc-200" : passRateBarColor(passRate)}`}
-                    style={{ width: `${passRate ?? 0}%` }}
-                  />
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("pass")}
-                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-emerald-200 ${
-                  statusFilter === "pass" ? "border-emerald-300 bg-emerald-50/60 ring-2 ring-emerald-200" : "border-emerald-100 bg-emerald-50/40"
-                }`}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600/80">Passing</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-700">{passed}</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("fail")}
-                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-red-200 ${
-                  statusFilter === "fail" ? "border-red-300 bg-red-50/60 ring-2 ring-red-200" : "border-red-100 bg-red-50/40"
-                }`}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600/80">Failing</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-red-600">{failed}</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("no_data")}
-                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-zinc-200 ${
-                  statusFilter === "no_data" ? "border-zinc-300 bg-zinc-100 ring-2 ring-zinc-200" : "border-zinc-200 bg-zinc-50/60"
-                }`}
-              >
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">No data</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums text-zinc-500">{noData}</p>
-              </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
+                {(
+                  [
+                    { id: "all" as const, label: "All", count: total },
+                    { id: "fail" as const, label: "Failing", count: failed },
+                    { id: "pass" as const, label: "Passing", count: passed },
+                    { id: "no_data" as const, label: "No data", count: noData },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => {
+                      setStatusFilter(f.id);
+                      setExpanded(null);
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                      statusFilter === f.id
+                        ? "bg-zinc-900 text-white"
+                        : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+                    }`}
+                  >
+                    {f.label}
+                    <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="relative min-w-[200px] sm:max-w-xs sm:flex-1">
+                <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+                </svg>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setExpanded(null);
+                  }}
+                  placeholder="Search controls…"
+                  className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
             </div>
           )}
 
-          {!controls.isLoading && total > 0 && (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="inline-flex flex-wrap items-center gap-2">
-                  <div className="inline-flex items-center rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" aria-label="Framework">
-                    {FRAMEWORKS.map((fw) => (
-                      <button
-                        key={fw.id}
-                        onClick={() => {
-                          setFramework(fw.id);
-                          setSelectedFamilyKey(null);
-                          setExpanded(null);
-                        }}
-                        className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
-                          framework === fw.id
-                            ? "bg-zinc-950 text-white shadow-sm"
-                            : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-                        }`}
-                      >
-                        {fw.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
-                    {statusFilters.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => {
-                          setStatusFilter(f.id);
-                          setExpanded(null);
-                        }}
-                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                          statusFilter === f.id
-                            ? "bg-zinc-900 text-white"
-                            : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
-                        }`}
-                      >
-                        {f.label}
-                        <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="relative min-w-[200px] lg:max-w-xs lg:flex-1">
-                  <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
-                  </svg>
-                  <input
-                    type="search"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value);
-                      setExpanded(null);
-                    }}
-                    placeholder="Search controls…"
-                    className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </div>
-              </div>
-
-              {topBlocker && statusFilter !== "pass" && (
-                <p className="text-xs text-zinc-500">
-                  Top blocker:{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStatusFilter("fail");
-                      openControl(topBlocker);
-                    }}
-                    className="font-semibold text-red-600 hover:text-red-700"
-                  >
-                    {topBlocker.control_id}
-                  </button>
-                  {" "}({findingLabel(topBlocker.finding_count)})
-                </p>
-              )}
-            </div>
+          {topBlocker && statusFilter !== "pass" && !controls.isLoading && total > 0 && (
+            <p className="text-xs text-zinc-500">
+              Top blocker:{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter("fail");
+                  openControl(topBlocker);
+                }}
+                className="font-semibold text-red-600 hover:text-red-700"
+              >
+                {topBlocker.control_id}
+              </button>
+              {" "}({findingLabel(topBlocker.finding_count)})
+            </p>
           )}
 
           {/* Control list */}
@@ -828,15 +714,13 @@ export default function Controls() {
                           }`}
                         >
                           {shortFamilyLabel(group.label)}
-                          <span className={isSelected ? "text-white/60" : "text-zinc-400"}> · {familyPassLabel(group)}</span>
                           {group.failed > 0 && (
-                            <span className={isSelected ? "text-red-200" : "text-red-500"}> · {group.failed} fail</span>
+                            <span className={isSelected ? "text-red-200" : "text-red-500"}> · {group.failed}</span>
                           )}
                         </button>
                       );
                     })}
                   </div>
-                  <span className="shrink-0 text-xs font-medium text-zinc-400">{selectedGroup.label}</span>
                 </div>
 
                 <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-100 px-5 py-2.5">
@@ -849,7 +733,6 @@ export default function Controls() {
                 <div className="divide-y divide-zinc-100">
                   {selectedGroup.rows.map((ctrl) => {
                     const isExpanded = expanded === ctrl.id;
-                    const areas = checkAreas(ctrl.check_ids);
                     return (
                       <div key={ctrl.id}>
                         <button
@@ -895,10 +778,7 @@ export default function Controls() {
                         {isExpanded && (
                           <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
                             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0 flex-1 space-y-2">
-                                <p className="text-sm font-semibold leading-snug text-zinc-900">{failureSummary(ctrl)}</p>
-                                <p className="text-sm leading-relaxed text-zinc-600">{nextStep(ctrl)}</p>
-                              </div>
+                              <p className="min-w-0 flex-1 text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
                               {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
                                 <button
                                   onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
@@ -912,20 +792,12 @@ export default function Controls() {
                               )}
                             </div>
 
-                            {areas.length > 0 && (
-                              <div className="mt-4 flex flex-wrap gap-2">
-                                {areas.map((area) => (
-                                  <span key={area} className="rounded-md bg-white/80 px-2.5 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
-                                    {area}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-
-                            {ctrl.narrative && (
+                            {ctrl.narrative ? (
                               <div className="mt-4">
                                 <NarrativeBlock text={ctrl.narrative} />
                               </div>
+                            ) : (
+                              <p className="mt-4 text-sm leading-relaxed text-zinc-600">{ctrl.description}</p>
                             )}
 
                             {connectedAccount && hasScanned && (
@@ -938,26 +810,11 @@ export default function Controls() {
                               </div>
                             )}
 
-                            <div className="mt-5 rounded-xl border border-zinc-200/80 bg-white p-5 shadow-sm shadow-zinc-950/[0.03]">
-                              <p className="text-sm leading-relaxed text-zinc-600">{ctrl.description}</p>
-
-                              {(ctrl.guidance || ctrl.check_ids.length > 0) && (
-                                <div className="mt-4 space-y-4 border-t border-zinc-100 pt-4">
-                                  {ctrl.guidance && (
-                                    <div>
-                                      <p className="vigil-kicker mb-2">Evidence to collect</p>
-                                      <p className="text-sm leading-relaxed text-zinc-800">{stripEvidencePrefix(ctrl.guidance)}</p>
-                                    </div>
-                                  )}
-
-                                  {ctrl.check_ids.length > 0 && (
-                                    <div className={ctrl.guidance ? "border-t border-zinc-100 pt-4" : ""}>
-                                      <MappedChecksList checkIds={ctrl.check_ids} />
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
+                            {ctrl.check_ids.length > 0 && (
+                              <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-950/[0.03]">
+                                <MappedChecksList checkIds={ctrl.check_ids} />
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -972,7 +829,7 @@ export default function Controls() {
         {/* Sidebar — evidence pack first on mobile */}
         <aside className="order-1 space-y-4 xl:order-2 xl:sticky xl:top-8 xl:self-start">
           <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm shadow-zinc-950/[0.04]">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework scores</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework</p>
             <div className="mt-4 space-y-3">
               {[
                 { id: "soc2", label: "SOC 2", pct: soc2Rate.data },
@@ -1008,9 +865,8 @@ export default function Controls() {
 
           <div className="rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/80 to-white p-5 shadow-sm shadow-indigo-950/[0.04]">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
-            <p className="mt-2 text-sm font-semibold text-zinc-900">Auditor-ready export</p>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-              Download a ZIP for {activeFramework.label} covering the selected audit window. Share as-is or sample by date.
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              {activeFramework.label} ZIP — INDEX.csv, per-control JSON, PDF report.
             </p>
 
             <label htmlFor="evidence-period" className="mt-4 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
@@ -1051,15 +907,6 @@ export default function Controls() {
                 </>
               )}
             </button>
-
-            <ul className="mt-4 space-y-1.5 border-t border-indigo-100/80 pt-4">
-              {EVIDENCE_PACK_ITEMS.map((item) => (
-                <li key={item} className="flex gap-2 text-xs leading-relaxed text-zinc-600">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-indigo-400" />
-                  {item}
-                </li>
-              ))}
-            </ul>
           </div>
         </aside>
       </div>
