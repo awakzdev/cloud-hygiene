@@ -2,13 +2,20 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
-
-interface Account {
-  id: string;
-  label: string;
-  account_id: string | null;
-  status: string;
-}
+import {
+  dedupeResources,
+  dedupeTimelineEvents,
+  eventDisplayName,
+  eventVerb,
+  extractRegion,
+  parseActor,
+  primaryResourceName,
+  resourceDisplayName,
+  serviceCategory,
+  serviceLabel,
+  truncateMiddle,
+  verbStyles,
+} from "../lib/timelineDisplay";
 
 interface TimelineEvent {
   type: "cloudtrail";
@@ -19,6 +26,13 @@ interface TimelineEvent {
   actor: string | null;
   source_ip: string | null;
   resources: { type: string | null; name: string | null }[];
+}
+
+interface Account {
+  id: string;
+  label: string;
+  account_id: string | null;
+  status: string;
 }
 
 interface TimelineMeta {
@@ -81,27 +95,21 @@ function emptyTimelineCopy(meta: TimelineMeta | undefined, days: number) {
 }
 
 function fmtTimeOnly(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
 function fmtDateHeader(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function dateKey(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-}
-
-function serviceCategory(source: string, eventName: string): ServiceFilter {
-  const s = source.replace(".amazonaws.com", "").toLowerCase();
-  if (s === "iam") return "IAM";
-  if (s === "s3") return "S3";
-  if (s === "kms") return "KMS";
-  if (s === "ec2" || /securitygroup/i.test(eventName)) return "Network";
-  return "Other";
 }
 
 function serviceBadgeClass(category: ServiceFilter): string {
@@ -119,19 +127,6 @@ function serviceBadgeClass(category: ServiceFilter): string {
   }
 }
 
-function shortActor(actor: string | null): string | null {
-  if (!actor) return null;
-  const tail = actor.split("/").pop() || actor;
-  return tail.length > 48 ? `${tail.slice(0, 45)}…` : tail;
-}
-
-function primaryResource(evt: TimelineEvent): string | null {
-  const names = evt.resources.map((r) => r.name || r.type || "").filter(Boolean);
-  if (names.length === 0) return null;
-  const first = names[0];
-  return first.length > 56 ? `${first.slice(0, 53)}…` : first;
-}
-
 function groupByDate(events: TimelineEvent[]): [string, TimelineEvent[]][] {
   const map = new Map<string, TimelineEvent[]>();
   for (const evt of events) {
@@ -140,6 +135,36 @@ function groupByDate(events: TimelineEvent[]): [string, TimelineEvent[]][] {
     map.get(key)!.push(evt);
   }
   return Array.from(map.entries());
+}
+
+function VerbIcon({ verb }: { verb: ReturnType<typeof eventVerb> }) {
+  const cls = "h-3.5 w-3.5";
+  if (verb === "create") {
+    return (
+      <svg className={cls} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+      </svg>
+    );
+  }
+  if (verb === "delete") {
+    return (
+      <svg className={cls} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" />
+      </svg>
+    );
+  }
+  if (verb === "security") {
+    return (
+      <svg className={cls} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008M10.29 3.86 2.82 7.13c-.96.44-1.56 1.42-1.56 2.5v5.14c0 4.66 3.84 8.52 8.52 9.46 4.68-.94 8.52-4.8 8.52-9.46V9.63c0-1.08-.6-2.06-1.56-2.5l-7.47-3.27a2.25 2.25 0 0 0-1.88 0Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg className={cls} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
+    </svg>
+  );
 }
 
 function Chevron({ open }: { open: boolean }) {
@@ -157,83 +182,241 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-function EventRow({ evt }: { evt: TimelineEvent }) {
-  const [open, setOpen] = useState(false);
-  const category = serviceCategory(evt.event_source, evt.event_name);
-  const actor = shortActor(evt.actor);
-  const resource = primaryResource(evt);
+function fmtEventTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title="Copy"
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard.writeText(value).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+      className="inline-flex shrink-0 items-center self-center rounded px-1 py-0.5 text-[11px] font-normal text-zinc-500 hover:bg-zinc-100/80 hover:text-zinc-700"
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+const sectionLabelClass = "mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500";
+const fieldLabelClass = "text-[11px] font-semibold uppercase tracking-wide text-zinc-600";
+const valueRegularClass = "mt-1 text-[13px] font-normal leading-relaxed text-zinc-800";
+const valueEmphasisClass = "mt-1 text-[13px] font-semibold leading-relaxed text-zinc-900";
+const valueTechnicalClass =
+  "mt-1 flex min-h-[18px] items-center gap-1.5 font-mono text-xs font-normal leading-relaxed text-zinc-600";
+const valueSubtextClass = "mt-0.5 text-xs font-normal leading-relaxed text-zinc-500";
+
+function MetaSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <h4 className={sectionLabelClass}>{title}</h4>
+      <dl className="space-y-3.5">{children}</dl>
+    </div>
+  );
+}
+
+function MetaField({
+  label,
+  value,
+  subtext,
+  emphasis,
+  technical,
+  fullValue,
+}: {
+  label: string;
+  value: React.ReactNode;
+  subtext?: string;
+  emphasis?: boolean;
+  technical?: boolean;
+  fullValue?: string;
+}) {
+  if (value === null || value === undefined || value === "") return null;
+  const copySource = fullValue || (typeof value === "string" ? value : undefined);
+  const valueClass = technical ? valueTechnicalClass : emphasis ? valueEmphasisClass : valueRegularClass;
 
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.03] transition hover:border-zinc-300 hover:shadow-md">
-      <button
-        type="button"
-        className="flex w-full items-center gap-4 px-4 py-3.5 text-left sm:px-5"
-        onClick={() => setOpen(!open)}
-      >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-zinc-900">{evt.event_name}</span>
-            <span
-              className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${serviceBadgeClass(category)}`}
-            >
-              {category}
-            </span>
-          </div>
-          <p className="mt-1 truncate text-xs text-zinc-500">
-            {[actor, resource].filter(Boolean).join(" · ") || "—"}
-          </p>
-        </div>
+    <div>
+      <dt className={fieldLabelClass}>{label}</dt>
+      <dd className={valueClass}>
+        <span className="min-w-0" title={fullValue || (typeof value === "string" ? value : undefined)}>
+          {value}
+        </span>
+        {copySource && technical && <CopyButton value={copySource} />}
+      </dd>
+      {subtext && <p className={valueSubtextClass}>{subtext}</p>}
+    </div>
+  );
+}
 
-        <p className="hidden shrink-0 text-sm font-medium tabular-nums text-zinc-700 sm:block">
-          {fmtTimeOnly(evt.event_time)}
-        </p>
+function TechnicalValue({ value, max = 48 }: { value: string; max?: number }) {
+  const shown = truncateMiddle(value, max);
+  return (
+    <span className="break-all" title={value}>
+      {shown}
+    </span>
+  );
+}
 
-        <Chevron open={open} />
-      </button>
+function ExpandedEvidence({ evt }: { evt: TimelineEvent }) {
+  const parsed = parseActor(evt.actor);
+  const region = extractRegion(evt);
+  const resources = dedupeResources(evt.resources);
+  const showRole = !!parsed.role;
+  const sessionIsEmail = parsed.user?.includes("@");
 
-      <div className="px-4 pb-3 sm:hidden">
-        <p className="text-xs tabular-nums text-zinc-500">{fmtTimeOnly(evt.event_time)}</p>
+  return (
+    <div className="border-t border-zinc-100 bg-zinc-50/40 px-4 py-3.5 sm:px-5">
+      <div className="grid gap-5 lg:grid-cols-3 lg:gap-7">
+        <MetaSection title="Identity">
+          <MetaField label="Actor" value={parsed.label} emphasis />
+          {showRole && <MetaField label="Role" value={parsed.role} />}
+          {parsed.user && sessionIsEmail && parsed.user !== parsed.label && (
+            <MetaField label="User" value={parsed.user} />
+          )}
+          {parsed.user && parsed.role && !sessionIsEmail && (
+            <MetaField
+              label="Session"
+              value={<TechnicalValue value={parsed.user} max={40} />}
+              technical
+              fullValue={parsed.user}
+            />
+          )}
+          <MetaField label="Identity type" value={parsed.origin} />
+          {evt.source_ip && (
+            <MetaField
+              label="Source IP"
+              value={<TechnicalValue value={evt.source_ip} max={36} />}
+              technical
+              fullValue={evt.source_ip}
+            />
+          )}
+          {parsed.fullArn && (
+            <MetaField
+              label="Principal ARN"
+              value={<TechnicalValue value={parsed.fullArn} max={44} />}
+              technical
+              fullValue={parsed.fullArn}
+            />
+          )}
+        </MetaSection>
+
+        <MetaSection title="Infrastructure">
+          <MetaField label="AWS service" value={serviceLabel(evt.event_source)} />
+          <MetaField
+            label="API action"
+            value={<TechnicalValue value={evt.event_name} max={32} />}
+            technical
+            fullValue={evt.event_name}
+          />
+          <MetaField label="Region" value={region || "—"} />
+          <MetaField label="Event time" value={fmtEventTime(evt.event_time)} />
+        </MetaSection>
+
+        <MetaSection title="Resources">
+          {resources.length === 0 ? (
+            <p className={valueRegularClass}>No resources recorded</p>
+          ) : (
+            resources.flatMap((r, i) => {
+              const name = r.name || "";
+              const display = resourceDisplayName(r.name);
+              const isArn = name.startsWith("arn:");
+              const fields = [
+                <MetaField
+                  key={`res-${i}`}
+                  label={resources.length > 1 ? `Resource ${i + 1}` : "Affected resource"}
+                  value={display}
+                  emphasis
+                  subtext={r.type || undefined}
+                />,
+              ];
+              if (isArn && name !== display) {
+                fields.push(
+                  <MetaField
+                    key={`arn-${i}`}
+                    label="Resource ARN"
+                    value={<TechnicalValue value={name} max={44} />}
+                    technical
+                    fullValue={name}
+                  />,
+                );
+              }
+              return fields;
+            })
+          )}
+        </MetaSection>
+      </div>
+    </div>
+  );
+}
+
+function EventRow({ evt, isLast }: { evt: TimelineEvent; isLast: boolean }) {
+  const [open, setOpen] = useState(false);
+  const category = serviceCategory(evt.event_source, evt.event_name) as ServiceFilter;
+  const verb = eventVerb(evt.event_name);
+  const styles = verbStyles(verb);
+  const parsed = parseActor(evt.actor);
+  const actor = parsed.label;
+  const resource = primaryResourceName(evt);
+  const title = eventDisplayName(evt.event_name, evt.event_source);
+
+  return (
+    <div className="flex gap-2 sm:gap-2.5">
+      <div className="flex w-7 shrink-0 flex-col items-center pt-3.5">
+        <span
+          className={`flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset ${styles.iconBg} ${styles.iconColor} ring-black/5`}
+        >
+          <VerbIcon verb={verb} />
+        </span>
+        {!isLast && <div className="mt-1 w-px flex-1 bg-zinc-200" />}
       </div>
 
-      {open && (
-        <div className="border-t border-zinc-100 px-4 py-4 sm:px-5">
-          <div className="grid gap-3 text-xs sm:grid-cols-2">
-            <div>
-              <p className="font-medium uppercase tracking-wide text-zinc-400">Event time</p>
-              <p className="mt-0.5 font-mono text-zinc-700">{evt.event_time}</p>
+      <div className="mb-2 min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.03] transition hover:border-zinc-300 hover:shadow-md">
+        <button
+          type="button"
+          className="flex w-full items-center gap-4 px-4 py-3.5 text-left sm:px-5"
+          onClick={() => setOpen(!open)}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-zinc-900">{title}</span>
+              <span
+                className={`inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${serviceBadgeClass(category)}`}
+              >
+                {category}
+              </span>
             </div>
-            <div>
-              <p className="font-medium uppercase tracking-wide text-zinc-400">Event source</p>
-              <p className="mt-0.5 font-mono text-zinc-700">{evt.event_source}</p>
-            </div>
-            {evt.actor && (
-              <div className="sm:col-span-2">
-                <p className="font-medium uppercase tracking-wide text-zinc-400">Actor</p>
-                <p className="mt-0.5 break-all font-mono text-zinc-700">{evt.actor}</p>
-              </div>
-            )}
-            {evt.source_ip && (
-              <div>
-                <p className="font-medium uppercase tracking-wide text-zinc-400">Source IP</p>
-                <p className="mt-0.5 font-mono text-zinc-700">{evt.source_ip}</p>
-              </div>
-            )}
-            {evt.resources.length > 0 && (
-              <div className="sm:col-span-2">
-                <p className="font-medium uppercase tracking-wide text-zinc-400">Resources</p>
-                <ul className="mt-1 space-y-0.5">
-                  {evt.resources.map((r, i) => (
-                    <li key={i} className="break-all font-mono text-zinc-700">
-                      {r.name || "—"}
-                      {r.type ? <span className="text-zinc-400"> ({r.type})</span> : null}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <p className="mt-1 truncate text-xs text-zinc-500">
+              {[actor, resource].filter(Boolean).join(" · ") || "—"}
+            </p>
           </div>
+
+          <p className="hidden shrink-0 text-sm font-medium tabular-nums text-zinc-700 sm:block">
+            {fmtTimeOnly(evt.event_time)}
+          </p>
+
+          <Chevron open={open} />
+        </button>
+
+        <div className="px-4 pb-3 sm:hidden">
+          <p className="text-xs tabular-nums text-zinc-500">{fmtTimeOnly(evt.event_time)}</p>
         </div>
-      )}
+
+        {open && <ExpandedEvidence evt={evt} />}
+      </div>
     </div>
   );
 }
@@ -264,16 +447,17 @@ export default function Timeline() {
 
   const filteredEvents = useMemo(() => {
     if (!data?.events) return [];
-    return data.events.filter((evt) => {
+    const byService = data.events.filter((evt) => {
       const cat = serviceCategory(evt.event_source, evt.event_name);
       return serviceFilter === "all" || cat === serviceFilter;
     });
+    return dedupeTimelineEvents(byService);
   }, [data?.events, serviceFilter]);
 
   const grouped = useMemo(() => groupByDate(filteredEvents), [filteredEvents]);
 
   return (
-    <div className="w-full px-8 py-7">
+    <div className="w-full pl-2 pr-4 py-6 sm:pl-3 sm:pr-6">
       <div className="mb-7 flex items-start justify-between gap-6">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Timeline</h1>
@@ -339,7 +523,7 @@ export default function Timeline() {
       )}
 
       {isLoading && (
-        <div className="space-y-2.5">
+        <div className="space-y-2.5 pl-6">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="h-[72px] animate-pulse rounded-xl bg-zinc-100" />
           ))}
@@ -347,9 +531,7 @@ export default function Timeline() {
       )}
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-          {String(error)}
-        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">{String(error)}</div>
       )}
 
       {data && filteredEvents.length === 0 && (
@@ -373,8 +555,8 @@ export default function Timeline() {
                 {fmtDateHeader(events[0].event_time)}
               </h2>
               <div className="space-y-2">
-                {events.map((evt) => (
-                  <EventRow key={evt.event_id} evt={evt} />
+                {events.map((evt, idx) => (
+                  <EventRow key={evt.event_id} evt={evt} isLast={idx === events.length - 1} />
                 ))}
               </div>
             </section>

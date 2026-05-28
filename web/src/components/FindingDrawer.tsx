@@ -1,12 +1,228 @@
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
 import { checkLabels } from "../data/checkLabels";
 import { remediationSummaryFor } from "../data/remediationSummaries";
 import { daysAgo, resourceDisplayName, resourceTypeLabel } from "../lib/findingDisplay";
+import {
+  applyCliPlaceholders,
+  buildCliPlaceholders,
+  fetchClientIpForRemediation,
+  formatCliStepSpacing,
+  injectEc2RegionFlags,
+} from "../lib/cliRemediation";
+import {
+  BlastRadiusConsiderations,
+  RolePoliciesAnalysis,
+  RoleServiceUsageAnalysis,
+  RoleTrustPrincipals,
+} from "./BlastRadiusPanel";
+import {
+  DrawerFlowLabel,
+  ExceptionFlowPanel,
+  FlowBadge,
+  FlowCallout,
+  PostureMetricCell,
+  PostureMetricsRow,
+  ResourceFieldRow,
+  ResourceGroup,
+  SemanticNarrativeBlock,
+} from "./FindingDrawerSemantic";
 
 const DRAWER_MAX_W = "max-w-[640px]";
+
+/** Shared drawer inspection UI — aligned with Resources tab rhythm */
+const drawerPanel = "overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm shadow-zinc-900/[0.03]";
+const drawerSectionHead = "border-b border-zinc-100 px-4 py-3";
+const drawerSectionBody = "px-4 py-3.5";
+const drawerSectionTitle = "text-sm font-semibold text-zinc-900";
+const drawerFieldLabel = "w-[5.25rem] shrink-0 text-[11px] font-medium uppercase tracking-wide text-zinc-500";
+const drawerFieldLabelBlock = "text-[11px] font-medium uppercase tracking-wide text-zinc-500";
+const drawerFieldValue = "min-w-0 flex-1 text-[13px] leading-relaxed text-zinc-800";
+const drawerBodyGap = "space-y-3";
+const drawerFooterPrimary =
+  "flex-[1.12] rounded-lg px-3.5 py-2 text-[13px] font-medium text-white bg-zinc-800 shadow-sm shadow-zinc-900/8 ring-1 ring-zinc-900/5 transition-all duration-200 hover:bg-zinc-700 hover:shadow-md hover:shadow-zinc-900/10 active:scale-[0.995]";
+const drawerFooterSecondary =
+  "flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-200/60 bg-white px-3 py-2 text-[13px] font-medium text-zinc-600 transition-all duration-200 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-800 active:scale-[0.995] disabled:opacity-50";
+const drawerFooterException =
+  "flex-[0.88] rounded-lg border border-amber-200/50 bg-amber-50/40 px-3 py-2 text-[13px] font-medium text-amber-800/75 transition-all duration-200 hover:border-amber-300/60 hover:bg-amber-50/70 hover:text-amber-900 active:scale-[0.995]";
+
+function DrawerSection({
+  title,
+  children,
+  action,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`${drawerPanel} ${className}`}>
+      <div className={`${drawerSectionHead} flex items-center justify-between gap-2`}>
+        <h3 className={drawerSectionTitle}>{title}</h3>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DrawerMetaRow({
+  label,
+  children,
+  align = "center",
+  compact = false,
+}: {
+  label: string;
+  children: ReactNode;
+  align?: "start" | "center";
+  compact?: boolean;
+}) {
+  return (
+    <div
+      className={`flex gap-3 px-4 pr-5 ${compact ? "py-2" : "py-2.5"} ${align === "start" ? "items-start" : "items-center"}`}
+    >
+      <span className={drawerFieldLabel}>{label}</span>
+      <div className={drawerFieldValue}>{children}</div>
+    </div>
+  );
+}
+
+function formatObservationDate(iso: string) {
+  const d = new Date(iso);
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  return `${day}/${month}/${d.getFullYear()}`;
+}
+
+function RemediationModeToggle({
+  value,
+  onChange,
+}: {
+  value: "console" | "cli";
+  onChange: (mode: "console" | "cli") => void;
+}) {
+  return (
+    <div className="inline-flex gap-0.5 rounded-lg bg-zinc-100/80 p-0.5">
+      {(["console", "cli"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => onChange(mode)}
+          className={`rounded-md px-3 py-1 text-[11px] font-medium transition-all duration-150 ${
+            value === mode
+              ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-900/5"
+              : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          {mode === "cli" ? "CLI" : "Console"}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function awsAccountIdFromArn(arn: string): string | null {
+  const m = arn.match(/^arn:aws:[^:]+::(\d{12}):/);
+  return m ? m[1] : null;
+}
+
+function SelectedResourceInspector({
+  finding,
+  attachedToList = false,
+}: {
+  finding: Finding;
+  attachedToList?: boolean;
+}) {
+  const name = resourceDisplayName(finding);
+  const accountId = awsAccountIdFromArn(finding.resource_arn);
+  const ev = finding.evidence;
+  const isUnusedRoleFinding = finding.check_id === "iam.role.unused_services_90d";
+  const unusedCount = (ev.unused_services as string[] | undefined)?.length;
+  const totalGranted = ev.total_granted_services as number | undefined;
+  const thresholdDays = ev.threshold_days as number | undefined;
+  const withRecordedUse =
+    totalGranted != null && unusedCount != null ? Math.max(0, totalGranted - unusedCount) : null;
+
+  const statusLabel = finding.status.replace(/_/g, " ");
+  const riskTone =
+    finding.severity === "critical" || finding.severity === "high"
+      ? "text-red-700"
+      : finding.severity === "medium"
+        ? "text-amber-700"
+        : "text-zinc-800";
+
+  return (
+    <div
+      className={`${drawerPanel} overflow-hidden ${
+        attachedToList ? "border-l-2 border-l-zinc-300/45 shadow-sm shadow-zinc-900/[0.04]" : ""
+      }`}
+    >
+      <div
+        className={`border-b border-zinc-100 px-4 py-3.5 pr-5 ${attachedToList ? "bg-zinc-50/70" : "bg-white"}`}
+      >
+        <h3 className={`${drawerSectionTitle} font-mono text-[15px] leading-snug break-all`}>{name}</h3>
+      </div>
+
+      <ResourceGroup className="border-t-0">
+        {accountId && <ResourceFieldRow label="Account">{accountId}</ResourceFieldRow>}
+        <ResourceFieldRow label="ARN" mono>
+          {finding.resource_arn}
+        </ResourceFieldRow>
+      </ResourceGroup>
+
+      {isUnusedRoleFinding && totalGranted != null && (
+        <ResourceGroup>
+          <PostureMetricsRow variant="compact">
+            <PostureMetricCell label="Granted" value={totalGranted} variant="compact" />
+            <PostureMetricCell
+              label="In use"
+              value={withRecordedUse ?? "—"}
+              valueClassName="text-emerald-700"
+              variant="compact"
+            />
+            <PostureMetricCell
+              label="Unused 90d+"
+              value={unusedCount ?? "—"}
+              valueClassName="text-zinc-700"
+              variant="compact"
+            />
+            <PostureMetricCell
+              label="Window"
+              value={thresholdDays != null ? `${thresholdDays}d` : "—"}
+              variant="compact"
+            />
+          </PostureMetricsRow>
+        </ResourceGroup>
+      )}
+
+      <ResourceGroup>
+        <PostureMetricsRow variant="compact">
+          <PostureMetricCell
+            label="Risk score"
+            value={finding.risk_score}
+            valueClassName={riskTone}
+            variant="compact"
+          />
+          <PostureMetricCell
+            label="Status"
+            value={<span className="capitalize text-[13px]">{statusLabel}</span>}
+            variant="compact"
+          />
+        </PostureMetricsRow>
+      </ResourceGroup>
+
+      {isUnusedRoleFinding && (
+        <p className="border-t border-zinc-100/80 bg-zinc-50/30 px-4 py-2.5 pr-5 text-[11px] leading-relaxed text-zinc-500">
+          Usage confidence and safe-removal analysis are on the What If tab.
+        </p>
+      )}
+    </div>
+  );
+}
 
 type Finding = {
   id: string;
@@ -52,34 +268,94 @@ type Remediation = {
   risk: string;
 };
 
-function OperationalInsights({
+function remediationImpactBadge(severity: string): { label: string; variant: "high" | "caution" | "muted" } {
+  if (severity === "critical" || severity === "high") return { label: "High impact", variant: "high" };
+  if (severity === "medium") return { label: "Verify impact", variant: "caution" };
+  return { label: "Lower impact", variant: "muted" };
+}
+
+function OverviewTabContent({
   impact,
   risk,
   fix,
   affected,
+  finding,
+  hasException,
 }: {
   impact: string;
   risk: string;
   fix: string;
   affected?: string | null;
+  finding: Finding;
+  hasException: boolean;
 }) {
-  const rows: { label: string; value: string }[] = [
-    { label: "Impact", value: impact },
-    { label: "Risk", value: risk },
-    { label: "Fix", value: fix },
-  ];
-  if (affected) rows.push({ label: "Affected", value: affected });
+  const statusLabel = finding.status.replace(/_/g, " ");
+  const riskTone =
+    finding.severity === "critical" || finding.severity === "high"
+      ? "text-red-700"
+      : finding.severity === "medium"
+        ? "text-amber-700"
+        : "text-zinc-800";
 
   return (
-    <div className="divide-y divide-zinc-100 rounded-lg bg-white ring-1 ring-zinc-200/80">
-      {rows.map(({ label, value }) => (
-        <div key={label} className="flex gap-4 px-3.5 py-2.5 first:pt-3 last:pb-3">
-          <span className="w-[4.5rem] shrink-0 pt-px text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-            {label}
-          </span>
-          <p className="min-w-0 flex-1 text-[13px] leading-snug text-zinc-700">{value}</p>
-        </div>
-      ))}
+    <div className="space-y-2.5">
+      <DrawerFlowLabel>Security narrative</DrawerFlowLabel>
+      <div className="space-y-2">
+        <SemanticNarrativeBlock tag="Context" tone="caution" title="Why this matters">
+          {impact}
+        </SemanticNarrativeBlock>
+        <SemanticNarrativeBlock tag="Exposure" tone="neutral" title="Potential blast radius">
+          {risk}
+        </SemanticNarrativeBlock>
+        <SemanticNarrativeBlock tag="Next step" tone="action" title="Recommended action">
+          {fix}
+        </SemanticNarrativeBlock>
+        {affected && (
+          <SemanticNarrativeBlock tag="Scope" tone="neutral" title="Affected resources">
+            {affected}
+          </SemanticNarrativeBlock>
+        )}
+      </div>
+
+      <DrawerFlowLabel>Finding posture</DrawerFlowLabel>
+      <div className="rounded-xl border border-zinc-200/20 bg-zinc-50/20 px-3 py-4 sm:px-4 sm:py-5">
+        <PostureMetricsRow variant="status">
+          <PostureMetricCell
+            variant="status"
+            label="Status"
+            value={<span className="capitalize">{statusLabel}</span>}
+          />
+          <PostureMetricCell
+            variant="status"
+            label="Risk score"
+            value={finding.risk_score}
+            valueClassName={riskTone}
+          />
+          <PostureMetricCell
+            variant="status"
+            label="First seen"
+            value={daysAgo(finding.first_seen)}
+            sub={formatObservationDate(finding.first_seen)}
+          />
+          <PostureMetricCell
+            variant="status"
+            label="Last seen"
+            value={daysAgo(finding.last_seen)}
+            sub={formatObservationDate(finding.last_seen)}
+          />
+        </PostureMetricsRow>
+      </div>
+
+      {hasException && (
+        <>
+          <DrawerFlowLabel>Exception</DrawerFlowLabel>
+          <ExceptionFlowPanel
+            reason={finding.exception_reason}
+            approvedBy={finding.exception_approved_by}
+            expiresAt={finding.exception_expires_at}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -1042,12 +1318,16 @@ done`,
       "Create a new volume from the encrypted snapshot",
       "Detach the old volume and attach the encrypted replacement during a maintenance window",
     ],
-    cli: `# Snapshot, copy encrypted, then create a replacement volume
+    cli: `# Step 1: Snapshot the unencrypted volume
 aws ec2 create-snapshot --volume-id <volume-id> --description "Encrypt <volume-id>"
+
+# Step 2: Copy snapshot with encryption (use snapshot ID from step 1)
 aws ec2 copy-snapshot \\
   --source-region <region> \\
   --source-snapshot-id <snapshot-id> \\
   --encrypted
+
+# Step 3: Create encrypted volume (same AZ as the original)
 aws ec2 create-volume \\
   --snapshot-id <encrypted-snapshot-id> \\
   --availability-zone <az>`,
@@ -1205,8 +1485,6 @@ const fallbackRemediation: Remediation = {
   risk: "Unresolved findings increase your attack surface.",
 };
 
-type RemovableStatement = { policy: string; sid: string; actions: string[]; resources: string[] };
-
 function ServicePills({ services }: { services: string[] }) {
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -1315,13 +1593,6 @@ function CollapsibleGrantedServices({ services }: { services: GrantedServicePill
   );
 }
 
-function resourceWildcardNote(cloudTrailLogging: boolean) {
-  if (cloudTrailLogging) {
-    return "Account-wide scope in this export. CloudTrail is enabled — use IAM Access Analyzer policy generation for ARN-level least privilege; Vigil Generate still scopes actions only.";
-  }
-  return "Account-wide scope. IAM last-accessed shows which API calls were used, not which ARNs were touched. Enable CloudTrail to unlock resource-level narrowing.";
-}
-
 function generatePolicyIntro(cloudTrailLogging: boolean) {
   const action =
     "Vigil narrows action wildcards to the API calls recorded in the last 90 days.";
@@ -1329,117 +1600,6 @@ function generatePolicyIntro(cloudTrailLogging: boolean) {
     ? "Resource scope still shows * in this output (actions only) — use Access Analyzer with your CloudTrail logs for ARN-level scope."
     : "Resource scope is left as-is — IAM last-accessed does not record which ARNs were used.";
   return `${action} ${resource}`;
-}
-
-const ACTION_WILDCARD_NOTE =
-  "Wildcard action — narrow to the API calls recorded in the last 90 days.";
-
-function isActionWildcardLabel(value: string) {
-  return value === "*" || value.includes("wildcard");
-}
-
-function IamPolicyScopePill({ value, kind }: { value: string; kind: "action" | "resource" | "resource-wildcard" }) {
-  const styles =
-    kind === "action"
-      ? "border-red-200 bg-red-50 text-red-700"
-      : kind === "resource-wildcard"
-        ? "border-amber-200 bg-amber-50 text-amber-800"
-        : "border-zinc-200 bg-white text-zinc-700";
-  const mono = kind === "resource" && value.startsWith("arn:");
-  return (
-    <span className={`rounded border px-1.5 py-0.5 text-[11px] leading-relaxed ${mono ? "font-mono" : ""} ${styles}`}>
-      {value}
-    </span>
-  );
-}
-
-function IamPolicyScopeField({
-  label,
-  tone,
-  children,
-  note,
-}: {
-  label: string;
-  tone: "action" | "resource";
-  children: ReactNode;
-  note?: string;
-}) {
-  const boxTone = tone === "action" ? "border-red-100 bg-red-50/50" : "border-amber-100 bg-amber-50/50";
-  const noteTone = tone === "action" ? "text-red-800/80" : "text-amber-900/80";
-  return (
-    <div className={`rounded-md border ${boxTone} px-2.5 py-2`}>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</div>
-      {children}
-      {note && <p className={`mt-1.5 text-[11px] leading-relaxed ${noteTone}`}>{note}</p>}
-    </div>
-  );
-}
-
-function RemovableStatementsBlock({
-  statements,
-  cloudTrailLogging,
-}: {
-  statements: RemovableStatement[];
-  cloudTrailLogging: boolean;
-}) {
-  if (!statements.length) return null;
-  return (
-    <div>
-      <div className="mb-2 text-sm font-semibold text-zinc-700">
-        Removable statements
-        <span className="ml-1.5 text-xs font-normal text-zinc-400">from inline policies</span>
-      </div>
-      <div className="space-y-2">
-        {statements.map((stmt, i) => {
-          const resourceWildcard = stmt.resources.length === 1 && stmt.resources[0] === "*";
-          const actionWildcards = stmt.actions.filter(isActionWildcardLabel);
-          const concreteActions = stmt.actions.filter((a) => !isActionWildcardLabel(a));
-          return (
-            <div key={i} className="overflow-hidden rounded-lg border border-zinc-200 text-xs">
-              <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2">
-                <span className="font-mono font-medium text-zinc-800">{stmt.policy}</span>
-                {stmt.sid && <span className="text-zinc-400">· {stmt.sid}</span>}
-              </div>
-              <div className="space-y-2 px-3 py-2.5">
-                {(actionWildcards.length > 0 || concreteActions.length > 0) && (
-                  <IamPolicyScopeField
-                    label="Actions"
-                    tone="action"
-                    note={actionWildcards.length > 0 ? ACTION_WILDCARD_NOTE : undefined}
-                  >
-                    <div className="flex flex-wrap gap-1">
-                      {actionWildcards.map((a) => (
-                        <IamPolicyScopePill key={a} value="*" kind="action" />
-                      ))}
-                      {concreteActions.map((a) => (
-                        <IamPolicyScopePill key={a} value={a} kind="action" />
-                      ))}
-                    </div>
-                  </IamPolicyScopeField>
-                )}
-                <IamPolicyScopeField label="Resources" tone="resource">
-                  {resourceWildcard ? (
-                    <>
-                      <IamPolicyScopePill value="*" kind="resource-wildcard" />
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-amber-900/80">
-                        {resourceWildcardNote(cloudTrailLogging)}
-                      </p>
-                    </>
-                  ) : (
-                    <div className="flex flex-wrap gap-1">
-                      {stmt.resources.map((r) => (
-                        <IamPolicyScopePill key={r} value={r} kind="resource" />
-                      ))}
-                    </div>
-                  )}
-                </IamPolicyScopeField>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 
 function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
@@ -1761,69 +1921,72 @@ function EvidenceSection({
   cloudTrailLogging: boolean;
 }) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
+  if (checkId === "iam.role.unused_services_90d") {
+    skip.add("threshold_days");
+    skip.add("total_granted_services");
+  }
   const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
   const scalars = entries
     .filter(([, v]) => !Array.isArray(v) || typeof v[0] !== "object" || v[0] === null)
     .filter(([k]) => !(k === "region_count" && Array.isArray(evidence.disabled_regions)));
   const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
   const unusedServices = evidence.unused_services as string[] | undefined;
-  const removable = evidence.removable_statements as RemovableStatement[] | undefined;
+  const showUnusedServices =
+    checkId !== "iam.role.unused_services_90d" && unusedServices && unusedServices.length > 0;
 
   return (
-    <div className="space-y-5">
-      {unusedServices && unusedServices.length > 0 && (
-        <div>
-          <div className="mb-2 text-sm font-semibold text-zinc-700">
-            Unused services
-            <span className="ml-1.5 text-xs font-normal text-zinc-400">
-              {unusedServices.length} of {(evidence.total_granted_services as number) ?? "?"} granted
-            </span>
+    <div className={drawerBodyGap}>
+      {showUnusedServices && (
+        <DrawerSection title="Unused services">
+          <p className="border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-500">
+            {unusedServices!.length} of {(evidence.total_granted_services as number) ?? "?"} granted
+          </p>
+          <div className={drawerSectionBody}>
+            <CollapsibleServicePills services={unusedServices!} />
           </div>
-          <CollapsibleServicePills services={unusedServices} />
-        </div>
+        </DrawerSection>
       )}
       {scalars.length > 0 && (
-        <div className="divide-y divide-zinc-100 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-          {scalars.map(([k, v]) => {
-            const rich = evidenceValueIsRich(k, v);
-            if (rich) {
+        <DrawerSection title="Resource details">
+          <div className="divide-y divide-zinc-100 py-0.5">
+            {scalars.map(([k, v]) => {
+              const rich = evidenceValueIsRich(k, v);
+              if (rich) {
+                return (
+                  <div key={k} className={drawerSectionBody}>
+                    <div className={`${drawerFieldLabelBlock} mb-2`}>{evidenceLabel(k, evidence)}</div>
+                    <EvidenceValue fieldKey={k} value={v} />
+                  </div>
+                );
+              }
               return (
-                <div key={k} className="px-4 py-3.5">
-                  <div className="mb-2.5 text-xs font-medium text-zinc-500">{evidenceLabel(k, evidence)}</div>
+                <DrawerMetaRow key={k} label={evidenceLabel(k, evidence)} align="start">
                   <EvidenceValue fieldKey={k} value={v} />
-                </div>
+                </DrawerMetaRow>
               );
-            }
-            return (
-              <div key={k} className="grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-x-4 px-4 py-3.5">
-                <span className="text-xs font-medium leading-5 text-zinc-500">{evidenceLabel(k, evidence)}</span>
-                <EvidenceValue fieldKey={k} value={v} />
-              </div>
-            );
-          })}
-        </div>
+            })}
+          </div>
+        </DrawerSection>
       )}
       {objectLists.map(([k, items]) => (
-        <div key={k}>
-          <div className="mb-2.5 text-sm font-semibold text-zinc-700">{evidenceSectionTitle(k)}</div>
-          {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
-        </div>
+        <DrawerSection key={k} title={evidenceSectionTitle(k)}>
+          <div className="px-3 py-2.5">
+            {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
+          </div>
+        </DrawerSection>
       ))}
-      {removable && <RemovableStatementsBlock statements={removable} cloudTrailLogging={cloudTrailLogging} />}
     </div>
   );
 }
 
-function resolvedCli(finding: Finding): string {
+function resolvedCli(finding: Finding, clientIp?: string | null): string {
   const arn = finding.resource_arn;
   const roleMatch = arn.match(/:role\/(.+)$/);
   const roleName = roleMatch ? (roleMatch[1].split("/").pop() ?? "") : "";
-  const userMatch = arn.match(/:user\/(.+)$/);
-  const userName = userMatch ? (userMatch[1].split("/").pop() ?? "") : "";
-  const keyId = (finding.evidence.key_id as string | undefined) ?? "<key-id>";
-  const removable = finding.evidence.removable_statements as RemovableStatement[] | undefined;
-  const hasInline = removable && removable.length > 0;
-  if (finding.check_id === "iam.role.unused_services_90d" && !hasInline && roleName) return `# Permissions come from managed/attached policies — inline policies have no matching statements.
+  const removable = finding.evidence.removable_statements as unknown[] | undefined;
+  const hasInline = Array.isArray(removable) && removable.length > 0;
+  if (finding.check_id === "iam.role.unused_services_90d" && !hasInline && roleName) {
+    return `# Permissions come from managed/attached policies — inline policies have no matching statements.
 
 # 1. See what's attached
 aws iam list-attached-role-policies --role-name ${roleName}
@@ -1837,71 +2000,25 @@ aws accessanalyzer start-policy-generation \\
 
 # 4. Poll for the generated policy (takes ~30s)
 aws accessanalyzer get-generated-policy --job-id <job-id>`;
+  }
   const rem = remediations[finding.check_id] ?? fallbackRemediation;
-  const policyNames = removable ? [...new Set(removable.map((s) => s.policy))] : [];
-  const policyName = policyNames.length === 1 ? policyNames[0] : "<policy-name>";
-  const ev = finding.evidence;
-  const arnRegion = arn.match(/^arn:aws:[^:]+:([^:*]+)/)?.[1] ?? "<region>";
-  const bucketName =
-    (ev.bucket_name as string | undefined) ??
-    (ev.name as string | undefined) ??
-    arn.match(/^arn:aws:s3:::([^/]+)$/)?.[1] ??
-    "<bucket-name>";
-  const tableName =
-    (ev.table_name as string | undefined) ??
-    arn.match(/:table\/([^/]+)$/)?.[1] ??
-    "<table-name>";
-  const instanceId =
-    (ev.db_instance_id as string | undefined) ??
-    arn.match(/:db:([^:/]+)/)?.[1] ??
-    "<instance-id>";
-  const functionName =
-    (ev.function_name as string | undefined) ??
-    arn.match(/:function:([^:+/]+)/)?.[1] ??
-    "<function-name>";
-  const snapshotId =
-    (ev.snapshot_id as string | undefined) ??
-    arn.match(/snapshot\/(snap-[^/]+)/)?.[1] ??
-    "<snapshot-id>";
-  const imageId =
-    (ev.image_id as string | undefined) ??
-    arn.match(/(ami-[a-f0-9]+)/)?.[1] ??
-    "<image-id>";
-  const trailName = (ev.name as string | undefined) ?? "<trail-name>";
-  const parameterName = (ev.parameter_name as string | undefined) ?? "<parameter-name>";
-  const secretName = (ev.name as string | undefined) ?? "<secret-name>";
-  const loadBalancerArn = arn.includes(":loadbalancer/") ? arn : "<load-balancer-arn>";
-  const domainName = (ev.domain_name as string | undefined) ?? "<domain-name>";
-  const certificateArn = arn.includes(":acm:") ? arn : "<certificate-arn>";
-  const topicArn = arn.includes(":sns:") ? arn : "<topic-arn>";
-  const queueArnMatch = arn.match(/^arn:aws:sqs:([^:]+):(\d+):(.+)$/);
-  const queueUrl = queueArnMatch
-    ? `https://sqs.${queueArnMatch[1]}.amazonaws.com/${queueArnMatch[2]}/${queueArnMatch[3]}`
-    : "<queue-url>";
-  const region = (ev.region as string | undefined) ?? arnRegion;
-  const kmsKeyId = (ev.key_id as string | undefined) ?? "<key-id>";
-  const accountId = arn.match(/^arn:aws:[^:]+:[^:]+:\d+:/)?.[0]?.match(/:(\d+):/)?.[1] ?? "<account-id>";
-  return rem.cli
-    .replace(/<role-name>/g, roleName || "<role-name>")
-    .replace(/<user>/g, userName || "<user>")
-    .replace(/<key-id>/g, kmsKeyId)
-    .replace(/<policy-name>/g, policyName)
-    .replace(/<bucket-name>/g, bucketName)
-    .replace(/<table-name>/g, tableName)
-    .replace(/<region>/g, region)
-    .replace(/<instance-id>/g, instanceId)
-    .replace(/<function-name>/g, functionName)
-    .replace(/<snapshot-id>/g, snapshotId)
-    .replace(/<image-id>/g, imageId)
-    .replace(/<trail-name>/g, trailName)
-    .replace(/<parameter-name>/g, parameterName)
-    .replace(/<secret-name>/g, secretName)
-    .replace(/<load-balancer-arn>/g, loadBalancerArn)
-    .replace(/<domain-name>/g, domainName)
-    .replace(/<certificate-arn>/g, certificateArn)
-    .replace(/<topic-arn>/g, topicArn)
-    .replace(/<queue-url>/g, queueUrl)
-    .replace(/<account-id>/g, accountId);
+  const placeholders = buildCliPlaceholders(finding, clientIp);
+  let cli = applyCliPlaceholders(rem.cli, placeholders);
+  cli = injectEc2RegionFlags(cli, placeholders["<region>"]);
+  return formatCliStepSpacing(cli);
+}
+
+function RemediationCliBlock({ finding }: { finding: Finding }) {
+  const { data: clientIp } = useQuery({
+    queryKey: ["remediation-client-ip"],
+    queryFn: fetchClientIpForRemediation,
+    staleTime: 300_000,
+  });
+  const code = useMemo(
+    () => resolvedCli(finding, clientIp ?? null),
+    [finding.id, finding.check_id, finding.resource_arn, finding.evidence, clientIp],
+  );
+  return <CliBlock code={code} />;
 }
 
 type AttachedPolicyAnalysis = {
@@ -2337,9 +2454,9 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
 }
 
 const verdictStyle = {
-  safe: { card: "border-emerald-200 bg-emerald-50", text: "text-emerald-900", icon: "text-emerald-500" },
-  caution: { card: "border-amber-200 bg-amber-50", text: "text-amber-900", icon: "text-amber-500" },
-  warning: { card: "border-red-200 bg-red-50", text: "text-red-900", icon: "text-red-500" },
+  safe: { card: "border-emerald-200/80 bg-emerald-50/60", text: "text-emerald-900", icon: "text-emerald-500" },
+  caution: { card: "border-zinc-200 bg-zinc-50", text: "text-zinc-800", icon: "text-amber-500" },
+  warning: { card: "border-red-200/80 bg-red-50/70", text: "text-red-900", icon: "text-red-500" },
 };
 
 function VerdictIcon({ type }: { type: "safe" | "caution" | "warning" }) {
@@ -2456,10 +2573,18 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         </span>
       </div>
 
-      <div className="p-4 space-y-4">
-        <div className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${vs.card}`}>
+      <div className="space-y-3 p-4 pr-5">
+        <div className={`flex items-start gap-2.5 rounded-lg border px-4 py-3 pr-5 ${vs.card}`}>
           <span className={vs.icon}><VerdictIcon type={verdict.type} /></span>
-          <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
+          <div className="min-w-0">
+            <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
+            {data.resource_type === "iam_role" && data.services && data.services.length > 0 && (
+              <p className="mt-1.5 text-[11px] text-zinc-500">
+                {data.active_service_count ?? 0} services with recent API use · {data.unused_service_count ?? 0} likely
+                removable
+              </p>
+            )}
+          </div>
         </div>
 
         {data.resource_type === "vpc" && (
@@ -2470,132 +2595,50 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
           </InfoNote>
         )}
 
-        {infoRows.map((note, i) => (
-          <InfoNote key={i}>{note}</InfoNote>
-        ))}
+        {infoRows.length > 0 && <BlastRadiusConsiderations items={infoRows} tone="info" />}
 
-        {/* Warnings */}
-        {warningRows.length > 0 && (
-          <div className="space-y-1.5">
-            {warningRows.map((w, i) => (
-              <div key={i} className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
-                </svg>
-                {w}
-              </div>
-            ))}
-          </div>
-        )}
+        {warningRows.length > 0 && <BlastRadiusConsiderations items={warningRows} tone="warning" />}
 
-        {/* Role: services */}
         {data.resource_type === "iam_role" && data.services && data.services.length > 0 && (
-          <div>
-            <div className="text-sm font-semibold text-zinc-700 mb-2">Granted services ({data.services.length})</div>
-            <CollapsibleGrantedServices services={data.services} />
-            <div className="mt-2 flex gap-3 text-xs text-zinc-400">
-              <span><span className="font-semibold text-red-600">{data.active_service_count}</span> active</span>
-              <span><span className="font-semibold text-zinc-600">{data.unused_service_count}</span> unused</span>
-            </div>
-          </div>
+          <RoleServiceUsageAnalysis
+            services={data.services}
+            activeCount={data.active_service_count}
+            unusedCount={data.unused_service_count}
+          />
         )}
 
-        {/* Role: trust principals */}
         {data.resource_type === "iam_role" && data.trust_principals && data.trust_principals.length > 0 && (
-          <div>
-            <div className="text-sm font-semibold text-zinc-700 mb-2">Trusted by</div>
-            <div className="space-y-1">
-              {data.trust_principals.map((p, i) => (
-                <div key={i} className="rounded-md bg-zinc-50 border border-zinc-200 px-2.5 py-1.5 font-mono text-xs text-zinc-600 break-all">{p}</div>
-              ))}
-            </div>
-          </div>
+          <RoleTrustPrincipals principals={data.trust_principals} />
         )}
 
-        {/* Role: attached policies breakdown */}
         {data.resource_type === "iam_role" && data.attached_policies && data.attached_policies.length > 0 && (
-          <div>
-            <div className="text-sm font-semibold text-zinc-700 mb-2">Attached policies ({data.attached_policies.length})</div>
-            <div className="space-y-2">
-              {data.attached_policies.map((pol) => (
-                <div key={pol.policy_arn} className="rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden">
-                  <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 bg-white">
-                    <div className="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
-                      <span className="group/pname relative min-w-0">
-                        <span className="block font-mono text-xs font-medium text-zinc-800 truncate">{pol.policy_name}</span>
-                        <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover/pname:block">
-                          <p className="break-all font-mono text-xs text-zinc-700 leading-relaxed">{pol.policy_name}</p>
-                        </div>
-                      </span>
-                      <span className={`flex-shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                        pol.policy_type === "aws_managed"
-                          ? "border-blue-200 bg-blue-50 text-blue-700"
-                          : "border-violet-200 bg-violet-50 text-violet-700"
-                      }`}>
-                        {pol.policy_type === "aws_managed" ? "AWS" : "Custom"}
-                      </span>
-                      {pol.has_wildcard_action && (
-                        <span className="flex-shrink-0 rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
-                          wildcard
-                        </span>
-                      )}
-                    </div>
-                    <ConsoleLink
-                      href={
-                        pol.action === "detach_and_replace"
-                          ? iamRolePermissionsConsoleUrl(finding.resource_arn)
-                          : iamPolicyConsoleUrl(pol.policy_arn)
-                      }
-                      title={
-                        pol.action === "detach_and_replace"
-                          ? "Open role permissions in AWS Console to detach this managed policy"
-                          : "Open policy in AWS Console to edit"
-                      }
-                    >
-                      {pol.action === "detach_and_replace" ? "Detach + replace" : "Edit policy"}
-                    </ConsoleLink>
-                  </div>
-                  <div className="px-3 py-2.5 space-y-2">
-                    {pol.unused_services.length > 0 && (
-                      <div>
-                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Removable</div>
-                        <div className="flex flex-wrap gap-1">
-                          {pol.unused_services.map((s) => (
-                            <span key={s} className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">{s}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {pol.active_services.length > 0 && (
-                      <div>
-                        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Keep (active)</div>
-                        <div className="flex flex-wrap gap-1">
-                          {pol.active_services.map((s) => (
-                            <span key={s} className="rounded bg-red-50 px-1.5 py-0.5 font-mono text-[11px] text-red-600">{s}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {pol.unused_services.length === 0 && pol.active_services.length === 0 && pol.granted_services.length > 0 && (
-                      <span className="text-xs text-zinc-400">No usage data yet — run a scan, then check back once service last-accessed data populates.</span>
-                    )}
-                    {pol.granted_services.length === 0 && (
-                      <span className="text-xs text-zinc-400">No parseable service grants found.</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <RolePoliciesAnalysis
+            policies={data.attached_policies}
+            renderConsoleLink={(pol) => (
+              <ConsoleLink
+                href={
+                  pol.action === "detach_and_replace"
+                    ? iamRolePermissionsConsoleUrl(finding.resource_arn)
+                    : iamPolicyConsoleUrl(pol.policy_arn)
+                }
+                title={
+                  pol.action === "detach_and_replace"
+                    ? "Open role permissions in AWS Console to detach this managed policy"
+                    : "Open policy in AWS Console to edit"
+                }
+              >
+                {pol.action === "detach_and_replace" ? "Detach + replace" : "Edit policy"}
+              </ConsoleLink>
+            )}
+          />
         )}
 
-        {/* Role: last assumed */}
         {data.resource_type === "iam_role" && (
-          <div className="text-xs text-zinc-400">
+          <p className="text-[11px] text-zinc-500 px-0.5">
             {data.days_since_last_assumed !== null && data.days_since_last_assumed !== undefined
-              ? `Last assumed ${data.days_since_last_assumed} days ago`
-              : "Never assumed"}
-          </div>
+              ? `Role last assumed ${data.days_since_last_assumed} days ago`
+              : "Role has never been assumed"}
+          </p>
         )}
 
         {/* Access key: key list */}
@@ -3108,7 +3151,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   );
 }
 
-type Tab = "overview" | "resources" | "remediation" | "evidence" | "timeline" | "whatif";
+type Tab = "overview" | "resources" | "remediation" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
 const MISLEADING_INLINE_POLICY_NAMES = new Set([
@@ -3161,10 +3204,173 @@ function policyChangeSummary(data: GeneratedPolicy) {
 
 type PolicyStatement = { Sid?: string; Effect?: string; Action?: string | string[]; Resource?: string | string[]; [k: string]: unknown };
 
+type PolicyDiffLine = { kind: "context" | "remove" | "add"; text: string };
+
+const POLICY_DIFF_PREVIEW = 14;
+
+function asPolicyList(value: string | string[] | undefined): string[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function diffPolicyField(
+  label: string,
+  orig: string[],
+  clean: string[],
+  mode: "removed" | "modified",
+): PolicyDiffLine[] {
+  const lines: PolicyDiffLine[] = [];
+  const origSet = new Set(orig);
+  const cleanSet = new Set(clean);
+  const wildcardNarrowed =
+    mode === "modified" && orig.length === 1 && orig[0] === "*" && clean.length > 0 && !clean.includes("*");
+
+  if (wildcardNarrowed) {
+    lines.push({ kind: "remove", text: `${label}: "*"` });
+    lines.push({ kind: "add", text: `${label}:` });
+    for (const item of [...clean].sort()) {
+      lines.push({ kind: "add", text: `  ${item}` });
+    }
+    return lines;
+  }
+
+  if (mode === "removed") {
+    if (orig.length === 0) return lines;
+    if (orig.length === 1) {
+      lines.push({ kind: "remove", text: `${label}: ${orig[0]}` });
+      return lines;
+    }
+    lines.push({ kind: "remove", text: `${label}:` });
+    for (const item of orig) lines.push({ kind: "remove", text: `  ${item}` });
+    return lines;
+  }
+
+  const removed = orig.filter((x) => !cleanSet.has(x));
+  const added = clean.filter((x) => !origSet.has(x));
+  if (removed.length === 0 && added.length === 0) {
+    if (orig.length > 0) lines.push({ kind: "context", text: `${label}: ${orig.join(", ")}` });
+    return lines;
+  }
+  if (removed.length === 1 && added.length === 0) {
+    lines.push({ kind: "remove", text: `${label}: ${removed[0]}` });
+  } else if (removed.length > 0) {
+    lines.push({ kind: "remove", text: `${label}:` });
+    for (const item of removed) lines.push({ kind: "remove", text: `  ${item}` });
+  }
+  if (added.length === 1 && removed.length === 0) {
+    lines.push({ kind: "add", text: `${label}: ${added[0]}` });
+  } else if (added.length > 0) {
+    lines.push({ kind: "add", text: `${label}:` });
+    for (const item of added) lines.push({ kind: "add", text: `  ${item}` });
+  }
+  return lines;
+}
+
+function buildStatementDiffLines(
+  orig: PolicyStatement,
+  clean: PolicyStatement | null,
+  opts: { hideUnchangedResources?: boolean },
+): PolicyDiffLine[] {
+  if (!clean) {
+    const lines: PolicyDiffLine[] = [];
+    if (orig.Sid) lines.push({ kind: "remove", text: `Sid: ${orig.Sid}` });
+    if (orig.Effect) lines.push({ kind: "remove", text: `Effect: ${orig.Effect}` });
+    lines.push(...diffPolicyField("Action", asPolicyList(orig.Action), [], "removed"));
+    lines.push(...diffPolicyField("Resource", asPolicyList(orig.Resource), [], "removed"));
+    return lines;
+  }
+
+  const lines: PolicyDiffLine[] = [];
+  if (orig.Sid) lines.push({ kind: "context", text: `Sid: ${orig.Sid}` });
+  if (orig.Effect) lines.push({ kind: "context", text: `Effect: ${orig.Effect}` });
+  lines.push(...diffPolicyField("Action", asPolicyList(orig.Action), asPolicyList(clean.Action), "modified"));
+
+  const origRes = asPolicyList(orig.Resource);
+  const cleanRes = asPolicyList(clean.Resource);
+  const hideResources =
+    opts.hideUnchangedResources &&
+    origRes.length === 1 &&
+    origRes[0] === "*" &&
+    cleanRes.length === 1 &&
+    cleanRes[0] === "*";
+  if (!hideResources) {
+    lines.push(...diffPolicyField("Resource", origRes, cleanRes, "modified"));
+  }
+  return lines;
+}
+
+function PolicyDiffLineRow({ line }: { line: PolicyDiffLine }) {
+  const prefix = line.kind === "remove" ? "-" : line.kind === "add" ? "+" : " ";
+  const rowClass =
+    line.kind === "remove"
+      ? "bg-red-50/90 text-red-900"
+      : line.kind === "add"
+        ? "bg-emerald-50/90 text-emerald-900"
+        : "bg-zinc-50/80 text-zinc-600";
+  const prefixClass =
+    line.kind === "remove" ? "text-red-500" : line.kind === "add" ? "text-emerald-600" : "text-zinc-400";
+
+  return (
+    <div className={`flex min-w-0 gap-0 font-mono text-[11px] leading-[1.45] ${rowClass}`}>
+      <span className={`w-7 shrink-0 select-none pl-2 text-center font-semibold tabular-nums ${prefixClass}`}>{prefix}</span>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-all py-px pr-2">{line.text}</span>
+    </div>
+  );
+}
+
+function PolicyStatementDiffBlock({
+  title,
+  lines,
+}: {
+  title?: string;
+  lines: PolicyDiffLine[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const addDetailLines = lines.filter((l) => l.kind === "add" && l.text.startsWith("  "));
+  const hiddenAddCount = Math.max(0, addDetailLines.length - POLICY_DIFF_PREVIEW);
+  const showCollapse = hiddenAddCount > 0 && !expanded;
+
+  let visible = lines;
+  if (showCollapse) {
+    let addSeen = 0;
+    visible = [];
+    for (const line of lines) {
+      if (line.kind === "add" && line.text.startsWith("  ")) {
+        if (addSeen >= POLICY_DIFF_PREVIEW) continue;
+        addSeen += 1;
+      }
+      visible.push(line);
+    }
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-200/90">
+      {title ? (
+        <div className="border-b border-zinc-200/80 bg-zinc-100/80 px-3 py-1.5">
+          <span className="font-mono text-[10px] font-medium uppercase tracking-wide text-zinc-500">{title}</span>
+        </div>
+      ) : null}
+      <div className="divide-y divide-zinc-100/60">
+        {visible.map((line, i) => (
+          <PolicyDiffLineRow key={i} line={line} />
+        ))}
+      </div>
+      {showCollapse && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="w-full border-t border-zinc-200/80 bg-zinc-50 px-3 py-2 text-left font-mono text-[11px] text-zinc-600 hover:bg-zinc-100"
+        >
+          + {hiddenAddCount} more…
+        </button>
+      )}
+    </div>
+  );
+}
+
 function PolicyDiffView({
   original,
   cleaned,
-  granularity,
   hideUnchangedResources,
 }: {
   original: Record<string, unknown>;
@@ -3173,74 +3379,44 @@ function PolicyDiffView({
   hideUnchangedResources?: boolean;
 }) {
   const sections = Object.entries(original).map(([name, origDoc]) => {
-    const origStmts: PolicyStatement[] = (origDoc as any)?.Statement ?? [];
-    const cleanStmts: PolicyStatement[] = (cleaned as any)?.[name]?.Statement ?? [];
-    const statements = origStmts.map((stmt, i) => {
-      const clean = cleanStmts[i];
-      const origJson = JSON.stringify(stmt);
-      const cleanJson = clean ? JSON.stringify(clean) : null;
-      if (!clean) return { kind: "removed" as const, stmt, clean: null };
-      if (origJson === cleanJson) return { kind: "unchanged" as const, stmt, clean };
-      return { kind: "modified" as const, stmt, clean };
-    });
-    return { name, statements };
+    const origStmts: PolicyStatement[] = (origDoc as { Statement?: PolicyStatement[] })?.Statement ?? [];
+    const cleanStmts: PolicyStatement[] = (cleaned as Record<string, { Statement?: PolicyStatement[] }>)?.[name]?.Statement ?? [];
+    const changes = origStmts
+      .map((stmt, i) => {
+        const clean = cleanStmts[i];
+        const origJson = JSON.stringify(stmt);
+        const cleanJson = clean ? JSON.stringify(clean) : null;
+        if (cleanJson && origJson === cleanJson) return null;
+        const kind = !clean ? ("removed" as const) : ("modified" as const);
+        const lines = buildStatementDiffLines(stmt, clean ?? null, { hideUnchangedResources });
+        const title = kind === "removed" ? "Removed — no usage in 90 days" : undefined;
+        return { index: i, lines, title };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null && x.lines.length > 0);
+    return { name, changes };
   });
 
+  const hasChanges = sections.some((s) => s.changes.length > 0);
+  if (!hasChanges) {
+    return <p className="text-[12px] text-zinc-500">No inline policy changes.</p>;
+  }
+
   return (
-    <div className="space-y-4">
-      {sections.map(({ name, statements }) => (
-        <div key={name}>
-          {sections.length > 1 && <div className="mb-2 font-mono text-[11px] font-medium text-zinc-400">{name}</div>}
-          <div className="space-y-2">
-            {statements.map((s, i) => {
-              const actions = s.stmt.Action ? (Array.isArray(s.stmt.Action) ? s.stmt.Action : [s.stmt.Action]) : [];
-              const resources = s.stmt.Resource ? (Array.isArray(s.stmt.Resource) ? s.stmt.Resource : [s.stmt.Resource]) : [];
-              const cleanActions = s.clean?.Action ? (Array.isArray(s.clean.Action) ? s.clean.Action : [s.clean.Action]) : [];
-              const border =
-                s.kind === "removed" ? "border-red-200 bg-red-50" : s.kind === "modified" ? "border-amber-200 bg-amber-50" : "border-zinc-200 bg-zinc-50";
-              return (
-                <div key={i} className={`rounded-lg border px-3 py-2.5 text-xs ${border}`}>
-                  {s.kind === "removed" && (
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-red-400 flex-shrink-0" />
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-red-500">Removed — no usage in 90 days</span>
-                    </div>
-                  )}
-                  {s.kind === "modified" && (
-                    <div className="mb-2 flex items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" />
-                      <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">
-                        Narrowed — scoped to used {granularity === "action" ? "actions" : "services"}
-                      </span>
-                    </div>
-                  )}
-                  <div className="space-y-1">
-                    {s.stmt.Sid && <div><span className="text-zinc-400">Sid: </span><span className={`font-medium ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Sid}</span></div>}
-                    <div><span className="text-zinc-400">Effect: </span><span className={`font-medium ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-700"}`}>{s.stmt.Effect}</span></div>
-                    {actions.length > 0 && (
-                      <div>
-                        <span className="text-zinc-400">Actions: </span>
-                        <span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : s.kind === "modified" ? "text-zinc-500 line-through" : "text-zinc-700"}`}>{actions.join(", ")}</span>
-                        {s.kind === "modified" && cleanActions.length > 0 && (
-                          <div className="mt-1 font-mono break-all text-amber-800">{cleanActions.join(", ")}</div>
-                        )}
-                      </div>
-                    )}
-                    {resources.length > 0 && !(hideUnchangedResources && s.kind === "modified" && resources.length === 1 && resources[0] === "*") && (
-                      <div>
-                        <span className="text-zinc-400">Resources: </span>
-                        <span className={`font-mono break-all ${s.kind === "removed" ? "text-red-600 line-through" : "text-zinc-600"}`}>
-                          {resources.join(", ")}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+    <div className="space-y-3">
+      {sections.map(({ name, changes }) =>
+        changes.length === 0 ? null : (
+          <div key={name}>
+            {sections.length > 1 && (
+              <div className="mb-1.5 font-mono text-[11px] font-medium text-zinc-500">{name}</div>
+            )}
+            <div className="space-y-2">
+              {changes.map((change) => (
+                <PolicyStatementDiffBlock key={change.index} title={change.title} lines={change.lines} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ),
+      )}
     </div>
   );
 }
@@ -3264,28 +3440,37 @@ function GeneratePolicySection({
   });
 
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-sm font-semibold text-zinc-700">Suggested policy</div>
-        {!enabled && <button onClick={() => setEnabled(true)} className="rounded border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 hover:text-zinc-900">Generate</button>}
-      </div>
+    <DrawerSection
+      title="Suggested policy"
+      action={
+        !enabled ? (
+          <button
+            onClick={() => setEnabled(true)}
+            className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+          >
+            Generate
+          </button>
+        ) : undefined
+      }
+    >
+      <div className={drawerSectionBody}>
       {!enabled && (
-        <p className="text-xs leading-relaxed text-zinc-400">{generatePolicyIntro(cloudTrailLogging)}</p>
+        <p className="text-[13px] leading-snug text-zinc-600">{generatePolicyIntro(cloudTrailLogging)}</p>
       )}
-      {enabled && isLoading && <div className="py-3 text-xs text-zinc-400">Generating…</div>}
-      {enabled && error && <div className="py-2 text-xs text-red-500">{String(error)}</div>}
+      {enabled && isLoading && <div className="py-2 text-[13px] text-zinc-500">Generating…</div>}
+      {enabled && error && <div className="py-1 text-[13px] text-red-600">{String(error)}</div>}
       {enabled && data && !data.has_inline_policies && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-800">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] leading-snug text-amber-900">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
       )}
       {enabled && data && data.has_inline_policies && data.original_policies && data.cleaned_policies && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-zinc-500">
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-zinc-600">
               {policyChangeSummary(data)}
             </span>
-            <div className="flex gap-1 rounded-lg bg-zinc-100 p-0.5">
+            <div className="flex gap-0.5 rounded-md bg-zinc-100 p-0.5">
               {(["diff", "cleaned", "original"] as const).map((v) => (
-                <button key={v} onClick={() => setView(v)} className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"}`}>
+                <button key={v} onClick={() => setView(v)} className={`rounded px-2 py-0.5 text-[11px] font-medium capitalize transition-colors ${view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-600 hover:text-zinc-800"}`}>
                   {v}
                 </button>
               ))}
@@ -3295,7 +3480,7 @@ function GeneratePolicySection({
             const hint = policyRenameHint(policyName, finding.resource_arn, (data.statements_modified ?? 0) > 0);
             if (!hint) return null;
             return (
-              <div key={policyName} className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-xs leading-relaxed text-indigo-900">
+              <div key={policyName} className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-[13px] leading-snug text-indigo-900">
                 {hint}
               </div>
             );
@@ -3310,13 +3495,14 @@ function GeneratePolicySection({
           )}
           {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
           {data.granularity === "service" && (
-            <p className="text-xs leading-relaxed text-zinc-400">
+            <p className="text-[11px] leading-snug text-zinc-500">
               Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or use Access Analyzer for action-level generation on wildcard policies.
             </p>
           )}
         </div>
       )}
-    </div>
+      </div>
+    </DrawerSection>
   );
 }
 
@@ -3335,20 +3521,21 @@ function CliBlock({ code }: { code: string }) {
     });
   }
   return (
-    <div className="rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden">
-      <div className="flex justify-end border-b border-zinc-200 bg-white px-3 py-1.5">
+    <div className="rounded-lg bg-zinc-100/60 overflow-hidden">
+      <div className="flex items-center justify-between px-3.5 py-2">
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Command</span>
         <button
           onClick={copy}
-          className={`rounded-md border px-2.5 py-1 text-[11px] font-medium transition-all ${
+          className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all duration-150 ${
             copied
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-zinc-200 bg-zinc-50 text-zinc-500 hover:border-zinc-300 hover:bg-white hover:text-zinc-800"
+              ? "text-emerald-600"
+              : "text-zinc-500 hover:bg-white/60 hover:text-zinc-800"
           }`}
         >
-          {copied ? "✓ Copied" : "Copy"}
+          {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto whitespace-pre-wrap px-4 py-3 font-mono text-xs leading-relaxed text-zinc-800">{code}</pre>
+      <pre className="overflow-x-auto whitespace-pre-wrap px-4 pb-4 pt-0 font-mono text-[12px] leading-[1.7] text-zinc-700">{code}</pre>
     </div>
   );
 }
@@ -3385,7 +3572,7 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
     <>
       <button
         onClick={() => setOpen(true)}
-        className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${done ? "border-violet-200 bg-violet-50 text-violet-700" : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"}`}
+        className={`${drawerFooterException} ${done ? "!border-emerald-200/80 !bg-emerald-50/80 !text-emerald-800 hover:!bg-emerald-50" : ""}`}
       >
         {done ? "Approved" : "Exception"}
       </button>
@@ -3456,6 +3643,7 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
   );
 }
 
+
 function AffectedResourcesPanel({
   findings,
   activeId,
@@ -3487,23 +3675,24 @@ function AffectedResourcesPanel({
   const typeLabel = resourceTypeLabel(checkId);
 
   return (
-    <div className="rounded-lg bg-white ring-1 ring-zinc-200/80">
-      <div className="flex items-start justify-between gap-3 px-3.5 pt-3 pb-2">
-        <div>
-          <h3 className="text-[13px] font-semibold text-zinc-900">{typeLabel}</h3>
-          <p className="mt-0.5 text-[11px] text-zinc-500">{findings.length} in this account</p>
+    <DrawerSection
+      title={typeLabel}
+      action={
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] tabular-nums text-zinc-500">{findings.length}</span>
+          {findings.length > 6 && (
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="w-24 rounded-md border-0 bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-800 outline-none ring-1 ring-zinc-200/60 placeholder:text-zinc-400 focus:ring-indigo-500/30"
+            />
+          )}
         </div>
-        {findings.length > 6 && (
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search…"
-            className="w-32 rounded-lg border-0 bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-800 outline-none ring-1 ring-zinc-200/60 placeholder:text-zinc-400 focus:ring-indigo-500/30"
-          />
-        )}
-      </div>
-      <ul className="mt-1 space-y-0.5 px-1.5 pb-2">
+      }
+    >
+      <ul className="max-h-44 space-y-px overflow-y-auto px-2 py-1.5">
         {visible.map((f) => {
           const active = f.id === activeId;
           return (
@@ -3511,12 +3700,14 @@ function AffectedResourcesPanel({
               <button
                 type="button"
                 onClick={() => onSelect(f)}
-                className={`flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition ${
-                  active ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/60" : "text-zinc-700 hover:bg-zinc-50"
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border-l-2 py-2 pr-4 text-left text-[12px] transition ${
+                  active
+                    ? "border-l-zinc-400 bg-zinc-50/90 pl-2.5 font-medium text-zinc-900"
+                    : "border-l-transparent pl-3 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800"
                 }`}
               >
-                <span className="min-w-0 truncate font-medium">{resourceDisplayName(f)}</span>
-                <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">{daysAgo(f.first_seen)}</span>
+                <span className="min-w-0 truncate">{resourceDisplayName(f)}</span>
+                <span className="shrink-0 pl-2 text-[10px] tabular-nums text-zinc-400">{daysAgo(f.first_seen)}</span>
               </button>
             </li>
           );
@@ -3526,7 +3717,7 @@ function AffectedResourcesPanel({
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="mb-2 px-3.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+          className="mb-1.5 px-3 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
         >
           +{hidden} more
         </button>
@@ -3535,12 +3726,12 @@ function AffectedResourcesPanel({
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="mb-2 px-3.5 text-[11px] font-medium text-zinc-500 hover:text-zinc-700"
+          className="mb-1.5 px-3 text-[11px] font-medium text-zinc-600 hover:text-zinc-800"
         >
           Show less
         </button>
       )}
-    </div>
+    </DrawerSection>
   );
 }
 
@@ -3566,6 +3757,7 @@ export function FindingDrawer({
   const [tab, setTab] = useState<Tab>("overview");
   const [remTab, setRemTab] = useState<"console" | "cli">("console");
   const [countdown, setCountdown] = useState(5);
+  const prevCheckId = useRef<string | null>(null);
 
   const { data: accountMeta } = useQuery({
     queryKey: ["account-cloudtrail", accountId],
@@ -3576,9 +3768,33 @@ export function FindingDrawer({
   });
   const cloudTrailLogging = accountMeta?.meta?.cloudtrail_logging ?? false;
 
-  useEffect(() => { setTab("overview"); setRemTab("console"); }, [finding?.id]);
+  useEffect(() => {
+    if (!finding) {
+      prevCheckId.current = null;
+      return;
+    }
+    if (prevCheckId.current !== null && prevCheckId.current !== finding.check_id) {
+      setTab("overview");
+      setRemTab("console");
+    }
+    prevCheckId.current = finding.check_id;
+  }, [finding?.id, finding?.check_id]);
 
   const multiResource = (relatedFindings?.length ?? 0) > 1;
+  const hasEvidence = !!finding && Object.keys(finding.evidence).length > 0;
+  const showResources = multiResource || hasEvidence;
+  const showBlastRadius = !!finding && BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
+
+  useEffect(() => {
+    if (!finding) return;
+    const available = new Set<Tab>([
+      "overview",
+      "remediation",
+      ...(showResources ? (["resources"] as Tab[]) : []),
+      ...(showBlastRadius ? (["whatif"] as Tab[]) : []),
+    ]);
+    if (!available.has(tab)) setTab("overview");
+  }, [finding?.id, showResources, showBlastRadius]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!resolved) { setCountdown(5); return; }
@@ -3601,7 +3817,6 @@ export function FindingDrawer({
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
   const wash = sevWash[finding.severity] ?? sevWash.low;
   const step = sevStep[finding.severity] ?? sevStep.low;
-  const hasEvidence = Object.keys(finding.evidence).length > 0;
   const categoryLabel: Record<string, string> = {
     "iam.root": "Root Account",
     "iam.user": "IAM User",
@@ -3626,14 +3841,11 @@ export function FindingDrawer({
   };
   const category = Object.entries(categoryLabel).find(([prefix]) => finding.check_id.startsWith(prefix))?.[1] ?? "Finding";
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
-  const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
-    ...(multiResource ? [{ id: "resources" as Tab, label: "Resources" }] : []),
+    ...(showResources ? [{ id: "resources" as Tab, label: "Resources" }] : []),
     { id: "remediation", label: "Remediation" },
-    ...(hasEvidence ? [{ id: "evidence" as Tab, label: "Evidence" }] : []),
-    { id: "timeline", label: "Timeline" },
     ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If" }] : []),
   ];
   const hasException =
@@ -3642,28 +3854,28 @@ export function FindingDrawer({
     !!finding.exception_approved_by;
 
   return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className={`fixed right-0 top-0 z-50 flex h-full w-full ${DRAWER_MAX_W} flex-col overflow-hidden bg-white shadow-2xl`}>
-    <div className={`relative bg-gradient-to-b ${wash} px-7 pt-6 pb-4`}>
-      <button onClick={onClose} className="absolute right-5 top-5 rounded-md p-1 text-zinc-300 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-      <div className="flex items-center gap-2.5 pr-10"><span className="text-xs font-medium text-zinc-500">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
-      <h2 className="mt-2 pr-8 text-[17px] font-semibold leading-snug text-zinc-900">{checkLabels[finding.check_id] ?? finding.title}</h2>
+    <div className={`relative overflow-hidden bg-gradient-to-b ${wash} px-6 pt-5 pb-3`}>
+      <button onClick={onClose} className="absolute right-4 top-4 rounded-md p-1 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
+      <div className="flex items-center gap-2 pr-10"><span className="text-[11px] font-medium text-zinc-600">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
+      <h2 className="mt-1.5 pr-8 text-base font-semibold leading-snug text-zinc-900">{checkLabels[finding.check_id] ?? finding.title}</h2>
       {!multiResource && (
-        <div className="mt-4 rounded-lg border border-black/[0.07] bg-white/60 px-3 py-2.5">
-          <div className="text-[11px] font-medium text-zinc-400 mb-0.5">Resource</div>
+        <div className="mt-2.5 rounded-lg border border-black/[0.07] bg-white/70 px-3 py-2">
+          <div className={`${drawerFieldLabelBlock} mb-0.5`}>Resource</div>
           <div className="group relative">
             <p className="truncate font-mono text-xs text-zinc-700">{resourceDisplayName(finding)}</p>
             <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover:block"><p className="break-all font-mono text-xs text-zinc-700 leading-relaxed">{finding.resource_arn}</p></div>
           </div>
         </div>
       )}
-      {/* Segmented tab control */}
-      <div className="mt-4 -mx-1 overflow-x-auto pb-0.5">
-        <div className="flex min-w-max gap-0.5 rounded-xl bg-black/[0.06] p-1">
+      {/* Segmented tab control — w-fit keeps track background from stretching full width */}
+      <div className="mt-3">
+        <div className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-lg bg-zinc-900/[0.06] p-0.5">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all ${
-              tab === t.id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+            className={`flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-medium transition-all ${
+              tab === t.id ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-900/5" : "text-zinc-600 hover:text-zinc-800"
             }`}
           >
             {t.id === "whatif" && (
@@ -3677,126 +3889,94 @@ export function FindingDrawer({
         </div>
       </div>
     </div>
-    <div className="flex-1 space-y-3 overflow-y-auto bg-stone-50 px-7 pb-6 pt-4">
-      {tab === "overview" && <>
-        <OperationalInsights
+    <div className={`flex-1 ${drawerBodyGap} overflow-y-auto bg-zinc-50/80 px-6 pb-5 pt-4`}>
+      {tab === "overview" && (
+        <OverviewTabContent
           impact={ops.impact}
           risk={ops.risk}
           fix={ops.fix}
           affected={affectedLabel}
-        />
-        {hasException && (
-          <div className="rounded-lg bg-amber-50/80 px-3.5 py-3 ring-1 ring-amber-200/70">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800/80">Exception</p>
-            {finding.exception_reason && (
-              <p className="mt-1 text-[13px] leading-snug text-amber-900/90">{finding.exception_reason}</p>
-            )}
-            <dl className="mt-2 space-y-1 text-[13px] leading-snug">
-              {finding.exception_approved_by && (
-                <div className="flex gap-2">
-                  <dt className="shrink-0 text-amber-800/70">By</dt>
-                  <dd className="text-amber-900">{finding.exception_approved_by}</dd>
-                </div>
-              )}
-              {finding.exception_expires_at && (
-                <div className="flex gap-2">
-                  <dt className="shrink-0 text-amber-800/70">Expires</dt>
-                  <dd className="text-amber-900">
-                    {new Date(finding.exception_expires_at).toLocaleDateString()}
-                  </dd>
-                </div>
-              )}
-              {!finding.exception_reason && !finding.exception_approved_by && (
-                <p className="text-amber-800/80">Approved exception on this finding.</p>
-              )}
-            </dl>
-          </div>
-        )}
-        {showPolicyGen && (
-          <GeneratePolicySection
-            accountId={accountId!}
-            finding={finding}
-            cloudTrailLogging={cloudTrailLogging}
-          />
-        )}
-      </>}
-      {tab === "resources" && multiResource && relatedFindings && onSelectRelated && (
-        <AffectedResourcesPanel
-          findings={relatedFindings}
-          activeId={finding.id}
-          onSelect={onSelectRelated}
-          checkId={finding.check_id}
-          defaultExpanded
+          finding={finding}
+          hasException={hasException}
         />
       )}
+      {tab === "resources" && showResources && (
+        <div className={drawerBodyGap}>
+          {multiResource && relatedFindings && onSelectRelated && (
+            <AffectedResourcesPanel
+              findings={relatedFindings}
+              activeId={finding.id}
+              onSelect={onSelectRelated}
+              checkId={finding.check_id}
+              defaultExpanded
+            />
+          )}
+          <SelectedResourceInspector finding={finding} attachedToList={!!multiResource} />
+          {hasEvidence && finding.check_id !== "iam.role.unused_services_90d" && (
+            <EvidenceSection
+              evidence={finding.evidence}
+              checkId={finding.check_id}
+              cloudTrailLogging={cloudTrailLogging}
+            />
+          )}
+        </div>
+      )}
       {tab === "remediation" && (
-        <div className="space-y-3">
-          <OperationalInsights impact={ops.impact} risk={ops.risk} fix={ops.fix} />
-          <div className="overflow-hidden rounded-lg border border-zinc-200/80 bg-white">
-            <div className="flex items-center justify-between border-b border-zinc-100 px-3.5 py-2.5">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Steps</span>
+        <div className="space-y-2.5">
+          <DrawerFlowLabel>Remediation plan</DrawerFlowLabel>
+          <SemanticNarrativeBlock tag="Action" tone="positive" title="Recommended action">
+            {ops.fix}
+          </SemanticNarrativeBlock>
+          {showPolicyGen && (
+            <GeneratePolicySection
+              accountId={accountId!}
+              finding={finding}
+              cloudTrailLogging={cloudTrailLogging}
+            />
+          )}
+          <div className={`${drawerPanel} overflow-hidden shadow-sm shadow-zinc-900/[0.03]`}>
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 pr-5">
+              <div>
+                <h3 className="text-[13px] font-semibold text-zinc-900">Remediation steps</h3>
+                <p className="mt-0.5 text-[11px] text-zinc-500">Follow in order — then verify the finding cleared</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <FlowBadge variant={remediationImpactBadge(finding.severity).variant}>
+                  {remediationImpactBadge(finding.severity).label}
+                </FlowBadge>
+                <FlowBadge variant="muted">{isIdentityCheck ? "Manual review" : "Console / CLI"}</FlowBadge>
+              </div>
               {!isIdentityCheck && (
-                <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3 py-0.5 text-[12px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "CLI" : "Console"}</button>)}</div>
+                <RemediationModeToggle value={remTab} onChange={setRemTab} />
               )}
             </div>
-            <div className="px-3.5 py-3">
+            <div className="px-4 py-3.5 pr-5">
               {(isIdentityCheck || remTab === "console") && (
-                <ol className="space-y-2">
+                <ol className="space-y-2.5">
                   {rem.console.map((item, i) => (
-                    <li key={i} className="flex gap-2.5 text-[13px] leading-snug text-zinc-700">
-                      <span className={`mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold ${step}`}>{i + 1}</span>
-                      <span className="min-w-0">{item}</span>
+                    <li key={i} className="flex gap-2.5 text-[13px] leading-relaxed text-zinc-800">
+                      <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold ${step}`}>{i + 1}</span>
+                      <span className="min-w-0 pt-px">{item}</span>
                     </li>
                   ))}
                 </ol>
               )}
-              {!isIdentityCheck && remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
+              {!isIdentityCheck && remTab === "cli" && <RemediationCliBlock finding={finding} />}
             </div>
           </div>
-        </div>
-      )}
-      {tab === "evidence" && hasEvidence && (
-        <EvidenceSection
-          evidence={finding.evidence}
-          checkId={finding.check_id}
-          cloudTrailLogging={cloudTrailLogging}
-        />
-      )}
-      {tab === "timeline" && (
-        <div className="rounded-lg bg-white ring-1 ring-zinc-200/80">
-          <dl className="divide-y divide-zinc-100">
-            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</dt>
-              <dd className="text-[13px] font-medium capitalize text-zinc-900">{finding.status}</dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">First seen</dt>
-              <dd className="text-right text-[13px] text-zinc-900">
-                {new Date(finding.first_seen).toLocaleDateString()}
-                <span className="mt-0.5 block text-[11px] text-zinc-400">{daysAgo(finding.first_seen)}</span>
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Last seen</dt>
-              <dd className="text-right text-[13px] text-zinc-900">
-                {new Date(finding.last_seen).toLocaleDateString()}
-                <span className="mt-0.5 block text-[11px] text-zinc-400">{daysAgo(finding.last_seen)}</span>
-              </dd>
-            </div>
-            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
-              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Risk</dt>
-              <dd className="text-[13px] font-semibold tabular-nums text-zinc-900">{finding.risk_score}</dd>
-            </div>
-          </dl>
+          <FlowCallout tone="positive" title="Validate after remediation">
+            Use Verify to re-scan this resource. Confirm the finding moves to resolved or no longer appears in your
+            next scan before you close it out.
+          </FlowCallout>
         </div>
       )}
       {tab === "whatif" && showBlastRadius && (
         <BlastRadiusSection accountId={accountId!} finding={finding} />
       )}
     </div>
-    <div className="flex gap-2 border-t border-stone-200 bg-stone-50 px-7 py-5">
-      <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700">Resolve</button>
-      <button disabled={verifying} onClick={() => onAction(finding.id, "recheck")} className="flex-1 inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-100 disabled:opacity-50">{verifying && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{verifying ? "Verifying…" : "Verify"}</button>
+    <div className="flex gap-2 border-t border-zinc-200/50 bg-white/90 px-6 py-3 shadow-[0_-1px_0_rgba(0,0,0,0.03),0_-6px_16px_-6px_rgba(0,0,0,0.04)] backdrop-blur-sm">
+      <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className={drawerFooterPrimary}>Resolve</button>
+      <button disabled={verifying} onClick={() => onAction(finding.id, "recheck")} className={drawerFooterSecondary}>{verifying && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{verifying ? "Verifying…" : "Verify"}</button>
       <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
     {resolved && (

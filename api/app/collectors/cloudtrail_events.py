@@ -46,6 +46,21 @@ _LOOKBACK_DAYS = 90
 _MAX_EVENTS_PER_RUN = 1000
 
 
+def _dedupe_resources(resources: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    out: list[dict] = []
+    for r in resources:
+        name = r.get("name") or ""
+        typ = (r.get("type") or "").lower()
+        display = name.split("/")[-1] if name.startswith("arn:") else name
+        key = f"{typ}|{display.lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
+
+
 def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
     sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ct-events", aws_account=account, purpose="collect_cloudtrail_events")
     ct = sess.client("cloudtrail", region_name="us-east-1")
@@ -86,10 +101,10 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
                 )
                 source_ip = ct_event.get("sourceIPAddress")
                 event_time = evt.get("EventTime", now)
-                resources = [
+                resources = _dedupe_resources([
                     {"type": r.get("ResourceType"), "name": r.get("ResourceName")}
                     for r in (evt.get("Resources") or [])
-                ]
+                ])
 
                 stmt = pg_insert(CloudTrailEvent).values(
                     id=uuid.uuid4(),

@@ -13,8 +13,9 @@ from app.core.ratelimit import limiter
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
+from app.core.client_ip import client_ip_from_request
 from app.routes import accounts, findings, auth, auth_oauth, github_integration, gitlab_integration, settings as settings_router
-from app.routes import controls, exports
+from app.routes import controls, exports, meta
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -115,7 +116,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     path=request.url.path,
                     status=status_code,
                     duration_ms=duration_ms,
-                    remote=_client_ip(request),
+                    remote=client_ip_from_request(request),
                 )
             # tag the response so clients/proxies can correlate
             try:
@@ -123,16 +124,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             except Exception:  # noqa: BLE001
                 pass
             structlog.contextvars.unbind_contextvars("request_id")
-
-
-def _client_ip(request: Request) -> str | None:
-    # Trust X-Forwarded-For only in non-dev (when behind Caddy/Cloudflare).
-    if settings.APP_ENV != "dev":
-        fwd = request.headers.get("x-forwarded-for")
-        if fwd:
-            return fwd.split(",")[0].strip()
-    client = request.client
-    return client.host if client else None
 
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -151,5 +142,6 @@ app.include_router(findings.router, prefix="/v1/findings", tags=["findings"])
 app.include_router(settings_router.router, prefix="/v1/settings", tags=["settings"])
 app.include_router(controls.router, prefix="/v1/controls", tags=["controls"])
 app.include_router(exports.router, prefix="/v1/exports", tags=["exports"])
+app.include_router(meta.router, prefix="/v1/meta", tags=["meta"])
 app.include_router(github_integration.router, prefix="/v1/integrations", tags=["integrations"])
 app.include_router(gitlab_integration.router, prefix="/v1/integrations", tags=["integrations"])
