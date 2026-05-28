@@ -9,7 +9,7 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
   "iam.user.no_mfa": {
     impact: "Console user has no MFA.",
     risk: "Stolen password = full console access.",
-    fix: "Assign MFA in IAM → Security credentials.",
+    fix: "Assign MFA in IAM.",
   },
   "iam.user.inactive_90d": {
     impact: "IAM user inactive 90+ days.",

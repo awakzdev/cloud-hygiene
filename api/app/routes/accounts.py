@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.aws import verify_account
+from botocore.exceptions import ClientError
+
+from app.core.aws import assume_role, verify_account
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.iam_usage import (
@@ -19,6 +21,7 @@ from app.core.iam_usage import (
 )
 from app.core.security import current_principal
 from app.services.blast_radius_identity import blast_radius_identity
+from app.services.s3_https_policy import build_https_policy_suggestion
 from app.services.compliance_timeline import build_compliance_timeline
 from app.services.evidence_diff import build_evidence_diff
 from app.models import AssumeRoleAudit, AwsAccount, IamPermUsage, IamRole, ScanRun
@@ -415,6 +418,45 @@ def generate_role_policy(
         "original_policies": inline,
         "cleaned_policies": cleaned_policies,
     }
+
+
+@router.get("/{account_id}/s3/generated-https-policy")
+def generate_s3_https_policy(
+    account_id: str,
+    bucket_arn: str,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Read live bucket policy from AWS and merge DenyInsecureTransport."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    if not acc.role_arn:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "account not connected — verify the IAM role first")
+
+    bucket = db.scalar(
+        select(S3Bucket).where(S3Bucket.account_id == acc.id, S3Bucket.arn == bucket_arn)
+    )
+    if not bucket:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "bucket not found — run a scan first")
+
+    try:
+        sess = assume_role(
+            acc.role_arn,
+            acc.external_id,
+            session_name="vigil-s3-policy",
+            aws_account=acc,
+            purpose="generate_s3_https_policy",
+        )
+        s3 = sess.client("s3", region_name="us-east-1")
+        return build_https_policy_suggestion(s3, bucket.name)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "ClientError")
+        msg = exc.response.get("Error", {}).get("Message", str(exc))
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not read bucket policy ({code}): {msg}",
+        ) from exc
 
 
 @router.get("/{account_id}/blast-radius")
@@ -1425,7 +1467,9 @@ def blast_radius(
             "confidence": "medium",
             "region": queue.region,
             "kms_encrypted": queue.kms_encrypted,
-            "warnings": ["Producers and consumers need KMS permissions after enabling encryption"],
+            "warnings": [
+                "Producers and consumers need KMS permissions after enabling encryption — verify publish and subscribe end-to-end after enabling",
+            ],
         }
 
     if check_id.startswith("github.") or check_id.startswith("gitlab."):

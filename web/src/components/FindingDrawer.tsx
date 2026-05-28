@@ -37,9 +37,7 @@ const drawerPanel = "overflow-hidden rounded-xl border border-zinc-200 bg-white 
 const drawerSectionHead = "border-b border-zinc-100 px-4 py-3";
 const drawerSectionBody = "px-4 py-3.5";
 const drawerSectionTitle = "text-sm font-semibold text-zinc-900";
-const drawerFieldLabel = "w-[5.25rem] shrink-0 text-[11px] font-medium uppercase tracking-wide text-zinc-500";
-const drawerFieldLabelBlock = "text-[11px] font-medium uppercase tracking-wide text-zinc-500";
-const drawerFieldValue = "min-w-0 flex-1 text-[13px] leading-relaxed text-zinc-800";
+const drawerFieldLabelBlock = "text-[11px] font-medium text-zinc-500";
 const drawerBodyGap = "space-y-3";
 const drawerFooterPrimary =
   "flex-[1.12] rounded-lg px-3.5 py-2 text-[13px] font-medium text-white bg-zinc-800 shadow-sm shadow-zinc-900/8 ring-1 ring-zinc-900/5 transition-all duration-200 hover:bg-zinc-700 hover:shadow-md hover:shadow-zinc-900/10 active:scale-[0.995]";
@@ -70,32 +68,8 @@ function DrawerSection({
   );
 }
 
-function DrawerMetaRow({
-  label,
-  children,
-  align = "center",
-  compact = false,
-}: {
-  label: string;
-  children: ReactNode;
-  align?: "start" | "center";
-  compact?: boolean;
-}) {
-  return (
-    <div
-      className={`flex gap-3 px-4 pr-5 ${compact ? "py-2" : "py-2.5"} ${align === "start" ? "items-start" : "items-center"}`}
-    >
-      <span className={drawerFieldLabel}>{label}</span>
-      <div className={drawerFieldValue}>{children}</div>
-    </div>
-  );
-}
-
-function formatObservationDate(iso: string) {
-  const d = new Date(iso);
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  return `${day}/${month}/${d.getFullYear()}`;
+function evidenceFieldIsMono(key: string) {
+  return /arn|_id$|(^|_)id$|key_id|region/i.test(key);
 }
 
 function RemediationModeToggle({
@@ -212,6 +186,16 @@ function SelectedResourceInspector({
             value={<span className="capitalize text-[13px]">{statusLabel}</span>}
             variant="compact"
           />
+          <PostureMetricCell
+            label="First seen"
+            value={daysAgo(finding.first_seen)}
+            variant="compact"
+          />
+          <PostureMetricCell
+            label="Last seen"
+            value={daysAgo(finding.last_seen)}
+            variant="compact"
+          />
         </PostureMetricsRow>
       </ResourceGroup>
 
@@ -289,14 +273,6 @@ function OverviewTabContent({
   finding: Finding;
   hasException: boolean;
 }) {
-  const statusLabel = finding.status.replace(/_/g, " ");
-  const riskTone =
-    finding.severity === "critical" || finding.severity === "high"
-      ? "text-red-700"
-      : finding.severity === "medium"
-        ? "text-amber-700"
-        : "text-zinc-800";
-
   return (
     <div className="space-y-2.5">
       <DrawerFlowLabel>Security narrative</DrawerFlowLabel>
@@ -304,7 +280,7 @@ function OverviewTabContent({
         <SemanticNarrativeBlock tag="Context" tone="caution" title="Why this matters">
           {impact}
         </SemanticNarrativeBlock>
-        <SemanticNarrativeBlock tag="Exposure" tone="neutral" title="Potential blast radius">
+        <SemanticNarrativeBlock tag="Exposure" tone="neutral" title="Risk exposure">
           {risk}
         </SemanticNarrativeBlock>
         <SemanticNarrativeBlock tag="Next step" tone="action" title="Recommended action">
@@ -315,35 +291,6 @@ function OverviewTabContent({
             {affected}
           </SemanticNarrativeBlock>
         )}
-      </div>
-
-      <DrawerFlowLabel>Finding posture</DrawerFlowLabel>
-      <div className="rounded-xl border border-zinc-200/20 bg-zinc-50/20 px-3 py-4 sm:px-4 sm:py-5">
-        <PostureMetricsRow variant="status">
-          <PostureMetricCell
-            variant="status"
-            label="Status"
-            value={<span className="capitalize">{statusLabel}</span>}
-          />
-          <PostureMetricCell
-            variant="status"
-            label="Risk score"
-            value={finding.risk_score}
-            valueClassName={riskTone}
-          />
-          <PostureMetricCell
-            variant="status"
-            label="First seen"
-            value={daysAgo(finding.first_seen)}
-            sub={formatObservationDate(finding.first_seen)}
-          />
-          <PostureMetricCell
-            variant="status"
-            label="Last seen"
-            value={daysAgo(finding.last_seen)}
-            sub={formatObservationDate(finding.last_seen)}
-          />
-        </PostureMetricsRow>
       </div>
 
       {hasException && (
@@ -363,7 +310,11 @@ function OverviewTabContent({
 const remediations: Record<string, Remediation> = {
   "iam.user.no_mfa": {
     why: "Users without MFA can be fully compromised with only a stolen password. A second factor an attacker must physically control is the single most effective control against credential phishing.",
-    console: ["Open IAM → Users → select the user", 'Click "Security credentials" tab', 'Under "Multi-factor authentication", click "Assign MFA device"', "Follow the wizard to register a virtual or hardware MFA"],
+    console: [
+      "Open IAM → Users → select the user",
+      'Open the "Security credentials" tab → "Multi-factor authentication" → "Assign MFA device"',
+      "Complete the MFA enrollment wizard",
+    ],
     cli: `aws iam create-virtual-mfa-device --virtual-mfa-device-name <name> --outfile /tmp/qr.png --bootstrap-method QRCodePNG
 
 aws iam enable-mfa-device --user-name <user> --serial-number <arn> --authentication-code1 <code1> --authentication-code2 <code2>`,
@@ -442,12 +393,16 @@ aws iam delete-role --role-name <role-name>`,
   },
   "iam.role.wildcard_action": {
     why: 'Action: "*" in an inline policy is admin-like unless constrained by resource, condition, or permissions boundary. It should be reviewed and scoped to the actions the role actually needs.',
-    console: ["Open IAM → Roles → select the role", 'Click "Permissions" tab → find the inline policy', 'Click "Edit" on the inline policy', 'Replace `"Action": "*"` with the specific actions the role actually needs', "Use IAM Access Analyzer to generate a minimal policy from CloudTrail history"],
-    cli: `# Review the inline policy
-aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
+    console: [
+      'Use "Suggested policy" above (Generate) to preview a scoped policy from recorded usage',
+      "Open IAM → Roles → select the role → Permissions → edit or replace the inline policy",
+      "Apply the generated policy document, then verify the workload",
+    ],
+    cli: `# Option A — use Suggested policy (Generate) in this drawer, then:
+aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json
 
-# Replace with scoped policy
-aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
+# Option B — review inline policy manually
+aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>`,
     risk: "Broad wildcard permissions increase blast radius if the role is compromised or misused.",
   },
   "iam.perm.granted_vs_used": {
@@ -456,7 +411,7 @@ aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --po
       "Open IAM → Roles → select the role → Permissions tab",
       "Review the actions listed in the finding evidence",
       "For each unused action, remove it from the role's inline or attached policies",
-      "Use the 'Generate' button in the What If? tab to produce a least-privilege policy based on recorded usage",
+      'Use "Suggested policy" above (Generate) to preview a least-privilege policy from recorded usage',
       "Test the workload after each change to confirm functionality",
     ],
     cli: `# View current role policy
@@ -586,24 +541,13 @@ aws s3api put-public-access-block \\
 
   "s3.bucket.no_https_policy": {
     why: "A deny-HTTP bucket policy is defense in depth — it blocks the rare client that still uses http:// even though AWS SDKs, CLI, and Terraform default to HTTPS. Auditors often expect this as evidence of encryption in transit.",
-    console: ["Open S3 → select the bucket", 'Click "Permissions" tab → "Bucket policy"', "Add or update the policy to include a Deny statement with the condition below", "Save the policy"],
-    cli: `# Apply an HTTPS-only bucket policy
-aws s3api put-bucket-policy --bucket <bucket-name> --policy '{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "DenyHTTP",
-    "Effect": "Deny",
-    "Principal": "*",
-    "Action": "s3:*",
-    "Resource": [
-      "arn:aws:s3:::<bucket-name>",
-      "arn:aws:s3:::<bucket-name>/*"
+    console: [
+      "Remediation tab → Suggested policy → Generate (reads live bucket policy from AWS)",
+      "Open S3 → select the bucket → Permissions → Bucket policy",
+      "Paste the merged policy from Generate → Save",
     ],
-    "Condition": {
-      "Bool": { "aws:SecureTransport": "false" }
-    }
-  }]
-}'`,
+    cli: `# After Generate: apply the merged policy document
+aws s3api put-bucket-policy --bucket <bucket-name> --policy file://merged-policy.json`,
     risk: "Low practical blast radius for modern apps. Main value is compliance (CIS/SOC2) and blocking misconfigured legacy scripts that hard-code http:// URLs.",
   },
 
@@ -1761,6 +1705,7 @@ const EVIDENCE_LABELS: Record<string, string> = {
   db_instance_id: "DB instance",
   volume_id: "Volume",
   role_arn: "Role ARN",
+  unused_write_actions: "Unused write actions",
   block_public_acls: "Block public ACLs",
   ignore_public_acls: "Ignore public ACLs",
   block_public_policy: "Block public policy",
@@ -1825,6 +1770,39 @@ function evidenceValueIsRich(key: string, value: unknown) {
   return Array.isArray(value) && value.length > 0;
 }
 
+function CollapsibleActionGrid({ actions }: { actions: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const previewLimit = 8;
+  const sorted = [...actions].sort((a, b) => a.localeCompare(b));
+  const hidden = sorted.length - previewLimit;
+  const visible = expanded || hidden <= 0 ? sorted : sorted.slice(0, previewLimit);
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        {visible.map((action) => (
+          <div
+            key={action}
+            title={action}
+            className="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2.5 py-2"
+          >
+            <span className="block truncate font-mono text-[11px] font-medium text-zinc-800">{action}</span>
+          </div>
+        ))}
+      </div>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+        >
+          {expanded ? "Show fewer actions" : `Show all ${sorted.length} actions`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function RegionPills({ regions }: { regions: string[] }) {
   const [expanded, setExpanded] = useState(false);
   const previewLimit = 8;
@@ -1881,12 +1859,13 @@ function StringPills({ items, tone = "neutral" }: { items: string[]; tone?: "neu
 function EvidenceValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
   if (value === null || value === undefined) {
     const isDateField = fieldKey.includes("last") || fieldKey.includes("date") || fieldKey.includes("used") || fieldKey.includes("inactive");
-    return <span className="text-sm text-zinc-400">{isDateField ? "Never" : "None"}</span>;
+    return <span className="text-[13px] leading-relaxed text-zinc-400">{isDateField ? "Never" : "None"}</span>;
   }
 
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-sm text-zinc-400">None</span>;
+    if (value.length === 0) return <span className="text-[13px] leading-relaxed text-zinc-400">None</span>;
     if (fieldKey.includes("region")) return <RegionPills regions={value as string[]} />;
+    if (fieldKey === "unused_write_actions") return <CollapsibleActionGrid actions={value as string[]} />;
     if (typeof value[0] === "string") {
       const tone = fieldKey.includes("wildcard") || fieldKey === "sources" ? "warn" : "neutral";
       return <StringPills items={value as string[]} tone={tone} />;
@@ -1895,15 +1874,14 @@ function EvidenceValue({ fieldKey, value }: { fieldKey: string; value: unknown }
 
   if (typeof value === "boolean") {
     return (
-      <span className={`text-sm font-medium ${value ? "text-emerald-700" : "text-red-600"}`}>
+      <span className={`text-[13px] font-medium leading-relaxed ${value ? "text-emerald-700" : "text-red-600"}`}>
         {value ? "Yes" : "No"}
       </span>
     );
   }
 
   const text = formatEvidenceDate(String(value));
-  const mono = /arn|_id$|(^|_)id$|key_id|region/i.test(fieldKey);
-  return <span className={`text-sm leading-5 text-zinc-700 ${mono ? "font-mono break-all" : ""}`}>{text}</span>;
+  return <span className="break-all">{text}</span>;
 }
 
 function evidenceSectionTitle(key: string) {
@@ -1948,24 +1926,25 @@ function EvidenceSection({
       )}
       {scalars.length > 0 && (
         <DrawerSection title="Resource details">
-          <div className="divide-y divide-zinc-100 py-0.5">
+          <ResourceGroup className="border-t-0">
             {scalars.map(([k, v]) => {
+              const label = evidenceLabel(k, evidence);
               const rich = evidenceValueIsRich(k, v);
               if (rich) {
                 return (
-                  <div key={k} className={drawerSectionBody}>
-                    <div className={`${drawerFieldLabelBlock} mb-2`}>{evidenceLabel(k, evidence)}</div>
+                  <div key={k} className="py-2 first:pt-0 last:pb-0">
+                    <p className={`${drawerFieldLabelBlock} mb-2`}>{label}</p>
                     <EvidenceValue fieldKey={k} value={v} />
                   </div>
                 );
               }
               return (
-                <DrawerMetaRow key={k} label={evidenceLabel(k, evidence)} align="start">
+                <ResourceFieldRow key={k} label={label} mono={evidenceFieldIsMono(k)}>
                   <EvidenceValue fieldKey={k} value={v} />
-                </DrawerMetaRow>
+                </ResourceFieldRow>
               );
             })}
-          </div>
+          </ResourceGroup>
         </DrawerSection>
       )}
       {objectLists.map(([k, items]) => (
@@ -2339,7 +2318,7 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   }
 
   if (resource_type === "sns_topic" || resource_type === "sqs_queue") {
-    return { text: "Verify publishers/subscribers have KMS permissions after enabling encryption.", type: "caution" };
+    return { text: "Enable encryption, then verify producers and consumers can still publish and receive messages.", type: "safe" };
   }
 
   if (resource_type === "ec2_instance") {
@@ -2781,12 +2760,24 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 
         {/* EBS encryption default: unencrypted volume count */}
         {data.resource_type === "ebs_encryption_default" && (
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-xs">
-            <div className="font-medium text-zinc-400 mb-0.5">Existing unencrypted volumes</div>
-            <div className={`text-2xl font-bold tabular-nums ${(data.existing_unencrypted_count ?? 0) > 0 ? "text-amber-600" : "text-emerald-600"}`}>
-              {data.existing_unencrypted_count ?? 0}
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50/80 px-3 py-3 text-xs">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-zinc-500">Existing unencrypted volumes</div>
+                <p className="mt-1.5 leading-relaxed text-zinc-600">
+                  Default encryption applies to <span className="font-medium text-zinc-800">new</span> volumes only.
+                  Migrate each existing volume with snapshot copy when ready.
+                </p>
+              </div>
+              <div
+                className={`shrink-0 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-center tabular-nums ${
+                  (data.existing_unencrypted_count ?? 0) > 0 ? "text-amber-700" : "text-emerald-700"
+                }`}
+              >
+                <div className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Count</div>
+                <div className="text-xl font-semibold leading-tight">{data.existing_unencrypted_count ?? 0}</div>
+              </div>
             </div>
-            <p className="mt-1.5 text-zinc-400 leading-relaxed">Enabling default encryption only affects volumes created <em>after</em> this change. Each existing unencrypted volume must be migrated separately via snapshot copy.</p>
           </div>
         )}
 
@@ -3154,6 +3145,21 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 type Tab = "overview" | "resources" | "remediation" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
+type GeneratedS3HttpsPolicy = {
+  bucket_name: string;
+  had_policy: boolean;
+  already_has_https_deny: boolean;
+  original_policy: Record<string, unknown> | null;
+  merged_policy: Record<string, unknown>;
+  statement_added: boolean;
+};
+
+const ROLE_POLICY_GEN_CHECKS = new Set([
+  "iam.role.unused_services_90d",
+  "iam.role.wildcard_action",
+  "iam.perm.granted_vs_used",
+]);
+
 const MISLEADING_INLINE_POLICY_NAMES = new Set([
   "AdministratorAccess",
   "PowerUserAccess",
@@ -3263,6 +3269,19 @@ function diffPolicyField(
     lines.push({ kind: "add", text: `${label}:` });
     for (const item of added) lines.push({ kind: "add", text: `  ${item}` });
   }
+  return lines;
+}
+
+function buildNewStatementDiffLines(stmt: PolicyStatement): PolicyDiffLine[] {
+  const lines: PolicyDiffLine[] = [];
+  if (stmt.Sid) lines.push({ kind: "add", text: `Sid: ${stmt.Sid}` });
+  if (stmt.Effect) lines.push({ kind: "add", text: `Effect: ${stmt.Effect}` });
+  if (stmt.Principal) {
+    const p = typeof stmt.Principal === "string" ? stmt.Principal : "*";
+    lines.push({ kind: "add", text: `Principal: ${p}` });
+  }
+  lines.push(...diffPolicyField("Action", [], asPolicyList(stmt.Action), "modified"));
+  lines.push(...diffPolicyField("Resource", [], asPolicyList(stmt.Resource), "modified"));
   return lines;
 }
 
@@ -3506,7 +3525,96 @@ function GeneratePolicySection({
   );
 }
 
-function CliBlock({ code }: { code: string }) {
+function GenerateS3HttpsPolicySection({
+  accountId,
+  finding,
+}: {
+  accountId: string;
+  finding: Finding;
+}) {
+  const [enabled, setEnabled] = useState(false);
+  const [view, setView] = useState<"diff" | "merged" | "original">("diff");
+  const { data, isLoading, error } = useQuery<GeneratedS3HttpsPolicy>({
+    queryKey: ["generated-s3-https-policy", accountId, finding.resource_arn, finding.last_seen],
+    queryFn: () =>
+      api(
+        `/v1/accounts/${accountId}/s3/generated-https-policy?bucket_arn=${encodeURIComponent(finding.resource_arn)}`,
+      ),
+    enabled,
+    staleTime: 0,
+  });
+
+  const originalPolicies = data
+    ? {
+        "Bucket policy": data.original_policy ?? { Version: "2012-10-17", Statement: [] },
+      }
+    : undefined;
+  const mergedPolicies = data ? { "Bucket policy": data.merged_policy } : undefined;
+
+  return (
+    <DrawerSection
+      title="Suggested policy"
+      action={
+        !enabled ? (
+          <button
+            onClick={() => setEnabled(true)}
+            className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
+          >
+            Generate
+          </button>
+        ) : undefined
+      }
+    >
+      <div className={drawerSectionBody}>
+        {enabled && isLoading && <div className="py-2 text-[13px] text-zinc-500">Generating…</div>}
+        {enabled && error && <div className="py-1 text-[13px] text-red-600">{String(error)}</div>}
+        {enabled && data?.already_has_https_deny && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] leading-snug text-amber-900">
+            Live bucket policy already denies requests where{" "}
+            <span className="font-mono text-[12px]">aws:SecureTransport</span> is false. Re-scan after any change if this
+            finding still appears.
+          </div>
+        )}
+        {enabled && data && !data.already_has_https_deny && originalPolicies && mergedPolicies && (
+          <div className="space-y-2.5">
+            <div className="flex justify-end">
+              <div className="flex gap-0.5 rounded-md bg-zinc-100 p-0.5">
+                {(["diff", "merged", "original"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`rounded px-2 py-0.5 text-[11px] font-medium capitalize transition-colors ${view === v ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-600 hover:text-zinc-800"}`}
+                  >
+                    {v === "merged" ? "merged" : v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {view === "diff" &&
+              (!data.had_policy ? (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-zinc-500">This bucket never had a policy.</p>
+                  <PolicyStatementDiffBlock
+                    lines={buildNewStatementDiffLines(
+                      ((data.merged_policy.Statement as PolicyStatement[]) ?? [])[0] ?? {},
+                    )}
+                  />
+                </div>
+              ) : (
+                <PolicyDiffView original={originalPolicies} cleaned={mergedPolicies} />
+              ))}
+            {view === "merged" && <CliBlock code={JSON.stringify(data.merged_policy, null, 2)} label="Policy" />}
+            {view === "original" && (
+              <CliBlock code={JSON.stringify(originalPolicies["Bucket policy"], null, 2)} label="Policy" />
+            )}
+          </div>
+        )}
+      </div>
+    </DrawerSection>
+  );
+}
+
+function CliBlock({ code, label = "Command" }: { code: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   function copy() {
     const executable = code
@@ -3523,7 +3631,7 @@ function CliBlock({ code }: { code: string }) {
   return (
     <div className="rounded-lg bg-zinc-100/60 overflow-hidden">
       <div className="flex items-center justify-between px-3.5 py-2">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">Command</span>
+        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</span>
         <button
           onClick={copy}
           className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all duration-150 ${
@@ -3649,17 +3757,13 @@ function AffectedResourcesPanel({
   activeId,
   onSelect,
   checkId,
-  defaultExpanded = false,
 }: {
   findings: Finding[];
   activeId: string;
   onSelect: (f: Finding) => void;
   checkId: string;
-  defaultExpanded?: boolean;
 }) {
   const [search, setSearch] = useState("");
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const preview = 5;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -3670,8 +3774,6 @@ function AffectedResourcesPanel({
     });
   }, [findings, search]);
 
-  const visible = expanded ? filtered : filtered.slice(0, preview);
-  const hidden = filtered.length - visible.length;
   const typeLabel = resourceTypeLabel(checkId);
 
   return (
@@ -3693,7 +3795,7 @@ function AffectedResourcesPanel({
       }
     >
       <ul className="max-h-44 space-y-px overflow-y-auto px-2 py-1.5">
-        {visible.map((f) => {
+        {filtered.map((f) => {
           const active = f.id === activeId;
           return (
             <li key={f.id}>
@@ -3713,24 +3815,6 @@ function AffectedResourcesPanel({
           );
         })}
       </ul>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mb-1.5 px-3 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
-        >
-          +{hidden} more
-        </button>
-      )}
-      {expanded && filtered.length > preview && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="mb-1.5 px-3 text-[11px] font-medium text-zinc-600 hover:text-zinc-800"
-        >
-          Show less
-        </button>
-      )}
     </DrawerSection>
   );
 }
@@ -3840,7 +3924,7 @@ export function FindingDrawer({
     "gitlab.repo": "GitLab Project",
   };
   const category = Object.entries(categoryLabel).find(([prefix]) => finding.check_id.startsWith(prefix))?.[1] ?? "Finding";
-  const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
+  const showPolicyGen = ROLE_POLICY_GEN_CHECKS.has(finding.check_id) && !!accountId;
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
@@ -3908,7 +3992,6 @@ export function FindingDrawer({
               activeId={finding.id}
               onSelect={onSelectRelated}
               checkId={finding.check_id}
-              defaultExpanded
             />
           )}
           <SelectedResourceInspector finding={finding} attachedToList={!!multiResource} />
@@ -3933,6 +4016,9 @@ export function FindingDrawer({
               finding={finding}
               cloudTrailLogging={cloudTrailLogging}
             />
+          )}
+          {finding.check_id === "s3.bucket.no_https_policy" && accountId && (
+            <GenerateS3HttpsPolicySection accountId={accountId} finding={finding} />
           )}
           <div className={`${drawerPanel} overflow-hidden shadow-sm shadow-zinc-900/[0.03]`}>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 pr-5">

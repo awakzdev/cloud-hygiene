@@ -78,7 +78,7 @@ export function PostureMetricCell({
   valueClassName = "text-zinc-900",
   variant = "compact",
 }: {
-  label: string;
+  label?: string;
   value: ReactNode;
   sub?: string;
   valueClassName?: string;
@@ -86,23 +86,27 @@ export function PostureMetricCell({
 }) {
   if (variant === "status") {
     return (
-      <div className="flex min-h-[8rem] flex-col items-center justify-center rounded-xl bg-zinc-50/50 px-3 py-6 text-center">
-        <div className={`text-xl font-semibold tabular-nums leading-none tracking-tight ${valueClassName}`}>
+      <div className="flex flex-col items-center justify-center rounded-lg bg-white px-2.5 py-3.5 text-center ring-1 ring-zinc-100/80">
+        <div className={`text-lg font-semibold tabular-nums leading-tight tracking-tight ${valueClassName}`}>
           {value}
         </div>
         {sub ? (
-          <div className="mt-4 text-[11px] font-normal leading-relaxed tabular-nums text-zinc-400">{sub}</div>
+          <div className="mt-2 text-[11px] font-normal leading-snug tabular-nums text-zinc-400">{sub}</div>
         ) : null}
-        <div className={`text-[11px] font-medium text-zinc-400 ${sub ? "mt-4" : "mt-3.5"}`}>{label}</div>
+        {label ? (
+          <div className={`text-[11px] font-medium text-zinc-400 ${sub ? "mt-2.5" : "mt-1.5"}`}>{label}</div>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="flex min-h-[4.75rem] flex-col items-center justify-center rounded-lg bg-zinc-50/70 px-2.5 py-3.5 text-center">
+    <div className="flex min-h-[4.75rem] flex-col items-center justify-center rounded-lg bg-white px-2.5 py-3.5 text-center ring-1 ring-zinc-100/80">
       <div className={`text-base font-semibold tabular-nums leading-tight ${valueClassName}`}>{value}</div>
-      {sub ? <div className="mt-1.5 text-[10px] tabular-nums text-zinc-400">{sub}</div> : null}
-      <div className={`text-[10px] font-medium text-zinc-400 ${sub ? "mt-2" : "mt-1.5"}`}>{label}</div>
+      {sub ? <div className="mt-1.5 text-[11px] font-normal leading-snug tabular-nums text-zinc-400">{sub}</div> : null}
+      {label ? (
+        <div className={`text-[11px] font-medium text-zinc-400 ${sub ? "mt-2" : "mt-1.5"}`}>{label}</div>
+      ) : null}
     </div>
   );
 }
@@ -115,7 +119,7 @@ export function PostureMetricsRow({
   variant?: PostureMetricVariant;
 }) {
   if (variant === "status") {
-    return <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">{children}</div>;
+    return <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">{children}</div>;
   }
   return <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">{children}</div>;
 }
