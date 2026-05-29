@@ -308,6 +308,42 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
 
         zf.writestr("check_evidence_classes.json", json.dumps(all_evidence_classes(), indent=2))
 
+        zf.writestr(
+            "iam_history.json",
+            json.dumps(
+                {
+                    "as_of": now.isoformat(),
+                    "source": "evidence_snapshots",
+                    "sample": True,
+                    "snapshot_count": 3,
+                    "summary": {"iam_user": 2, "iam_role": 1},
+                    "entities": {
+                        "iam_user": [
+                            {
+                                "entity_id": "arn:aws:iam::123456789012:user/alice",
+                                "taken_at": (now - timedelta(days=7)).isoformat(),
+                                "data": {"username": "alice", "mfa_enabled": True},
+                            }
+                        ],
+                    },
+                },
+                indent=2,
+            ),
+        )
+        zf.writestr(
+            "vault_upload_plan.json",
+            json.dumps(
+                {
+                    "status": "planned",
+                    "implementation": "not_wired",
+                    "sample": True,
+                    "s3_uri": "s3://your-audit-vault-bucket/vigil-evidence/orgs/…/packs/SAMPLE000001.zip",
+                    "note": "Enable EVIDENCE_VAULT_* env vars on the server to emit real plans.",
+                },
+                indent=2,
+            ),
+        )
+
         # Per-control folders
         for ctrl_id, title, desc, ctrl_status, _, _ in sample_controls:
             checks_for_ctrl = [c for c, ctrls in check_to_control.items() if ctrl_id in ctrls]
