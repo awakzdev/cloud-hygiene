@@ -29,6 +29,7 @@ from app.checks import (
     iam_role_external_trust,
     iam_access_key_unused,
     iam_password_policy_weak,
+    iam_support_role,
     iam_perm_granted_vs_used,
     iam_root_access_keys,
     iam_root_no_mfa,
@@ -88,6 +89,7 @@ ALL_CHECKS = [
     iam_root_usage,
     # IAM account
     iam_password_policy_weak,
+    iam_support_role,
     # IAM users
     iam_user_inactive,
     iam_access_key_unused,

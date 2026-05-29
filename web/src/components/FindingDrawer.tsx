@@ -1155,6 +1155,21 @@ aws ssm put-parameter \\
   --attributes KmsMasterKeyId=alias/aws/sqs`,
     risk: "Enabling encryption on a live queue requires KMS permissions on all producers and consumers — test end-to-end after enabling.",
   },
+  "iam.account.no_support_role": {
+    why: "CIS expects a dedicated path to open and manage AWS Support cases. Without a role that has AWSSupportAccess, teams often fall back to root or over-privileged users.",
+    console: [
+      "Open IAM → Roles → Create role",
+      "Select AWS account as trusted entity",
+      "Attach the AWS managed policy AWSSupportAccess",
+      "Name the role (e.g. AWSSupportRole) and create it",
+      "Grant assume-role only to break-glass users or your SSO permission set",
+    ],
+    cli: `aws iam create-role --role-name AWSSupportRole \\
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::ACCOUNT_ID:root"},"Action":"sts:AssumeRole"}]}'
+aws iam attach-role-policy --role-name AWSSupportRole \\
+  --policy-arn arn:aws:iam::aws:policy/AWSSupportAccess`,
+    risk: "Low severity — operational friction during incidents, not direct exposure.",
+  },
   "iam.account.password_policy_weak": {
     why: "A weak account password policy means IAM users can set short, simple, or reused passwords. Attackers who obtain one password may rotate through accounts trivially.",
     console: [

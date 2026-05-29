@@ -586,6 +586,26 @@
   },
   {
     "framework": "cis_aws_l1",
+    "control_id": "3.3",
+    "title": "Ensure CloudTrail logs are encrypted at rest with KMS",
+    "description": "CloudTrail S3 delivery should use a KMS CMK for encryption at rest.",
+    "guidance": "Associate a KMS key with each trail; verify key policy allows CloudTrail.",
+    "checks": [
+      "cloudtrail.trail.no_kms"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.16",
+    "title": "Ensure a support role exists to manage incidents with AWS Support",
+    "description": "A dedicated IAM role with AWSSupportAccess enables AWS Support case management.",
+    "guidance": "Create a role with the AWS managed policy AWSSupportAccess for break-glass support access.",
+    "checks": [
+      "iam.account.no_support_role"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
     "control_id": "3.5",
     "title": "Ensure AWS Config is enabled",
     "description": "AWS Config records configuration changes for compliance monitoring.",

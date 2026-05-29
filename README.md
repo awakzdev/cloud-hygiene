@@ -235,7 +235,7 @@ Still manual / planned (not blockers for first design partners):
 
 | Item | Notes |
 |------|--------|
-| **Long-term evidence vault** | Optional WORM/S3 Object Lock bucket so exports cannot be altered after upload — not built in; use your own archive + periodic ZIP exports today |
+| **Long-term evidence vault** | Scaffold: `EVIDENCE_VAULT_S3_URI` + `api/app/services/evidence_vault.py` (not wired). See [docs/evidence-vault.md](docs/evidence-vault.md) |
 | **Cryptographic pack signing** | Set `EVIDENCE_PACK_SIGNING_KEY` — packs include `pack_signature.json` (Ed25519 over `checksum_manifest.json`); public key at `GET /v1/meta/evidence-pack-signing-key` |
 | **Full CIS v5 parity** | `cis_v5_level1_matrix.json` lists all 40 L1 controls with automated / partial / extended / manual status; ~24 core-mapped in Compliance |
 | **IAM history UI** | `GET /v1/accounts/:id/iam-history?as_of=` + Timeline panel (snapshot-based roster) |

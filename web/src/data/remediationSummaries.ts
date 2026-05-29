@@ -301,6 +301,11 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     risk: "Queue payloads readable at rest.",
     fix: "Enable SSE-KMS on the queue.",
   },
+  "iam.account.no_support_role": {
+    impact: "No IAM role with AWSSupportAccess.",
+    risk: "Support cases may require root or ad-hoc elevated access.",
+    fix: "Create a dedicated support role with AWSSupportAccess.",
+  },
   "iam.account.password_policy_weak": {
     impact: "IAM password policy below baseline.",
     risk: "Weak passwords easier to crack.",

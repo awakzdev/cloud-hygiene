@@ -1074,8 +1074,12 @@ export default function Controls() {
           </p>
           {framework === "cis_aws_l1" && cisCoverage.data && (
             <p className="mt-2 max-w-2xl rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
-              Automated coverage: {cisCoverage.data.mapped_control_count} of{" "}
-              {cisCoverage.data.cis_v5_level1_total} CIS AWS Foundations v5 Level 1 controls (curated subset).
+              CIS v5 Level 1 matrix:{" "}
+              {cisCoverage.data.cis_v5_matrix?.automated ?? "—"} automated,{" "}
+              {cisCoverage.data.cis_v5_matrix?.partial ?? 0} partial,{" "}
+              {cisCoverage.data.cis_v5_matrix?.manual ?? "—"} manual attestation (of{" "}
+              {cisCoverage.data.cis_v5_matrix?.control_count ?? cisCoverage.data.cis_v5_level1_total} controls).{" "}
+              Compliance tab maps {cisCoverage.data.mapped_control_count} control rows to Vigil checks.
             </p>
           )}
         </div>

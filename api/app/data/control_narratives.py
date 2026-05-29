@@ -169,6 +169,12 @@ NARRATIVES: dict[str, str] = {
     "CIS 1.19": (
         "Vigil verifies IAM Access Analyzer is enabled in scanned regions."
     ),
+    "CIS 1.16": (
+        "Vigil verifies at least one IAM role can access AWS Support via AWSSupportAccess."
+    ),
+    "CIS 3.3": (
+        "Vigil verifies CloudTrail trails are configured to use KMS encryption for log delivery."
+    ),
     "CIS 2.1.5": (
         "Vigil verifies account-level and per-bucket S3 Block Public Access settings."
     ),

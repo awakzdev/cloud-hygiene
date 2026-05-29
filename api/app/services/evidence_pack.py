@@ -196,6 +196,9 @@ def build_evidence_pack(
         .order_by(ScanRun.started_at.desc())
     ).all()
     access_roster = _build_access_roster(db, account_id, end)
+    from app.services.iam_history import build_iam_history
+
+    iam_history = build_iam_history(db, account_id, end)
     mapped_check_ids = {cid for ids in check_map.values() for cid in ids}
     timeline_rows = _collect_timeline_rows(
         db, account_id, since, scan_runs, mapped_check_ids, control_results
@@ -235,6 +238,7 @@ def build_evidence_pack(
         )
         _write("source_manifest.json", json.dumps(manifest, indent=2, default=str))
         _write("access_roster.json", json.dumps(access_roster, indent=2, default=str))
+        _write("iam_history.json", json.dumps(iam_history, indent=2, default=str))
         _write("evidence_coverage.json", json.dumps(coverage, indent=2, default=str))
         _write(
             "check_evidence_classes.json",
@@ -302,6 +306,9 @@ def build_evidence_pack(
         sig_doc = build_pack_signature(checksum_body)
         if sig_doc:
             _write("pack_signature.json", json.dumps(sig_doc, indent=2))
+
+        # WORM vault (not wired): when enabled, plan_vault_upload() + upload_pack_to_vault()
+        # write immutable copy to EVIDENCE_VAULT_S3_URI — see docs/evidence-vault.md
 
     return buf.getvalue()
 
@@ -923,6 +930,7 @@ def _build_source_manifest(
             "source_manifest.json": "This file — collection metadata and integration sources",
             "controls/": "Per-control folders with summary.json, findings.json, exceptions.json, snapshots.json",
             "access_roster.json": "IAM + Identity Center user roster as of pack end date",
+            "iam_history.json": "Point-in-time IAM entities from evidence snapshots as of period end",
             "evidence_coverage.json": "Days of scan data vs requested audit period",
             "check_evidence_classes.json": "Per-check classification: benchmark | supporting | hygiene",
             "checksum_manifest.json": "SHA-256 checksums for pack integrity verification",
@@ -964,7 +972,8 @@ def _build_readme(
         "4. Use timeline.csv to show when findings opened, resolved, or were excepted.",
         "5. source_manifest.json lists integrations and snapshot counts collected.",
         "6. access_roster.json — IAM + Identity Center users as of period end.",
-        "7. evidence_coverage.json — days of collected data vs requested period.",
+        "7. iam_history.json — snapshot-based IAM roster as of period end (Type II sampling).",
+        "8. evidence_coverage.json — days of collected data vs requested period.",
         "",
         "SUMMARY",
         "-" * 30,

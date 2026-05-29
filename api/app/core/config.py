@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     # Generate: python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
     EVIDENCE_PACK_SIGNING_KEY: str = ""
 
+    # Immutable evidence vault (WORM) — scaffold only; upload not wired.
+    # Base S3 location for archived packs, e.g. s3://vigil-evidence-vault/prod
+    EVIDENCE_VAULT_ENABLED: bool = False
+    EVIDENCE_VAULT_S3_URI: str = ""
+    EVIDENCE_VAULT_S3_REGION: str = ""
+    EVIDENCE_VAULT_OBJECT_LOCK_MODE: str = "GOVERNANCE"
+    EVIDENCE_VAULT_RETENTION_DAYS: int = 365
+    # none | presigned | approved_link (future auditor read path)
+    EVIDENCE_VAULT_AUDITOR_ACCESS_MODE: str = "none"
+
 
 @lru_cache
 def get_settings() -> Settings:
