@@ -96,6 +96,14 @@ NARRATIVES: dict[str, str] = {
         "Vigil checks CloudTrail for root account API activity in the last 90 days. "
         "Any root usage is reported as a finding — routine operations should use IAM roles or users."
     ),
+    "CIS 1.8": (
+        "Vigil reads the account IAM password policy and flags weak minimum length or missing "
+        "complexity requirements per CIS guidance. Policy fields are collected at each scan."
+    ),
+    "CIS 1.9": (
+        "Vigil verifies password reuse prevention is enabled on the IAM account password policy "
+        "(password reuse prevention / history). Evidence is collected from IAM at each scan."
+    ),
     "CIS 1.12": (
         "Vigil flags IAM users inactive for 90+ days and access keys with no recorded usage "
         "in the same window, supporting credential disablement per CIS guidance."
@@ -257,6 +265,8 @@ SHORT_ANSWERS: dict[str, str] = {
     "CC7.2": "Security monitoring is active; CloudTrail, Config rules, GuardDuty findings, and Security Hub status are verified each scan.",
     "CC8.1": "SCM branch protection and review evidence from GitHub/GitLab; CloudTrail write events support authorized infrastructure changes.",
     "CIS 1.5": "Root account MFA is verified from the IAM account summary at each scan.",
+    "CIS 1.8": "IAM password policy minimum length and complexity are verified each scan.",
+    "CIS 1.9": "IAM password policy reuse prevention is verified each scan.",
     "CIS 1.10": "Console IAM users without MFA devices are enumerated and reported as findings.",
     "CIS 2.1": "Multi-region CloudTrail enablement is verified from trail configuration snapshots.",
     "CIS 2.2": "CloudTrail log file validation status is collected for every trail.",

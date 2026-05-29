@@ -19,6 +19,7 @@ import GitLabIntegrationEdit from "./pages/GitLabIntegrationEdit";
 import Integrations from "./pages/Integrations";
 import Security from "./pages/Security";
 import Timeline from "./pages/Timeline";
+import Reference from "./pages/Reference";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -35,7 +36,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/" element={<Navigate to="/findings" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/findings" element={<Findings />} />
-            <Route path="/reference" element={<Navigate to="/findings" replace />} />
+            <Route path="/reference" element={<Reference />} />
             <Route path="/resources" element={<Navigate to="/findings" replace />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/account" element={<Account />} />

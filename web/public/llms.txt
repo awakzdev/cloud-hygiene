@@ -1,39 +1,130 @@
 # Vigil
 
-> Continuous SOC 2 / CIS / ISO 27001 evidence automation for AWS (+ GitHub/GitLab). Read-only scans, auditor-ready ZIP exports — not a GRC suite or CSPM.
+> Continuous AWS compliance monitoring and evidence automation for SOC 2, CIS AWS Foundations, and ISO 27001. Auditor-ready evidence packs, historical proof, and security findings without requiring write access to customer environments.
 
-## Summary
+## What is Vigil?
 
-Vigil connects to a customer AWS account via a CloudFormation read-only IAM role (STS AssumeRole + ExternalId). A daily Celery worker collects IAM, S3, KMS, CloudTrail, EC2, RDS, and related configuration, runs mapped compliance checks, and stores timestamped evidence snapshots. Customers review findings, document exceptions, and download evidence packs (JSON, CSV, PDF, ZIP) mapped to SOC 2 CC6/CC7/CC8, a curated subset of CIS AWS Foundations controls, and ISO 27001 Annex A.
+Vigil helps security and compliance teams continuously verify AWS security controls and collect evidence required for audits.
 
-Vigil does **not** replace Vanta/Drata (no HR, MDM, policies). It does **not** write to customer AWS accounts.
+The platform connects to AWS through a read-only cross-account IAM role and automatically evaluates cloud configurations against mapped compliance controls. Evidence is collected over time, preserving historical snapshots that can be exported for SOC 2 Type I and Type II audits.
 
-## Key differentiator
+Vigil focuses on technical controls and cloud security posture. It is not a GRC platform and does not manage policies, employee onboarding, device management, or HR workflows.
 
-**What If / blast radius:** before remediating IAM or network findings, engineers see dependency and usage context (e.g. IAM Access Advisor, trust policies, recent key use).
+## Core Capabilities
 
-## Evidence classification
+### Continuous Compliance Monitoring
 
-Each check is labeled **benchmark** (mapped control evidence), **supporting** (extended corroboration), or **hygiene** (optional, off by default — e.g. unattached policies, CODEOWNERS).
+Vigil continuously evaluates AWS environments across services including:
 
-## Honest CIS scope
+* IAM
+* CloudTrail
+* S3
+* KMS
+* EC2
+* RDS
+* AWS Config
+* Security monitoring services
 
-~24 CIS AWS Foundations controls automated; CIS v5 Level 1 defines 40 — not full benchmark parity. See `cis_benchmark_coverage.json` in CIS evidence packs.
+Each finding is mapped to relevant compliance requirements and tracked over time.
 
-## Repository
+### Evidence Automation
 
-- Source: https://github.com/awakzdev/Vigil
-- API: FastAPI, Postgres, Celery, Redis
-- Web: React, Vite, TanStack Query
-- Docs: README.md, HANDOFF.md (operator handoff for contributors)
+For every control, Vigil automatically captures and stores supporting evidence, allowing organizations to:
 
-## Public pages
+* Demonstrate compliance status at any point in time
+* Track control effectiveness historically
+* Produce auditor-ready evidence packages
+* Reduce manual evidence collection effort
 
-- /login — sign in
-- /security — security overview for customers
+Exports include:
 
-Authenticated app routes (/findings, /controls, /accounts, etc.) are not intended for indexing.
+* PDF reports
+* CSV exports
+* JSON evidence
+* ZIP audit packages
 
-## Contact / licensing
+### Compliance Framework Coverage
 
-Source closed. Product inquiries via repository owner.
+Vigil maps findings and evidence to:
+
+* SOC 2 CC6 (Logical Access)
+* SOC 2 CC7 (System Operations)
+* SOC 2 CC8 (Change Management)
+* CIS AWS Foundations Benchmark (selected controls)
+* ISO 27001 Annex A controls
+
+Control coverage is transparent. Vigil does not claim full CIS benchmark coverage and publishes exact control mappings within generated evidence packs.
+
+### What-If Analysis
+
+Before remediating findings, engineers can review operational impact and dependency information such as:
+
+* IAM Access Advisor data
+* Trust relationships
+* Resource dependencies
+* Recent credential usage
+
+This helps reduce remediation risk and avoid unintended outages.
+
+## Evidence Categories
+
+Findings are classified into three categories:
+
+| Category   | Purpose                                             |
+| ---------- | --------------------------------------------------- |
+| Benchmark  | Directly mapped compliance evidence                 |
+| Supporting | Additional evidence strengthening audit readiness   |
+| Hygiene    | Security best practices not required by a framework |
+
+Hygiene findings are optional and disabled by default.
+
+Examples include:
+
+* Unattached IAM policies
+* CODEOWNERS enforcement
+* Other operational best-practice checks
+
+## Security Model
+
+Vigil operates using:
+
+* Cross-account IAM role assumption
+* ExternalId protection
+* Read-only AWS permissions
+* No modification of customer resources
+
+The platform never performs remediation actions inside customer accounts.
+
+## Platform
+
+### Backend
+
+* FastAPI
+* PostgreSQL
+* Celery
+* Redis
+
+### Frontend
+
+* React
+* Vite
+* TanStack Query
+
+## Public Pages
+
+* `/login`
+* `/security`
+
+Authenticated application routes are not intended for indexing.
+
+## Positioning
+
+Vigil is designed for organizations that need continuous technical compliance evidence and cloud security verification without purchasing a full governance, risk, and compliance suite.
+
+It complements, rather than replaces, platforms such as Vanta or Drata by focusing specifically on technical cloud controls and evidence collection.
+
+## Licensing
+
+Commercial software. Source code is not publicly licensed.
+
+Contact the repository owner for licensing and product inquiries.

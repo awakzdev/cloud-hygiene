@@ -1216,6 +1216,69 @@ aws configservice put-delivery-channel \\
 aws configservice start-configuration-recorder --configuration-recorder-name default`,
     risk: "No Config means no configuration change history — a gap auditors will flag and a blocker for SOC 2 CC6.1.",
   },
+  "guardduty.open_findings": {
+    why: "GuardDuty is enabled but has active (non-archived) findings. Enablement alone does not mean threats are resolved — auditors expect triage and remediation evidence.",
+    console: [
+      "Open GuardDuty → Findings",
+      "Review active findings by severity",
+      "Archive false positives with justification; remediate confirmed threats",
+      "Document owner and resolution in your incident tracker",
+    ],
+    cli: `aws guardduty list-findings --detector-id <detector-id> --finding-criteria '{"Criterion":{"archived":{"Eq":["false"]}}}'`,
+    risk: "Unaddressed GuardDuty findings may indicate active compromise or misconfiguration.",
+  },
+  "aws.config.rules_non_compliant": {
+    why: "AWS Config is recording but one or more managed rules report NON_COMPLIANT. Enablement without passing rules is insufficient for change-management evidence.",
+    console: [
+      "Open AWS Config → Rules",
+      "Filter by Non-compliant",
+      "Remediate each resource or document approved exception",
+      "Re-evaluate until compliant or excepted",
+    ],
+    cli: `aws configservice describe-compliance-by-config-rule --config-rule-names <rule-name>`,
+    risk: "Drift from your security baseline may go unnoticed until audit sampling.",
+  },
+  "ec2.ami.aged": {
+    why: "The AMI backing an instance exceeds the age threshold (patch baseline proxy). Stale AMIs often lack current OS patches.",
+    console: [
+      "Identify instances launched from aged AMIs",
+      "Build or adopt a newer hardened AMI",
+      "Replace instances via rolling deploy or ASG refresh",
+    ],
+    cli: `aws ec2 describe-images --owners self --image-ids <ami-id>`,
+    risk: "Known CVEs in the base image may affect every instance launched from this AMI.",
+  },
+  "iam.access_inventory_gap": {
+    why: "Vigil could not reconcile IAM users, roles, and access keys against a complete inventory (missing collectors or partial scan).",
+    console: [
+      "Confirm the scan role can list IAM (users, roles, keys)",
+      "Re-run a full account scan from Vigil",
+      "Compare IAM console user count to Vigil collected count",
+    ],
+    cli: `aws iam get-account-summary`,
+    risk: "Access reviews and evidence packs may omit principals until inventory is complete.",
+  },
+  "iam.role.full_admin_policy": {
+    why: "A customer-managed policy attached to this role grants Action:* on Resource:* (full administrative access). CIS 1.22 targets this pattern specifically.",
+    console: [
+      "Open IAM → Roles → select the role",
+      "Review inline and customer-managed attached policies",
+      "Replace full-admin policies with least-privilege statements",
+      "Use IAM Access Analyzer or Vigil usage data to scope actions",
+    ],
+    cli: `aws iam list-attached-role-policies --role-name <role-name>
+aws iam get-policy-version --policy-arn <arn> --version-id <v>`,
+    risk: "Any principal that can assume this role has unrestricted account control.",
+  },
+  "github.repo.no_codeowners": {
+    why: "Optional hygiene: no CODEOWNERS file in standard repo paths. SOC 2 change management typically relies on branch protection and required reviews, not CODEOWNERS.",
+    console: [
+      "Add CODEOWNERS under `/`, `.github/`, or `docs/` if your policy requires code-owner reviews",
+      "Or disable this check under Settings → optional checks",
+    ],
+    cli: `# Create .github/CODEOWNERS with team ownership lines`,
+    risk: "Without CODEOWNERS, GitHub code-owner review rules cannot be enforced for this repository.",
+  },
   "aws.securityhub.not_enabled": {
     why: "Security Hub centralizes AWS security findings and posture checks across regions. Without it, security signals stay fragmented across services and are harder to evidence consistently.",
     console: [

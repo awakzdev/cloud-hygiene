@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -15,6 +16,19 @@ settings = get_settings()
 _SEV_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "⚪"}
 
 
+def _findings_app_url() -> str:
+    base = settings.API_PUBLIC_URL
+    if ":8000" in base:
+        return base.replace(":8000", ":5173")
+    return settings.FRONTEND_URL or base
+
+
+def _unsubscribe_url(token: str | None) -> str:
+    if token:
+        return f"{settings.API_PUBLIC_URL.rstrip('/')}/v1/public/digest/unsubscribe?token={quote(token)}"
+    return f"{_findings_app_url().rstrip('/')}/settings"
+
+
 def send_digest(
     to: str,
     org_name: str,
@@ -22,6 +36,8 @@ def send_digest(
     open_findings: list[dict[str, Any]],
     new_this_week: list[dict[str, Any]],
     resolved_this_week: int,
+    *,
+    unsubscribe_token: str | None = None,
 ) -> bool:
     """Send weekly digest to a single recipient. Returns True on success."""
     if not settings.RESEND_API_KEY:
@@ -29,8 +45,8 @@ def send_digest(
         return False
 
     subject = _subject(open_findings)
-    html = _html(org_name, account_label, open_findings, new_this_week, resolved_this_week)
-    text = _text(org_name, account_label, open_findings, new_this_week, resolved_this_week)
+    html = _html(org_name, account_label, open_findings, new_this_week, resolved_this_week, unsubscribe_token)
+    text = _text(org_name, account_label, open_findings, new_this_week, resolved_this_week, unsubscribe_token)
 
     try:
         resp = httpx.post(
@@ -69,7 +85,10 @@ def _html(
     open_findings: list[dict],
     new_this_week: list[dict],
     resolved_this_week: int,
+    unsubscribe_token: str | None = None,
 ) -> str:
+    unsubscribe_href = _unsubscribe_url(unsubscribe_token)
+    app_url = _findings_app_url().rstrip("/")
     top = sorted(open_findings, key=lambda f: (-f["risk_score"],))[:10]
 
     rows_html = ""
@@ -147,7 +166,7 @@ def _html(
 
     <!-- CTA -->
     <div style="padding:0 32px 28px">
-      <a href="{settings.API_PUBLIC_URL.replace(':8000', ':5173') if '8000' in settings.API_PUBLIC_URL else settings.API_PUBLIC_URL}/findings"
+      <a href="{app_url}/findings"
          style="display:inline-block;background:#18181b;color:white;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none">
         View all findings →
       </a>
@@ -157,7 +176,7 @@ def _html(
     <div style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e4e4e7">
       <div style="font-size:11px;color:#a1a1aa">
         Vigil weekly digest for {org_name} · {datetime.now(timezone.utc).strftime('%B %d, %Y')} ·
-        <a href="{settings.API_PUBLIC_URL.replace(':8000', ':5173') if '8000' in settings.API_PUBLIC_URL else settings.API_PUBLIC_URL}/settings" style="color:#71717a">Unsubscribe</a>
+        <a href="{unsubscribe_href}" style="color:#71717a">Unsubscribe</a>
       </div>
     </div>
   </div>
@@ -171,7 +190,9 @@ def _text(
     open_findings: list[dict],
     new_this_week: list[dict],
     resolved_this_week: int,
+    unsubscribe_token: str | None = None,
 ) -> str:
+    unsubscribe_href = _unsubscribe_url(unsubscribe_token)
     lines = [
         f"Vigil — Weekly Security Digest for {org_name}",
         f"Account: {account_label}",
@@ -190,4 +211,5 @@ def _text(
         lines.append(f"  {f['resource_arn']}")
         lines.append(f"  Score: {f['risk_score']}")
         lines.append("")
+    lines.append(f"Unsubscribe: {unsubscribe_href}")
     return "\n".join(lines)

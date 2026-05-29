@@ -16,6 +16,7 @@ from app.models import AwsAccount, Finding
 from app.services.check_evidence import all_evidence_classes
 from app.services.check_settings import hidden_check_ids, optional_checks_for_ui
 from app.services.cis_benchmark_coverage import cis_benchmark_coverage
+from app.services.digest_tokens import ensure_digest_unsubscribe_token
 from app.services.scan_schedule import (
     DEFAULT_SCANNING,
     get_scanning_settings,
@@ -33,6 +34,7 @@ DEFAULT_SETTINGS: dict = {
     "notifications": {
         "email_digest_enabled": False,
         "digest_email": None,
+        "digest_unsubscribe_token": None,
         "slack_webhook_url": None,
         "scan_failure_email_enabled": True,
     },
@@ -176,7 +178,7 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
         current["scanning"] = stored
 
     if body.notifications is not None:
-        current["notifications"] = body.notifications.model_dump()
+        current["notifications"] = ensure_digest_unsubscribe_token(body.notifications.model_dump())
 
     org.settings = current
     db.add(org)
@@ -250,6 +252,10 @@ def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
         )
     ) or 0
 
+    from app.services.digest_tokens import persist_digest_unsubscribe_token
+
+    unsubscribe_token = persist_digest_unsubscribe_token(db, org)
+
     ok = send_digest(
         to=digest_email,
         org_name=org.name if hasattr(org, "name") else str(org.id),
@@ -260,6 +266,7 @@ def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
         ],
         new_this_week=[{"title": f.title, "severity": f.severity} for f in new_this_week],
         resolved_this_week=resolved_count,
+        unsubscribe_token=unsubscribe_token,
     )
 
     if not ok:

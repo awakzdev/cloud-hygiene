@@ -516,6 +516,69 @@ function questionnaireMeta(control: ControlRow) {
   };
 }
 
+function ControlAuditEvidenceBlock({
+  control,
+  periodDays,
+  coverage,
+}: {
+  control: ControlRow;
+  periodDays: number;
+  coverage?: EvidenceCoverage;
+}) {
+  const statusLine =
+    control.status === "pass"
+      ? `Passing — 0 open findings mapped to ${control.control_id} in the last ${periodDays} days.`
+      : control.status === "fail"
+        ? `${control.finding_count} open finding(s) mapped to ${control.control_id}.`
+        : "Not yet evaluated — run a scan and ensure mapped checks have data.";
+
+  return (
+    <div className="mb-4 rounded-xl border border-indigo-200/70 bg-indigo-50/25 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">Audit evidence summary</p>
+      <ol className="mt-3 space-y-3 text-xs leading-relaxed text-zinc-800">
+        <li>
+          <span className="font-semibold text-zinc-900">1. Control objective — </span>
+          {control.title}
+          {control.description ? ` — ${control.description}` : ""}
+        </li>
+        <li>
+          <span className="font-semibold text-zinc-900">2. What Vigil collects — </span>
+          {control.check_ids.length > 0
+            ? `${control.check_ids.length} automated check(s): ${control.check_ids.map((id) => labelForCheck(id)).join(", ")}.`
+            : "No automated checks — manual attestation required."}
+          {control.evidence_refs.length > 0 && (
+            <span className="block mt-1 text-zinc-600">Artifacts: {control.evidence_refs.join("; ")}</span>
+          )}
+        </li>
+        <li>
+          <span className="font-semibold text-zinc-900">3. Period completeness — </span>
+          {coverage ? (
+            <>
+              {coverage.coverage_label} ({Math.round(coverage.coverage_ratio * 100)}% of last {periodDays} days with
+              successful scans). {coverage.successful_scans_in_period} scan(s) in period.
+              {coverage.warning ? ` ${coverage.warning}` : ""}
+            </>
+          ) : (
+            `Evidence pack covers a rolling ${periodDays}-day window from each successful scan.`
+          )}
+        </li>
+        <li>
+          <span className="font-semibold text-zinc-900">4. Findings / exceptions — </span>
+          {statusLine}
+        </li>
+        <li>
+          <span className="font-semibold text-zinc-900">5. Manual gaps — </span>
+          {control.known_gaps.length > 0
+            ? control.known_gaps.join(" ")
+            : control.check_ids.length === 0
+              ? "Entire control requires manual evidence outside Vigil."
+              : "None documented for this control."}
+        </li>
+      </ol>
+    </div>
+  );
+}
+
 function NarrativeDetailBlock({ control }: { control: ControlRow }) {
   if (!control.short_answer && !control.long_answer && !control.narrative) return null;
 
@@ -892,7 +955,7 @@ export default function Controls() {
         `/v1/accounts/${connectedAccount!.id}/evidence-coverage?${params}`
       );
     },
-    enabled: !!connectedAccount && exportOpen,
+    enabled: !!connectedAccount && hasScanned,
   });
 
   useEffect(() => {
@@ -1403,6 +1466,11 @@ export default function Controls() {
 
                         {isExpanded && (
                           <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
+                            <ControlAuditEvidenceBlock
+                              control={ctrl}
+                              periodDays={period}
+                              coverage={evidenceCoverage.data}
+                            />
                             <NarrativeDetailBlock control={ctrl} />
                             {(ctrl.narrative || ctrl.description) ? (
                               <div className="mt-4">

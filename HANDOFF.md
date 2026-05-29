@@ -261,7 +261,7 @@ Multi-account via AWS Orgs StackSet · S3/cert/secret/Trail/Config checks · Ter
 | Multi-account support | One-account limit removed; schema was already multi-account ready |
 | `last_accessed` collector is synchronous polling | ~1-3s per role; fine for MVP, throttle risk at 100+ roles |
 | `RESEND_API_KEY` in `.env` | rotate before prod; `onboarding@resend.dev` sender only works for verified account email |
-| Digest unsubscribe is a link to `/settings` | no token-based one-click unsubscribe yet |
+| Digest unsubscribe | one-click via `/v1/public/digest/unsubscribe?token=` (token issued when digest enabled) |
 
 ---
 
@@ -819,72 +819,47 @@ scope and intentionally absent from that list.
 
 ## Canonical remaining work
 
-This is the single source of truth. Older session-end "remaining gaps"
-lists in this file are historical context only — when they conflict with
-this section, this section wins. Update *here* when items land or new
-work surfaces.
+Single source of truth. Older session notes are historical — when they
+conflict with this section, this section wins.
 
-**State as of session 25:** product is strong for Type I prep, but there are compliance-mapping bugs and Type II evidence gaps that must be fixed before auditor-facing demos.
+**State as of session 27 (2026-05-28):** audit-evidence readiness shipped
+(Session 26). Session 27 adds check docs fallback, remediation gaps,
+Controls audit template, mapping/narrative CI tests, access-roster API,
+digest one-click unsubscribe, `/reference` route, sample pack
+`check_evidence_classes.json`.
 
-**Founder-blocking (need a click, not code):**
+**Shipped (do not re-open as bugs):**
+- Core check → framework mappings complete (`test_check_mappings_registry.py`)
+- `iam.policy.wildcard_resource` mapped; `github.repo.no_codeowners` optional hygiene (unmapped by design)
+- Evidence class API + ZIP `checksum_manifest.json` + CIS coverage matrix
+- GuardDuty open findings, Config rule compliance, AMI age, IC roster in packs
+- Evidence coverage indicator (Compliance + `evidence_coverage.json` in pack)
+- `GET /accounts/:id/access-roster?as_of=` (latest collection as of date)
+- Digest unsubscribe token URL (`/v1/public/digest/unsubscribe?token=`)
+- Finding drawer: check docs from `remediationSummaries` + hand-authored overrides
+- Controls expanded row: 5-part audit evidence summary block
 
-1. **Restart api + worker** after session-24 code lands, then **re-scan** — evidence packs need the new snapshot types (Lambda, DynamoDB, user policy attachments, etc.).
+**Founder-blocking (click, not code):**
+- Re-scan connected accounts after deploy so new collectors (IC, GuardDuty findings, Config compliance) populate
 
-**Session 24 (shipped this session):**
-- CIS questionnaire narratives fixed (`narrative_for` lookup — CIS tab copy was blank)
-- Narratives for all mapped CIS + ISO controls
-- Evidence snapshots for session-18 resource types + IAM user policies + RDS Multi-AZ/deletion protection
-- Reference page + Compliance check groups updated
+**Type II / release hardening (README “planned” items):**
+- WORM / immutable evidence storage
+- Signed evidence packs (checksum manifest exists; no crypto signing yet)
+- CIS AWS v5 benchmark pack (v1.5 matrix is honest partial coverage today)
+- Historical snapshot query UI (“state at date X” beyond roster + rolling pack window)
+- Google Workspace identity
+- Prod deploy + Stripe billing
 
-**Critical bugs to fix before showing auditors:**
+**Product backlog (not blocking demo):**
+- “What If” blast radius tab (HANDOFF differentiator — uses `iam_perm_usage`)
+- Throwaway AWS sandbox for e2e
+- Deeper point-in-time IAM from per-scan evidence snapshots (roster is latest collection today)
 
-1. **`iam.policy.wildcard_resource` mapping bug**  
-   Check runs and appears in Findings, but is missing from `api/data/control_mappings.json` so it is invisible in Compliance and excluded from evidence packs.  
-   - Fix target mapping: SOC2 **CC6.3** + ISO **A.9.2.5**.
-2. **`github.repo.no_codeowners` unmapped**  
-   Session notes say mapped, but mapping is absent in JSON.  
-   - Fix target mapping: SOC2 **CC8.1**.
-3. **Additional mapping gaps (audit-visible):**
-   - `iam.account.password_policy_weak` missing SOC2 **CC6.2**, CIS **1.8/1.9**
-   - `iam.user.direct_policy_attachment` missing SOC2 **CC6.3**, ISO **A.9.2.2**
-   - `iam.role.unused_services_90d` missing SOC2 **CC6.3**
-   - `ec2.security_group.default_allows_traffic` missing SOC2 **CC6.6**
-   - `ec2.ebs.encryption_not_default` missing SOC2 **CC6.8**
-   - `rds.instance.no_automated_backup` missing ISO **A.12.3.1**
-   - `aws.access_analyzer.not_enabled` missing SOC2 **CC6.6/CC7.2**
-   - `aws.config.not_enabled` missing SOC2 **CC7.1**
-   - `secretsmanager.secret.no_rotation` missing SOC2 **CC6.2/CC6.3**
-   - `ssm.parameter.plaintext_secret` missing SOC2 **CC6.2**
-   - `elb.load_balancer.no_access_logs` missing SOC2 **CC7.2**
+**Optional hygiene (off by default, unmapped):** `iam.policy.unattached`, `github.repo.no_codeowners`
 
-**Relevance call (keep/remove):**
-- `iam.policy.unattached` is correctly **optional hygiene-only** (unmapped by design).
-- `iam.policy.wildcard_resource` is **not hygiene-only**; mapping absence is a bug.
+**AWS coverage:** ~80 registered checks (AWS + GitHub + GitLab). Full CIS L1 still has manual-only items.
 
-**Type II blockers (product gaps):**
-- No point-in-time access roster retrieval by sampled date (auditor asks: "show access on date X").
-- No IAM Identity Center / SSO account inventory; IAM-user-only view can produce false all-clear.
-- GuardDuty findings response evidence is not collected (only enablement state).
-- No evidence coverage indicator (e.g., "7 of 90 days collected").
-
-**Important but not hard blockers:**
-- Cross-account trust enumeration depth.
-- Config rule compliance details (not only "enabled").
-- AMI/patch-age visibility.
-
-**Phase B still open (updated):**
-- Date-specific evidence pack generation ("as of date X"), not only rolling N-day window.
-- Evidence coverage indicator in Compliance and export metadata.
-- Historical diff UI ("state X between time A and time B").
-- Google Workspace (Phase 4).
-- Prod deploy + Stripe.
-
-**AWS coverage (session 25 correction):**
-- **61 AWS checks** shipped.
-- Mapping is **not fully complete** yet (see critical mapping bugs above).
-- Full CIS benchmark still has manual-only items (support role, password policy min length, etc.).
-
-**Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object.
+**Optional when deploying prod:** `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to release tag.
 
 ### Session 25 audit-readiness review (2026-05-28)
 

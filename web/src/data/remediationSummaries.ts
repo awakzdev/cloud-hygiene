@@ -131,6 +131,36 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     risk: "Weaker control over audit log access.",
     fix: "Enable KMS encryption on the trail.",
   },
+  "guardduty.open_findings": {
+    impact: "GuardDuty has active findings.",
+    risk: "Unresolved threats may indicate compromise.",
+    fix: "Triage, remediate, or archive with justification.",
+  },
+  "aws.config.rules_non_compliant": {
+    impact: "Config rules report non-compliant resources.",
+    risk: "Baseline drift hidden until audit.",
+    fix: "Remediate resources or document exceptions.",
+  },
+  "ec2.ami.aged": {
+    impact: "AMI exceeds patch-age threshold.",
+    risk: "Instances may lack current OS patches.",
+    fix: "Refresh workloads onto a newer AMI.",
+  },
+  "iam.access_inventory_gap": {
+    impact: "IAM inventory incomplete after scan.",
+    risk: "Access roster may omit principals.",
+    fix: "Fix role permissions and re-scan.",
+  },
+  "iam.role.full_admin_policy": {
+    impact: "Role has customer-managed Action:* / Resource:*.",
+    risk: "Full account compromise if assumed.",
+    fix: "Replace with least-privilege policies.",
+  },
+  "github.repo.no_codeowners": {
+    impact: "No CODEOWNERS file (optional check).",
+    risk: "No code-owner review rules possible.",
+    fix: "Add CODEOWNERS or disable the check.",
+  },
   "guardduty.detector.not_enabled": {
     impact: "GuardDuty disabled in region.",
     risk: "Threats go undetected automatically.",

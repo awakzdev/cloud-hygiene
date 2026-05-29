@@ -1,13 +1,12 @@
 /**
  * Per-check documentation: what the scanner evaluates and why the finding exists.
- * Overview uses these when present; remediation uses matching entries in FindingDrawer.
+ * Detailed overrides below; all other checks with remediationSummaries fall back automatically.
  */
+import { remediationSummaries } from "./remediationSummaries";
+
 export type CheckDocumentation = {
-  /** Plain-language description of the pass/fail rule */
   whatWeCheck: string;
-  /** Why this check exists / when it is expected to appear */
   whyShown: string;
-  /** Optional overrides for short overview cards (else remediationSummaries) */
   overview?: {
     context?: string;
     exposure?: string;
@@ -15,7 +14,8 @@ export type CheckDocumentation = {
   };
 };
 
-export const checkDocumentation: Record<string, CheckDocumentation> = {
+/** Hand-authored copy for checks that confuse users without extra context. */
+const checkDocumentationOverrides: Record<string, CheckDocumentation> = {
   "ec2.security_group.default_allows_traffic": {
     whatWeCheck:
       "In each VPC, AWS creates a security group named default. Vigil flags that group when it has any inbound or outbound rules. An empty default SG (no custom rules) is what we treat as passing.",
@@ -58,8 +58,42 @@ export const checkDocumentation: Record<string, CheckDocumentation> = {
         "Assign an MFA device on the user's Security credentials tab. Access keys are unchanged until you rotate them separately.",
     },
   },
+  "iam.policy.unattached": {
+    whatWeCheck:
+      "We list customer-managed IAM policies in your account and flag any with zero attachments to users, groups, or roles.",
+    whyShown:
+      "Optional hygiene only — off by default in Settings. Not mapped to SOC 2, CIS, or ISO controls. Useful for IAM cleanup, not benchmark pass/fail.",
+  },
+  "github.repo.no_codeowners": {
+    whatWeCheck:
+      "After GitHub sync, we look for a CODEOWNERS file in `/`, `.github/`, or `docs/`. If none exists, we flag the repository.",
+    whyShown:
+      "Optional hygiene only — off by default. SOC 2 change-management evidence uses branch protection and required PR reviews, not CODEOWNERS. Enable only if your policy requires code-owner review rules.",
+  },
 };
 
+function fromSummary(checkId: string): CheckDocumentation | null {
+  const s = remediationSummaries[checkId];
+  if (!s) return null;
+  return {
+    whatWeCheck: `Vigil opens a finding when: ${s.impact}`,
+    whyShown: `Risk if ignored: ${s.risk}`,
+    overview: {
+      context: s.impact,
+      exposure: s.risk,
+      fix: s.fix,
+    },
+  };
+}
+
 export function documentationForCheck(checkId: string): CheckDocumentation | null {
-  return checkDocumentation[checkId] ?? null;
+  return checkDocumentationOverrides[checkId] ?? fromSummary(checkId);
+}
+
+export function allDocumentedCheckIds(): string[] {
+  const ids = new Set<string>(Object.keys(checkDocumentationOverrides));
+  for (const id of Object.keys(remediationSummaries)) {
+    ids.add(id);
+  }
+  return [...ids].sort();
 }

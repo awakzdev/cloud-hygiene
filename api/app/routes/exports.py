@@ -224,6 +224,7 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
             "control_status.csv     - same as INDEX.csv",
             "timeline.csv           - sample audit-period events",
             "source_manifest.json   - collection metadata",
+            "check_evidence_classes.json - benchmark vs supporting vs hygiene per check",
             "controls/              - per-control evidence folders",
             "",
             "Download from the Vigil login page or connect your account for real evidence.",
@@ -302,6 +303,10 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
             },
         }
         zf.writestr("source_manifest.json", json.dumps(manifest, indent=2))
+
+        from app.services.check_evidence import all_evidence_classes
+
+        zf.writestr("check_evidence_classes.json", json.dumps(all_evidence_classes(), indent=2))
 
         # Per-control folders
         for ctrl_id, title, desc, ctrl_status, _, _ in sample_controls:

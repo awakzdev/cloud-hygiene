@@ -139,6 +139,23 @@ def evidence_coverage(
     return compute_evidence_coverage(db, acc.id, since, end, period)
 
 
+@router.get("/{account_id}/access-roster")
+def access_roster(
+    account_id: str,
+    as_of: str | None = Query(default=None, description="Roster as of date (YYYY-MM-DD); defaults to now"),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """IAM + Identity Center user roster as of the latest collection before the given date."""
+    from app.services.evidence_pack import _build_access_roster
+
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    end = parse_as_of(as_of) or datetime.now(timezone.utc)
+    return _build_access_roster(db, acc.id, end)
+
+
 @router.post("/{account_id}/verify", response_model=AccountOut)
 def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Session = Depends(get_db)):
     acc = db.get(AwsAccount, uuid.UUID(account_id))

@@ -1090,6 +1090,10 @@ def send_weekly_digests() -> dict:
                 for f in new_this_week
             ]
 
+            from app.services.digest_tokens import persist_digest_unsubscribe_token
+
+            unsubscribe_token = persist_digest_unsubscribe_token(db, org)
+
             digest_email = org_settings.get("notifications", {}).get("digest_email")
             if digest_email:
                 recipients = [digest_email]
@@ -1108,6 +1112,7 @@ def send_weekly_digests() -> dict:
                     open_findings=findings_dicts,
                     new_this_week=new_dicts,
                     resolved_this_week=resolved_count,
+                    unsubscribe_token=unsubscribe_token,
                 )
                 if ok:
                     sent += 1
