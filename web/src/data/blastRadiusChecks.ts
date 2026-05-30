@@ -1,83 +1,51 @@
-/** Check IDs that support the What If? blast-radius tab (must match GET /blast-radius handlers). */
-export const BLAST_RADIUS_CHECKS = new Set([
-  // IAM
-  "iam.root.has_access_keys",
-  "iam.root.no_mfa",
-  "iam.root.usage",
+/** Prefixes / IDs supported by GET /v1/accounts/{id}/blast-radius (keep in sync with accounts.py). */
+const BLAST_RADIUS_PREFIXES = [
+  "iam.role.",
+  "iam.access_key.",
+  "iam.user.",
+  "iam.root.",
+  "iam.policy.",
+  "ec2.security_group.",
+  "kms.key.",
+  "s3.bucket.",
+  "rds.instance.",
+  "dynamodb.table.",
+  "cloudtrail.trail.",
+  "ec2.ebs.snapshot",
+  "lambda.function.",
+  "elb.load_balancer.",
+  "github.",
+  "gitlab.",
+] as const;
+
+const BLAST_RADIUS_EXACT = new Set([
   "iam.account.password_policy_weak",
-  "iam.user.no_mfa",
-  "iam.user.inactive_90d",
-  "iam.user.direct_policy_attachment",
-  "iam.access_key.unused_90d",
-  "iam.access_key.no_rotation_90d",
-  "iam.access_key.multiple_active",
-  "iam.role.unassumed_90d",
-  "iam.role.wildcard_action",
   "iam.perm.granted_vs_used",
-  "iam.policy.wildcard_resource",
-  "iam.policy.unattached",
-  "iam.role.unused_services_90d",
-  "iam.role.trust_wildcard",
-  // S3 / KMS
   "s3.account.public_access_not_blocked",
-  "s3.bucket.public_access_not_blocked",
-  "s3.bucket.no_https_policy",
-  "s3.bucket.no_kms",
-  "s3.bucket.no_logging",
-  "s3.bucket.no_default_encryption",
-  "s3.bucket.no_mfa_delete",
-  "kms.key.no_rotation",
-  // CloudTrail / VPC / AWS services
-  "cloudtrail.trail.not_enabled",
-  "cloudtrail.trail.no_log_validation",
-  "cloudtrail.trail.no_kms",
-  "cloudtrail.trail.s3_bucket_public",
-  "cloudtrail.trail.no_cloudwatch_logs",
-  "cloudtrail.trail.s3_bucket_no_logging",
   "vpc.flow_logs.not_enabled",
   "guardduty.detector.not_enabled",
   "aws.config.not_enabled",
   "aws.securityhub.not_enabled",
   "aws.access_analyzer.not_enabled",
-  // EC2 / RDS
-  "ec2.security_group.unrestricted_ssh",
-  "ec2.security_group.unrestricted_rdp",
-  "ec2.security_group.default_allows_traffic",
   "ec2.instance.imdsv2_not_required",
   "ec2.ebs.volume_unencrypted",
   "ec2.ebs.encryption_not_default",
-  "ec2.ebs.snapshot_public",
-  "ec2.ebs.snapshot_unencrypted",
   "ec2.ami.public",
-  "rds.instance.no_encryption",
-  "rds.instance.publicly_accessible",
-  "rds.instance.no_automated_backup",
-  "rds.instance.no_deletion_protection",
-  "rds.instance.no_multi_az",
-  // Session-18 gap checks
   "acm.certificate.expiring",
-  "lambda.function.deprecated_runtime",
-  "lambda.function.no_dlq",
   "secretsmanager.secret.no_rotation",
   "ssm.parameter.plaintext_secret",
-  "elb.load_balancer.no_access_logs",
-  "elb.load_balancer.weak_tls_policy",
-  "dynamodb.table.no_encryption",
-  "dynamodb.table.no_pitr",
   "sns.topic.no_encryption",
   "sqs.queue.no_encryption",
-  // GitHub
-  "github.org.mfa_not_enforced",
-  "github.org.dormant_members",
-  "github.org.outside_collaborators",
-  "github.repo.no_branch_protection",
-  "github.repo.no_env_protection",
-  "github.repo.self_merge_allowed",
-  "github.repo.insufficient_reviews",
-  // GitLab
-  "gitlab.org.mfa_not_enforced",
-  "gitlab.org.dormant_members",
-  "gitlab.repo.no_branch_protection",
-  "gitlab.repo.self_merge_allowed",
-  "gitlab.repo.insufficient_reviews",
 ]);
+
+/** True when the finding drawer should show the What If tab for this check. */
+export function supportsBlastRadius(checkId: string): boolean {
+  if (BLAST_RADIUS_EXACT.has(checkId)) return true;
+  return BLAST_RADIUS_PREFIXES.some((p) => checkId.startsWith(p));
+}
+
+/**
+ * @deprecated Prefer supportsBlastRadius — static set drifts when new checks ship.
+ * Kept for imports that expect a Set; not exhaustive.
+ */
+export const BLAST_RADIUS_CHECKS = new Set<string>();

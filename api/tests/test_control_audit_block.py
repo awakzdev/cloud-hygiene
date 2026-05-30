@@ -42,7 +42,7 @@ def test_audit_block_always_states_read_only_ownership():
 
 def test_credential_control_calls_out_manual_disable_no_one_click():
     # CIS 1.11 maps to inactive users + unused keys — must spell out the manual, no-one-click boundary.
-    block = _block(["iam.user.inactive_90d", "iam.access_key.unused_90d"])
+    block = _block(["iam.user.credentials_unused_45d", "iam.access_key.unused_45d"])
     ro = block["remediation_ownership"]
     assert "CIS 1.11" in ro
     assert "manual step" in ro

@@ -136,11 +136,11 @@ NARRATIVES: dict[str, str] = {
         "so routine administration is performed with scoped IAM roles or users rather than root."
     ),
     "CIS 1.11": (
-        "Vigil flags IAM users with no console or API activity in the inactivity window and "
-        "access keys with no recorded use in 90+ days, supporting credential deactivation per "
-        "CIS guidance. Vigil is read-only: it reports these stale credentials and provides "
-        "console/CLI remediation guidance, but never disables or deletes them — that change is "
-        "performed in your own AWS account."
+        "Vigil flags IAM users with no console sign-in and access keys with no recorded API use "
+        "within the CIS 45-day threshold, supporting credential deactivation per benchmark "
+        "guidance. Detection is automated on each scan; Vigil is read-only and never disables or "
+        "deletes credentials — your team performs that change in AWS using the remediation "
+        "guidance on each finding."
     ),
     "CIS 1.13": (
         "Vigil flags IAM access keys older than the rotation threshold without rotation. Key "

@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  VigilAccountConnector — parent stack for Vigil in your AWS account. Core scanner (read-only role),
+  optional policy generation, optional remediation modules (scoped write). Stack name is not the IAM role name.
+
+Parameters:
+  VigilAccountPrincipal:
+    Type: String
+    Default: "arn:aws:iam::016266969060:role/VigilControlPlane"
+  ExternalId:
+    Type: String
+    NoEcho: true
+  RoleName:
+    Type: String
+    Default: VigilScannerRole
+    Description: Vigil connector IAM role name. Single RoleArn output for onboarding.
+  EnableAdvancedPolicyGeneration:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableSecurityGroupRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableS3Remediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamAccessKeyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamPolicyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableCloudTrailRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  CoreScannerTemplateURL:
+    Type: String
+    Default: "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-core-scanner.yaml"
+  RemediationTemplateURL:
+    Type: String
+    Default: "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-runner-ec2.yaml"
+  LambdaArtifactBucket:
+    Type: String
+    Default: amzn-s3-vigil
+    Description: S3 bucket for remediation_runner.zip (same account as public CFN templates; not the evidence vault).
+  LambdaArtifactKey:
+    Type: String
+    Default: lambda/remediation_runner.zip
+  VigilExecutionWebhookUrl:
+    Type: String
+    Default: ""
+
+Conditions:
+  RemediationSg: !Equals [!Ref EnableSecurityGroupRemediation, "Yes"]
+  RemediationS3: !Equals [!Ref EnableS3Remediation, "Yes"]
+  RemediationIamKeys: !Equals [!Ref EnableIamAccessKeyRemediation, "Yes"]
+  RemediationIamPolicy: !Equals [!Ref EnableIamPolicyRemediation, "Yes"]
+  RemediationCloudTrail: !Equals [!Ref EnableCloudTrailRemediation, "Yes"]
+  CreateRemediation:
+    Fn::Or:
+      - !Condition RemediationSg
+      - !Condition RemediationS3
+      - !Condition RemediationIamKeys
+      - !Condition RemediationIamPolicy
+      - !Condition RemediationCloudTrail
+
+Resources:
+  CoreScannerStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Ref CoreScannerTemplateURL
+      Parameters:
+        VigilAccountPrincipal: !Ref VigilAccountPrincipal
+        ExternalId: !Ref ExternalId
+        RoleName: !Ref RoleName
+        EnableAdvancedPolicyGeneration: !Ref EnableAdvancedPolicyGeneration
+
+  RemediationStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateRemediation
+    Properties:
+      TemplateURL: !Ref RemediationTemplateURL
+      Parameters:
+        LambdaArtifactBucket: !Ref LambdaArtifactBucket
+        LambdaArtifactKey: !Ref LambdaArtifactKey
+        VigilExecutionWebhookUrl: !Ref VigilExecutionWebhookUrl
+        EnableSecurityGroupRemediation: !Ref EnableSecurityGroupRemediation
+        EnableS3Remediation: !Ref EnableS3Remediation
+        EnableIamAccessKeyRemediation: !Ref EnableIamAccessKeyRemediation
+        EnableIamPolicyRemediation: !Ref EnableIamPolicyRemediation
+        EnableCloudTrailRemediation: !Ref EnableCloudTrailRemediation
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt CoreScannerStack.Outputs.RoleArn
+  ExternalId:
+    Value: !Ref ExternalId
+  RemediationRoleArn:
+    Condition: CreateRemediation
+    Value: !GetAtt RemediationStack.Outputs.RemediationRoleArn

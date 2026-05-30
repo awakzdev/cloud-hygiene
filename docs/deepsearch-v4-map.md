@@ -1,6 +1,7 @@
 # Deepsearch v4 — codebase map
 
-Source: `deepsearch/v4.txt` (architecture review, 2026-05). Use this to track what shipped vs deferred.
+Source: `deepsearch/v4.txt` (architecture review, 2026-05). Use this to track what shipped vs deferred.  
+Read-only / policy-gen posture: [deepsearch-v6-map.md](./deepsearch-v6-map.md).
 
 ## Executive alignment (v4 → Vigil spine)
 

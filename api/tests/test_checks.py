@@ -116,6 +116,62 @@ class TestAccessKeyUnused:
         assert drafts == []
 
 
+# --- iam.user.credentials_unused_45d ---
+
+
+class TestCredentialsUnused45d:
+    def test_flags_console_user_inactive_50d(self, mock_db):
+        from app.checks import iam_user_credentials_unused_45d
+
+        acc_id = uuid.uuid4()
+        u = _user(account_id=acc_id)
+        u.password_last_used = datetime.now(timezone.utc) - timedelta(days=50)
+        mock_db.scalars.return_value.all.return_value = [u]
+        drafts = iam_user_credentials_unused_45d.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.user.credentials_unused_45d"
+
+    def test_skips_recent_sign_in(self, mock_db):
+        from app.checks import iam_user_credentials_unused_45d
+
+        acc_id = uuid.uuid4()
+        u = _user(account_id=acc_id)
+        u.password_last_used = datetime.now(timezone.utc) - timedelta(days=30)
+        mock_db.scalars.return_value.all.return_value = [u]
+        drafts = iam_user_credentials_unused_45d.run(mock_db, acc_id)
+        assert drafts == []
+
+
+# --- iam.access_key.unused_45d ---
+
+
+class TestAccessKeyUnused45d:
+    def test_flags_key_last_used_over_45d(self, mock_db):
+        from app.checks import iam_access_key_unused_45d
+
+        acc_id = uuid.uuid4()
+        stale_key = _key(
+            account_id=acc_id,
+            last_used=datetime.now(timezone.utc) - timedelta(days=50),
+        )
+        mock_db.scalars.return_value.all.return_value = [stale_key]
+        drafts = iam_access_key_unused_45d.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.access_key.unused_45d"
+
+    def test_skips_key_last_used_within_45d(self, mock_db):
+        from app.checks import iam_access_key_unused_45d
+
+        acc_id = uuid.uuid4()
+        fresh_key = _key(
+            account_id=acc_id,
+            last_used=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+        mock_db.scalars.return_value.all.return_value = [fresh_key]
+        drafts = iam_access_key_unused_45d.run(mock_db, acc_id)
+        assert drafts == []
+
+
 # --- iam.role.unassumed_90d ---
 
 class TestRoleUnassumed:

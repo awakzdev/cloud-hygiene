@@ -5,6 +5,8 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from app.services.check_controls import resolve_check_id_for_controls
+
 _MAPPINGS_PATH = Path(__file__).parent.parent.parent / "data" / "control_mappings.json"
 
 FRAMEWORK_LABELS: dict[str, str] = {
@@ -26,7 +28,8 @@ def check_framework_map() -> dict[str, list[str]]:
 
 
 def frameworks_for_check(check_id: str) -> list[str]:
-    return check_framework_map().get(check_id, [])
+    mapped = resolve_check_id_for_controls(check_id)
+    return check_framework_map().get(mapped, [])
 
 
 def framework_catalog() -> list[dict[str, str]]:

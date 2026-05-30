@@ -23,6 +23,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    get_settings.cache_clear()
     # Seed compliance controls on every startup (idempotent upsert)
     try:
         from app.services.seed_controls import seed_controls

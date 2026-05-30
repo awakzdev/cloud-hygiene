@@ -149,7 +149,7 @@ export function IaCRemediationSection({
             <span className="font-semibold text-zinc-800">
               {versionControlPrLabel(providers)}
             </span>{" "}
-            automation is paused for this check — copy Terraform below or use EventBridge.
+            automation is paused for this check — copy Terraform below or use Remediation → Automation.
           </p>
         )}
         {showPrReady && data.pr_automation?.repos?.[0] && (

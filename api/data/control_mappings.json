@@ -6,9 +6,9 @@
     "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets to protect them from security events to meet the entity's objectives.",
     "guidance": "Evidence: IAM user inventory, role inventory, access key list with last-used dates. All principals should be accounted for and actively used.",
     "checks": [
-      "iam.user.inactive_90d",
+      "iam.user.credentials_unused_45d",
       "iam.role.unassumed_90d",
-      "iam.access_key.unused_90d",
+      "iam.access_key.unused_45d",
       "iam.access_inventory_gap",
       "github.org.dormant_members",
       "gitlab.org.dormant_members"
@@ -38,8 +38,8 @@
     "description": "The entity removes access to protected information assets when appropriate (e.g., the individual is no longer associated with the entity).",
     "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold. Root account not used for routine operations.",
     "checks": [
-      "iam.user.inactive_90d",
-      "iam.access_key.unused_90d",
+      "iam.user.credentials_unused_45d",
+      "iam.access_key.unused_45d",
       "iam.role.unassumed_90d",
       "iam.user.direct_policy_attachment",
       "iam.role.unused_services_90d",
@@ -238,11 +238,11 @@
     "framework": "cis_aws_l1",
     "control_id": "1.11",
     "title": "Ensure credentials unused for 45 days or greater are disabled",
-    "description": "AWS IAM users can access AWS resources using different types of credentials. It is recommended that all credentials that have been unused in 90 or more days be deactivated or removed.",
-    "guidance": "Disable or remove IAM users with no console activity in 90+ days. Deactivate access keys unused for 90+ days, then delete after confirming no dependency.",
+    "description": "AWS IAM users can access AWS resources using different types of credentials. CIS requires that credentials unused for 45 days or greater are disabled.",
+    "guidance": "Disable or remove IAM users with no console activity in 45+ days. Deactivate access keys unused for 45+ days, then delete after confirming no dependency. Vigil detects against the CIS 45-day threshold; deactivation is performed in your AWS account.",
     "checks": [
-      "iam.user.inactive_90d",
-      "iam.access_key.unused_90d"
+      "iam.user.credentials_unused_45d",
+      "iam.access_key.unused_45d"
     ]
   },
   {
@@ -384,8 +384,8 @@
     "description": "Implement a formal user registration and de-registration process for granting and revoking access to all systems and services.",
     "guidance": "Evidence: IAM users are active and accounted for. Inactive users beyond 90 days are deprovisioned. Access keys are deactivated when no longer needed.",
     "checks": [
-      "iam.user.inactive_90d",
-      "iam.access_key.unused_90d"
+      "iam.user.credentials_unused_45d",
+      "iam.access_key.unused_45d"
     ]
   },
   {

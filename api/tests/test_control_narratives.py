@@ -8,7 +8,7 @@ _MAPPINGS_PATH = Path(__file__).resolve().parents[1] / "data" / "control_mapping
 
 
 def test_narrative_detail_includes_short_and_refs():
-    detail = narrative_detail_for("soc2", "CC6.1", ["iam.user.no_mfa", "iam.user.inactive_90d"])
+    detail = narrative_detail_for("soc2", "CC6.1", ["iam.user.no_mfa", "iam.user.credentials_unused_45d"])
     assert detail["short_answer"]
     assert detail["long_answer"] == narrative_for("soc2", "CC6.1")
     assert len(detail["evidence_refs"]) >= 2

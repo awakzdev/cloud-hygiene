@@ -16,6 +16,11 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     risk: "Stale accounts hide compromise.",
     fix: "Disable console access or delete the user.",
   },
+  "iam.user.credentials_unused_45d": {
+    impact: "Inactive for 45+ days",
+    risk: "Console user with no recent sign-in",
+    fix: "Disable console access or delete the user",
+  },
   "iam.user.direct_policy_attachment": {
     impact: "Policies attached directly to the user.",
     risk: "Harder to audit and revoke at scale.",
@@ -25,6 +30,11 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     impact: "Access key unused 90+ days.",
     risk: "Long-lived credential with no owner.",
     fix: "Deactivate, verify, then delete the key.",
+  },
+  "iam.access_key.unused_45d": {
+    impact: "Inactive for 45+ days",
+    risk: "Long-lived credential with no recent use",
+    fix: "Deactivate, verify, then delete the key",
   },
   "iam.access_key.no_rotation_90d": {
     impact: "Access key older than rotation threshold.",

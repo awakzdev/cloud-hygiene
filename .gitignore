@@ -15,6 +15,9 @@ build/
 .vscode/
 celerybeat-schedule
 celerybeat-schedule.*
-openclaw-summary.txt
+
+
+
 information.md
 deepsearch/
+todo.txt

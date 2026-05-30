@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EvidenceCoverage } from "../lib/evidenceCoverage";
+import {
+  exportAsOfSectionLabel,
+  exportAsOfShowsType2Hint,
+  exportScopeSectionLabel,
+  frameworkEvidenceUi,
+  type EvidenceTone,
+  type FrameworkEvidenceUi,
+} from "../lib/frameworkEvidenceCoverage";
 
 const WINDOW_OPTIONS = [
   { value: "last_scan" as const, label: "Last scan" },
@@ -9,105 +17,8 @@ const WINDOW_OPTIONS = [
   { value: 365 as const, label: "365d" },
 ];
 
-type ReadinessTone = "ready" | "partial" | "limited" | "insufficient" | "snapshot";
-
-type Readiness = {
-  label: string;
-  tone: ReadinessTone;
-  pct: number;
-  days: number;
-  totalDays: number;
-  guidanceLine: string | null;
-  snapshotDetail: string | null;
-};
-
-function collectionStartedRecently(cov: EvidenceCoverage): boolean {
-  if (!cov.coverage_start || !cov.period_start) return false;
-  const startMs = new Date(cov.coverage_start).getTime();
-  const periodMs = new Date(cov.period_start).getTime();
-  return startMs - periodMs > 2 * 86_400_000;
-}
-
-function auditReadiness(
-  cov: EvidenceCoverage | undefined,
-  periodKey: string | number,
-): Readiness {
-  if (periodKey === "last_scan") {
-    return {
-      label: "Point-in-time snapshot",
-      tone: "snapshot",
-      pct: 100,
-      days: 1,
-      totalDays: 1,
-      guidanceLine: null,
-      snapshotDetail: "Exports posture from your latest successful scan.",
-    };
-  }
-  if (!cov) {
-    return {
-      label: "Audit readiness: Unknown",
-      tone: "limited",
-      pct: 0,
-      days: 0,
-      totalDays: 90,
-      guidanceLine: "Run a scan to assess evidence coverage.",
-      snapshotDetail: null,
-    };
-  }
-
-  const days = cov.days_with_data ?? 0;
-  const total = cov.days_requested ?? 90;
-  const pct = total > 0 ? Math.round((days / total) * 100) : 0;
-  const ratio = total > 0 ? days / total : 0;
-  const recent = collectionStartedRecently(cov);
-  const recentLine = `Exports generated today may not satisfy a full ${total}-day audit period.`;
-
-  if (ratio >= 0.85) {
-    return {
-      label: "Audit readiness: High",
-      tone: "ready",
-      pct,
-      days,
-      totalDays: total,
-      guidanceLine: null,
-      snapshotDetail: null,
-    };
-  }
-  if (ratio >= 0.35) {
-    return {
-      label: "Partial audit evidence",
-      tone: "partial",
-      pct,
-      days,
-      totalDays: total,
-      guidanceLine: recent ? recentLine : "Partial audit coverage — additional scan history recommended.",
-      snapshotDetail: null,
-    };
-  }
-  if (ratio >= 0.12) {
-    return {
-      label: "Limited audit coverage",
-      tone: "limited",
-      pct,
-      days,
-      totalDays: total,
-      guidanceLine: recent ? recentLine : "Limited audit coverage available.",
-      snapshotDetail: null,
-    };
-  }
-  return {
-    label: "Audit readiness: Low",
-    tone: "insufficient",
-    pct,
-    days,
-    totalDays: total,
-    guidanceLine: recent ? recentLine : "Limited audit coverage available.",
-    snapshotDetail: null,
-  };
-}
-
 const readinessStyles: Record<
-  ReadinessTone,
+  EvidenceTone,
   { badge: string; dot: string; bar: string; headline: string }
 > = {
   ready: {
@@ -140,7 +51,73 @@ const readinessStyles: Record<
     bar: "bg-indigo-500",
     headline: "text-indigo-900",
   },
+  neutral: {
+    badge: "bg-zinc-100 text-zinc-800 ring-zinc-200/80",
+    dot: "bg-zinc-500",
+    bar: "bg-zinc-500",
+    headline: "text-zinc-900",
+  },
 };
+
+function EvidenceCoverageSection({
+  ui,
+  loading,
+}: {
+  ui: FrameworkEvidenceUi;
+  loading?: boolean;
+}) {
+  const styles = readinessStyles[ui.tone];
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles.badge}`}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${styles.dot}`} aria-hidden />
+          {ui.badgeLabel}
+        </span>
+        {loading && <span className="text-[11px] text-zinc-400">Updating…</span>}
+      </div>
+
+      {ui.headline && (
+        <p className={`mt-3 text-sm font-semibold tabular-nums ${styles.headline}`}>{ui.headline}</p>
+      )}
+
+      {ui.showProgressBar && (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/90">
+          <div
+            className={`h-full rounded-full transition-all duration-300 ${ui.progressPct > 0 ? styles.bar : "bg-transparent"}`}
+            style={{ width: `${Math.min(100, Math.max(0, ui.progressPct))}%` }}
+            role="progressbar"
+            aria-valuenow={ui.progressPct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={ui.progressAriaLabel ?? "Days with scan evidence"}
+          />
+        </div>
+      )}
+
+      {ui.detailLine && (
+        <p className="mt-2.5 text-sm leading-relaxed text-zinc-600">{ui.detailLine}</p>
+      )}
+
+      {ui.guidanceLine && (
+        <div
+          className="mt-2.5 flex items-start gap-2 rounded-md border border-amber-200/60 bg-amber-50/90 px-2.5 py-2 text-xs font-medium leading-snug text-amber-950"
+          role="note"
+        >
+          <span
+            className="mt-px flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[9px] font-semibold leading-none text-amber-800 ring-1 ring-amber-200/70"
+            aria-hidden
+          >
+            i
+          </span>
+          <span>{ui.guidanceLine}</span>
+        </div>
+      )}
+    </>
+  );
+}
 
 function CompactStatsRow({
   items,
@@ -436,6 +413,7 @@ function AuditAsOfPicker({
 }
 
 export type EvidencePackExportPanelProps = {
+  frameworkId: string;
   frameworkLabel: string;
   periodKey: string | number;
   onPeriodChange: (key: string | number) => void;
@@ -446,11 +424,13 @@ export type EvidencePackExportPanelProps = {
   controlsEvaluated: number;
   openFindings: number;
   passingCount: number;
+  lastScanLabel?: string | null;
   downloading: boolean;
   onDownload: () => void;
 };
 
 export function EvidencePackExportPanel({
+  frameworkId,
   frameworkLabel,
   periodKey,
   onPeriodChange,
@@ -461,12 +441,18 @@ export function EvidencePackExportPanel({
   controlsEvaluated,
   openFindings,
   passingCount,
+  lastScanLabel,
   downloading,
   onDownload,
 }: EvidencePackExportPanelProps) {
-  const readiness = auditReadiness(coverage, periodKey);
-  const styles = readinessStyles[readiness.tone];
+  const evidenceUi = frameworkEvidenceUi(frameworkId, coverage, periodKey, {
+    controlsEvaluated,
+    lastScanLabel,
+  });
   const showPeriodControls = periodKey !== "last_scan";
+  const scopeLabel = exportScopeSectionLabel(frameworkId);
+  const asOfLabel = exportAsOfSectionLabel(frameworkId);
+  const showType2AsOfHint = exportAsOfShowsType2Hint(frameworkId);
   const maxIso = toIsoDate(new Date());
 
   return (
@@ -476,40 +462,7 @@ export function EvidencePackExportPanel({
       </header>
 
       <section className="mt-3 rounded-xl border border-zinc-200/80 bg-zinc-50/50 p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${styles.badge}`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${styles.dot}`} aria-hidden />
-            {readiness.label}
-          </span>
-          {coverageLoading && <span className="text-[11px] text-zinc-400">Updating…</span>}
-        </div>
-
-        {showPeriodControls ? (
-          <>
-            <p className={`mt-3 text-sm font-semibold tabular-nums ${styles.headline}`}>
-              {readiness.days} of {readiness.totalDays} required days collected
-            </p>
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/90">
-              <div
-                className={`h-full rounded-full transition-all duration-300 ${readiness.pct > 0 ? styles.bar : "bg-transparent"}`}
-                style={{ width: `${Math.min(100, Math.max(0, readiness.pct))}%` }}
-                role="progressbar"
-                aria-valuenow={readiness.pct}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label="Days with scan evidence"
-              />
-            </div>
-          </>
-        ) : (
-          <p className="mt-2.5 text-sm leading-relaxed text-zinc-700">{readiness.snapshotDetail}</p>
-        )}
-
-        {readiness.guidanceLine && (
-          <p className="mt-2.5 text-xs leading-relaxed text-amber-900/90">{readiness.guidanceLine}</p>
-        )}
+        <EvidenceCoverageSection ui={evidenceUi} loading={coverageLoading} />
       </section>
 
       <section className="mt-4 border-t border-zinc-100 pt-3">
@@ -524,11 +477,11 @@ export function EvidencePackExportPanel({
 
       <section className="mt-4 space-y-3">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Audit period</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
           <div
             className="mt-2 grid grid-cols-5 gap-1 rounded-lg border border-zinc-200/80 bg-zinc-100/60 p-0.5"
             role="group"
-            aria-label="Audit period"
+            aria-label={scopeLabel}
           >
             {WINDOW_OPTIONS.map((opt) => {
               const active = periodKey === opt.value;
@@ -553,7 +506,12 @@ export function EvidencePackExportPanel({
         {showPeriodControls && (
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-              As of date <span className="ml-1 normal-case tracking-normal text-zinc-400">· end of Type II sampling</span>
+              {asOfLabel}
+              {showType2AsOfHint && (
+                <span className="ml-1 normal-case tracking-normal text-zinc-400">
+                  · end of Type II sampling
+                </span>
+              )}
             </p>
             <div className="mt-2">
               <AuditAsOfPicker value={asOf} onChange={onAsOfChange} maxIso={maxIso} />

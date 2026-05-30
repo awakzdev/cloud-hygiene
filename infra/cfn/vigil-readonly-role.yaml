@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
+  LEGACY monolithic template — prefer vigil-stack.yaml (parent with conditional nested stacks).
   Vigil read-only IAM role for compliance scanning. Enumerates AWS config
   across IAM, account contacts (CIS 1.1/1.2), IAM server certificates (CIS 1.18),
   storage, compute, networking, and security services. The base role is strictly
@@ -111,14 +112,11 @@ Resources:
                   - iam:ListPolicies
                 Resource: "*"
 
-              # Read access-level: generates and reads an IAM access report — no resource
-              # mutation. Kept in the base role because it powers core unused-access checks
-              # (unused services 90d, granted-vs-used) and the least-privilege generator. Only
-              # the Access Analyzer policy-generation actions (Write level) are gated to advanced.
-              - Sid: IamServiceLastAccessed
+              # Read existing IAM access reports only. Starting a new report
+              # (GenerateServiceLastAccessedDetails) is in the optional advanced role.
+              - Sid: IamServiceLastAccessedRead
                 Effect: Allow
                 Action:
-                  - iam:GenerateServiceLastAccessedDetails
                   - iam:GetServiceLastAccessedDetails
                 Resource: "*"
 
@@ -322,10 +320,16 @@ Resources:
               StringEquals:
                 sts:ExternalId: !Ref ExternalId
       Policies:
-        - PolicyName: VigilAccessAnalyzerPolicyGeneration
+        - PolicyName: VigilAdvancedPolicyGeneration
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Sid: IamServiceLastAccessedGenerate
+                Effect: Allow
+                Action:
+                  - iam:GenerateServiceLastAccessedDetails
+                  - iam:GetServiceLastAccessedDetails
+                Resource: "*"
               - Sid: AccessAnalyzerPolicyGeneration
                 Effect: Allow
                 Action:

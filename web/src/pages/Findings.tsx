@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
+import ConnectAwsEmptyState from "../components/ConnectAwsEmptyState";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
@@ -11,6 +12,7 @@ import { FRAMEWORKS, frameworkLabel, type FrameworkId } from "../data/frameworks
 import { remediationSummaryFor } from "../data/remediationSummaries";
 import { affectedResourcesPreview, daysAgo, severityLabel } from "../lib/findingDisplay";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
+import { isAccountConnected } from "../lib/accountConnection";
 
 type Finding = {
   id: string;
@@ -293,7 +295,7 @@ function MetricStrip({
             key={seg.key}
             type="button"
             onClick={() => onSelect(seg.key)}
-            className={`inline-flex flex-col items-start rounded-lg px-2 py-1.5 transition sm:px-2.5 sm:py-2 ${tone} ${isActive ? "ring-1" : ""}`}
+            className={`inline-flex flex-col items-center rounded-lg px-2 py-1.5 transition sm:px-2.5 sm:py-2 ${tone} ${isActive ? "ring-1" : ""}`}
           >
             <span className={`tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
               {seg.value}
@@ -636,7 +638,7 @@ export default function Findings() {
     refetchInterval: verifying ? 3000 : false,
   });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
-  const connectedAccount = accounts.data?.find((a) => a.status === "connected");
+  const connectedAccount = accounts.data?.find((a) => isAccountConnected(a));
   const connectedId = connectedAccount?.id;
 
   const {
@@ -778,34 +780,7 @@ export default function Findings() {
   const hasUrgent = chTotal > 0;
 
   if (!accounts.isLoading && accounts.data && !connectedId) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center px-8 py-20 text-center">
-        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-200 bg-white shadow-sm">
-          <svg className="h-7 w-7 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-          </svg>
-        </div>
-        <h2 className="mb-2 text-lg font-semibold text-zinc-900">No AWS account connected</h2>
-        <p className="mb-6 max-w-sm text-sm text-zinc-500 leading-relaxed">
-          Connect your AWS account to start scanning for security findings and generate compliance evidence.
-        </p>
-        <div className="mb-8 flex flex-col gap-3 text-left max-w-sm w-full">
-          {[
-            { step: "1", text: "Go to AWS Accounts and add your account" },
-            { step: "2", text: "Launch the pre-filled CloudFormation stack" },
-            { step: "3", text: "Paste the role ARN and verify — scan starts automatically" },
-          ].map(({ step, text }) => (
-            <div key={step} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-3">
-              <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{step}</span>
-              <span className="text-sm text-zinc-700">{text}</span>
-            </div>
-          ))}
-        </div>
-        <a href="/accounts" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
-          Connect AWS account
-        </a>
-      </div>
-    );
+    return <ConnectAwsEmptyState />;
   }
 
   return (

@@ -17,6 +17,7 @@ Design rules (from the IAM accuracy directive):
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 
@@ -27,25 +28,35 @@ CONFIDENCE_LOW = "low"        # service-level evidence only / AA off — broades
 
 
 _ROLE_ARN_RE = re.compile(r"^(arn:aws:iam::\d+:role/)(.+)$")
-_ADVANCED_SUFFIX = "AdvancedPolicyGen"
+_LEGACY_ADVANCED_SUFFIX = "AdvancedPolicyGen"
+_POLICY_GEN_ROLE_NAME = "VigilPolicyGenerationRole"
+_SCANNER_ROLE_NAME = "VigilScannerRole"
+_LEGACY_SCANNER_ROLE_NAME = "VigilReadOnlyScannerRole"
+# Split-stack deploys (before unified connector role).
+_LEGACY_SCANNER_TO_POLICY_GEN: dict[str, str] = {
+    _LEGACY_SCANNER_ROLE_NAME: _POLICY_GEN_ROLE_NAME,
+}
 
 
 def derive_advanced_role_arn(base_role_arn: str | None) -> str | None:
-    """Map the base read-only role ARN to the optional advanced policy-gen role ARN.
+    """Role ARN used for IAM Access Analyzer policy-generation API calls.
 
-    The CFN names the advanced role ``${RoleName}AdvancedPolicyGen`` and trusts the same
-    principal + ExternalId. Returns None when the ARN is missing or not an IAM role ARN.
+    Unified connector (VigilScannerRole): same ARN as the connected role — policy gen is inline.
+    Legacy split-stack: map VigilReadOnlyScannerRole -> VigilPolicyGenerationRole.
     """
     if not base_role_arn:
         return None
-    m = _ROLE_ARN_RE.match(base_role_arn.strip())
+    arn = base_role_arn.strip()
+    m = _ROLE_ARN_RE.match(arn)
     if not m:
         return None
     prefix, name = m.group(1), m.group(2)
-    # Strip any IAM path (role/path/Name -> Name lives in the last segment for naming).
-    if name.endswith(_ADVANCED_SUFFIX):
-        return base_role_arn.strip()
-    return f"{prefix}{name}{_ADVANCED_SUFFIX}"
+    if name in (_SCANNER_ROLE_NAME, _POLICY_GEN_ROLE_NAME) or name.endswith(_LEGACY_ADVANCED_SUFFIX):
+        return arn
+    mapped = _LEGACY_SCANNER_TO_POLICY_GEN.get(name)
+    if mapped:
+        return f"{prefix}{mapped}"
+    return arn
 
 
 def parse_generated_policy(get_generated_policy_response: dict) -> list[dict]:
@@ -152,6 +163,48 @@ def fetch_latest_generated_policy(client, principal_arn: str) -> dict | None:
         "completed_on": job.get("completedOn"),
         "statements": statements,
     }
+
+
+def _resource_is_wildcard(resource) -> bool:
+    if isinstance(resource, str):
+        return resource == "*"
+    if isinstance(resource, list):
+        return not resource or all(r == "*" for r in resource)
+    return False
+
+
+def _non_wildcard_aa_resources(aa_statements: list[dict]) -> list[str]:
+    seen: dict[str, str] = {}
+    for st in aa_statements:
+        for r in st.get("resources", []):
+            if isinstance(r, str) and r and r != "*":
+                seen.setdefault(r, r)
+    return sorted(seen.values())
+
+
+def apply_aa_resources_to_policy_doc(doc: dict, aa_statements: list[dict]) -> dict:
+    """Replace wildcard Resource on Allow statements with AA CloudTrail-derived ARNs."""
+    aa_resources = _non_wildcard_aa_resources(aa_statements)
+    if not aa_resources:
+        return doc
+
+    doc = copy.deepcopy(doc)
+    stmts = doc.get("Statement", [])
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+
+    new_stmts = []
+    for stmt in stmts:
+        if stmt.get("Effect", "Allow") != "Allow":
+            new_stmts.append(stmt)
+            continue
+        if _resource_is_wildcard(stmt.get("Resource", "*")):
+            stmt = copy.deepcopy(stmt)
+            stmt["Resource"] = aa_resources if len(aa_resources) > 1 else aa_resources[0]
+        new_stmts.append(stmt)
+
+    doc["Statement"] = new_stmts
+    return doc
 
 
 def confidence_for(*, aa_resource_data: bool, has_action_data: bool) -> str:

@@ -75,11 +75,16 @@ AWS in dev: mount `~/.aws` (already in `compose.yml`) and set `AWS_PROFILE` in `
 ## Onboarding a customer account (AWS)
 
 1. Sign up — email/password or GitHub/Google SSO.
-2. **AWS Accounts** → name it → **Create**.
-3. Click **Launch CloudFormation stack** — template URL, ExternalId, and trust principal are pre-filled.
-4. Deploy the stack in the customer's AWS console → copy `RoleArn` output.
+2. **AWS Accounts** → choose connection mode:
+   - **Core Scanner** (required, read-only) — CIS / SOC 2 / ISO checks and evidence packs.
+   - **Advanced IAM policy generation** (optional) — adds `iam:GenerateServiceLastAccessedDetails` and Access Analyzer policy-generation actions to a separate CFN role. Starts AWS analysis jobs only; does not modify resources.
+   - **Remediation automation** (optional, second stack) — customer-owned Lambda + EventBridge for approved fixes (e.g. security groups). Not required for compliance scanning.
+3. **Continue to deploy** → **Launch CloudFormation stack** — template URL, ExternalId, trust principal, and optional parameters are pre-filled from your selections.
+4. Deploy the stack in the customer's AWS console → copy `RoleArn` output (and `AdvancedPolicyGenRoleArn` if enabled).
 5. Paste ARN → **Verify**. Vigil calls `sts:AssumeRole` to confirm trust + ExternalId.
 6. First scan triggers automatically. Findings appear in ~1–3 min.
+
+**IaC scanning** (Terraform on GitHub/GitLab pull requests) is separate: connect GitHub under Integrations. It does not use EventBridge or any AWS stack from the scanner CFN.
 
 ---
 

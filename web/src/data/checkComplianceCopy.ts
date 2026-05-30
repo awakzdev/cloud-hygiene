@@ -1,6 +1,18 @@
 /**
- * Auditor-facing evidence guidance + audit narrative per check (drawer Compliance tab).
+ * Auditor-facing evidence guidance + detection narrative per check (drawer Compliance tab).
  * Kept separate from terse remediationSummaries impact/risk lines.
+ *
+ * Evidence guidance style (first string passed to copy(); UI label "Guidance"):
+ * Single sentence: "Verify that …" — what the control checks (no manual auditor steps).
+ * Strings may still use an "Evidence:" prefix; copy() strips it (UI adds "Guidance:").
+ *
+ * Detection Logic style (second string; UI badge "Detection Logic"):
+ * Plain, factual: what data Vigil reads and what condition triggers the finding.
+ * Present tense, third person: "Vigil reads…", "Vigil flags…", "Vigil compares…".
+ * No auditor instructions, screenshots, or scary hypotheticals unless the check is
+ * explicitly about compromise or active threat findings.
+ * Do not duplicate Guidance ("Verify that…"); Guidance is what to verify, Detection Logic is how Vigil flags it.
+ * Prefer 1–2 sentences.
  */
 import { remediationSummaries, type RemediationSummary } from "./remediationSummaries";
 
@@ -13,7 +25,7 @@ function copy(
   evidenceGuidance: string,
   auditNarrative: string,
 ): CheckComplianceCopy {
-  // UI labels this block "Evidence guidance:" — drop duplicate prefix from copy strings.
+  // UI labels this block "Guidance:" — drop duplicate prefix from copy strings.
   const guidance = evidenceGuidance.replace(/^Evidence:\s*/i, "");
   return { evidenceGuidance: guidance, auditNarrative };
 }
@@ -22,23 +34,28 @@ function iamAccessKey(checkId: string, _s: RemediationSummary): CheckComplianceC
   switch (checkId) {
     case "iam.access_key.unused_90d":
       return copy(
-        "Evidence: IAM credential report or console screenshot for the owning user — access key ID, status (Active/Inactive/Deleted), and Last used date (blank or older than 90 days). Include change ticket with owner sign-off after deactivation or deletion.",
-        "Vigil reads each access key's last-used timestamp from IAM. Keys with no API activity in the lookback window are flagged so auditors can confirm dormant programmatic credentials are removed — leaked keys should not remain valid for months without use.",
+        "Verify that IAM access keys with no API activity in the last 90 days are deactivated or removed.",
+        "Vigil reads IAM GetAccessKeyLastUsed for each active key. Keys with no recorded API use within the 90-day lookback are flagged as unused.",
+      );
+    case "iam.access_key.unused_45d":
+      return copy(
+        "Verify that IAM access keys with no API activity in the last 45 days are deactivated or removed.",
+        "Vigil reads IAM GetAccessKeyLastUsed for each active key. Keys with no recorded API use within the 45-day lookback are flagged as unused.",
       );
     case "iam.access_key.no_rotation_90d":
       return copy(
-        "Evidence: Key creation date, rotation date (if any), and post-rotation status showing only the new key is active. Retain deployment/CI ticket proving workloads were updated before the old key was retired.",
-        "Vigil flags access keys that exceed your rotation-age threshold. SOC 2 and CIS expect periodic rotation of long-lived programmatic credentials so compromise of an old key has a bounded exposure window.",
+        "Verify that IAM access keys are rotated before exceeding your configured age threshold.",
+        "Vigil reads each access key's create date from IAM. Keys older than the configured rotation-age threshold are flagged.",
       );
     case "iam.access_key.multiple_active":
       return copy(
-        "Evidence: Screenshot or export listing both active key IDs on the same IAM user, plus documentation of which key each workload uses. After cleanup, only one Active key (or none) should remain.",
-        "AWS allows two active keys per user for rotation, but two long-lived active keys often means unclear ownership. Vigil flags multiple Active keys so auditors can verify each key has a named owner and the spare is removed.",
+        "Verify that each IAM user has at most one active access key unless a rotation is in progress.",
+        "Vigil lists active access keys per IAM user. Users with more than one key in Active status are flagged.",
       );
     default:
       return copy(
-        "Evidence: IAM access key inventory for the user — key IDs, status, and last-used timestamps.",
-        "Vigil evaluates IAM programmatic credential hygiene on each scan using AWS last-used metadata.",
+        "Verify that IAM programmatic credentials meet your access-key hygiene policy.",
+        "Vigil evaluates IAM access keys using AWS last-used timestamps and key status on each scan.",
       );
   }
 }
@@ -47,23 +64,28 @@ function iamUser(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
   switch (checkId) {
     case "iam.user.no_mfa":
       return copy(
-        "Evidence: IAM user Security credentials page showing MFA device assigned (virtual or hardware). Screenshot for each console-capable user in scope.",
-        "Vigil flags IAM users with console access enabled but no registered MFA device. This check is about second-factor enforcement for interactive sign-in — not access key rotation or user deletion.",
+        "Verify that console-capable IAM users have an MFA device assigned.",
+        "Vigil lists IAM users with console password enabled and checks for registered MFA devices. Users without MFA are flagged.",
       );
     case "iam.user.inactive_90d":
       return copy(
-        "Evidence: User list with last activity date, plus record of disable/delete or access review approval to keep the account. Show password/console login disabled if retained for audit.",
-        "Vigil marks IAM users with no sign-in or API activity in the inactivity window. Auditors expect stale human identities to be disabled or removed so compromised dormant accounts cannot be reactivated unnoticed.",
+        "Verify that IAM users with no sign-in or API activity in the inactivity window are disabled or removed.",
+        "Vigil reads sign-in and API last-activity timestamps per IAM user. Users with no activity within the inactivity window are flagged.",
+      );
+    case "iam.user.credentials_unused_45d":
+      return copy(
+        "Verify that IAM users with no console sign-in in the last 45 days are disabled or removed.",
+        "Vigil reads console password last-used per IAM user. Users with no sign-in within the 45-day lookback are flagged.",
       );
     case "iam.user.direct_policy_attachment":
       return copy(
-        "Evidence: IAM group/role model diagram or policy attachment export showing permissions moved off direct user attachments. Before/after list of managed and inline policies on the user.",
-        "Direct policy attachments bypass group-based access reviews. Vigil flags users with policies attached outside groups so access changes stay auditable and revocable at scale.",
+        "Verify that IAM permissions are assigned through groups rather than direct user policy attachments.",
+        "Vigil lists IAM user policy attachments. Users with customer-managed or inline policies attached directly (not via groups) are flagged.",
       );
     default:
       return copy(
-        "Evidence: IAM user configuration export relevant to this identity control.",
-        "Vigil evaluates IAM user posture during each account scan.",
+        "Verify that IAM user identity controls meet your baseline policy.",
+        "Vigil evaluates IAM user MFA, activity, and policy attachment posture on each scan.",
       );
   }
 }
@@ -72,38 +94,38 @@ function iamRole(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
   switch (checkId) {
     case "iam.role.unassumed_90d":
       return copy(
-        "Evidence: Role last-assumed date from IAM or CloudTrail, plus owner confirmation or deletion record. If retained, document business justification and next review date.",
-        "Vigil flags IAM roles not assumed within the lookback period. Unused roles may still carry broad policies — auditors expect orphan roles to be removed or justified.",
+        "Verify that IAM roles not assumed within the lookback period are removed or justified.",
+        "Vigil reads role last-used data from IAM. Roles with no AssumeRole use within the lookback period are flagged.",
       );
     case "iam.role.wildcard_action":
       return copy(
-        "Evidence: Inline policy JSON showing Action \"*\" on the role, and revised policy with explicit action list after scoping. Note which workloads assume this role.",
-        "Vigil detects inline policies with Action \"*\" (full service action space). This is narrower than a full admin policy but still dangerous if the role is assumed — scope actions to what the workload actually calls.",
+        "Verify that inline IAM role policies do not grant Action \"*\" across services.",
+        "Vigil parses inline role policies. Policies with Action \"*\" are flagged.",
       );
     case "iam.role.full_admin_policy":
       return copy(
-        "Evidence: Attached customer-managed policy document with Action \"*\" and Resource \"*\", plus replacement least-privilege policy. Change ticket with security approval.",
-        "Vigil flags customer-managed policies granting unrestricted actions on all resources. Full-admin attachments are a common path to account-wide compromise if the role is assumed.",
+        "Verify that attached customer-managed policies do not grant unrestricted Action \"*\" on Resource \"*\".",
+        "Vigil parses attached customer-managed policies. Policies granting Action \"*\" on Resource \"*\" are flagged.",
       );
     case "iam.role.unused_services_90d":
       return copy(
-        "Evidence: IAM access advisor or service last-accessed export for the role, plus updated policy with unused service statements removed.",
-        "Vigil compares granted IAM services against service last-accessed data. Services granted but never used in the window should be removed to shrink blast radius.",
+        "Verify that IAM role policies do not grant services with no recorded usage in the lookback window.",
+        "Vigil compares each role's granted IAM services against service last-accessed data. Services with no recorded use in the lookback window are flagged.",
       );
     case "iam.role.trust_wildcard":
       return copy(
-        "Evidence: Trust policy JSON before and after — Principal scoped to specific accounts, services, or ARNs instead of \"*\".",
-        "Vigil flags trust policies that allow any AWS principal to attempt AssumeRole. Trust should name only intended assumers.",
+        "Verify that IAM role trust policies do not allow any principal (\"*\") to attempt AssumeRole.",
+        "Vigil parses role trust policies. Trust allowing Principal \"*\" for sts:AssumeRole is flagged.",
       );
     case "iam.role.external_account_trust":
       return copy(
-        "Evidence: Trust policy showing external account IDs, vendor contract or integration approval, and ExternalId/condition keys where used. Exclude approved scan roles from samples.",
-        "Vigil flags cross-account sts:AssumeRole grants to principals outside your account. Each external account ID should map to an approved integration — not a stale vendor or partner.",
+        "Verify that cross-account AssumeRole trust is limited to approved external account principals.",
+        "Vigil parses role trust policies for sts:AssumeRole. Grants to principals outside the scanned account are flagged.",
       );
     default:
       return copy(
-        "Evidence: Role trust and permission policy exports for the affected IAM role.",
-        "Vigil evaluates IAM role trust and permission scope on each scan.",
+        "Verify that IAM role trust and permission scope meet your baseline policy.",
+        "Vigil evaluates IAM role trust policies and attached permission scope on each scan.",
       );
   }
 }
@@ -112,18 +134,18 @@ function iamPolicy(checkId: string, _s: RemediationSummary): CheckComplianceCopy
   switch (checkId) {
     case "iam.policy.wildcard_resource":
       return copy(
-        "Evidence: Policy JSON (inline or customer-managed) showing write actions with Resource \"*\", plus revised statements scoped to specific ARNs. List roles/users the policy attaches to.",
-        "Vigil flags write-capable statements that target all resources of a type (Resource \"*\"). This finding is about over-broad resource scope on policies Vigil can parse — tighten ARNs, then re-scan.",
+        "Verify that write-capable IAM policy statements do not target all resources (Resource \"*\").",
+        "Vigil parses customer-managed and inline policy statements. Write-capable statements with Resource \"*\" are flagged.",
       );
     case "iam.policy.unattached":
       return copy(
-        "Evidence: Policy list showing zero attachments, or deletion record. Optional hygiene — document if retained for template use.",
-        "Unattached customer-managed policies are optional hygiene (often disabled in Settings). They are not a SOC 2/CIS fail by themselves but add IAM clutter that may be re-attached with broad grants.",
+        "Verify that customer-managed IAM policies without attachments are removed or intentionally retained.",
+        "Vigil lists customer-managed policies and attachment targets. Policies with no principals attached are flagged when this optional check is enabled.",
       );
     default:
       return copy(
-        "Evidence: Customer-managed IAM policy document and attachment list.",
-        "Vigil lists customer-managed policies and evaluates attachment and statement scope.",
+        "Verify that customer-managed IAM policies meet attachment and scope expectations.",
+        "Vigil lists customer-managed policies and evaluates attachments and statement scope on each scan.",
       );
   }
 }
@@ -132,23 +154,23 @@ function iamRoot(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
   switch (checkId) {
     case "iam.root.no_mfa":
       return copy(
-        "Evidence: MFA assigned on the root user (IAM sign-in → Security credentials shows an active MFA device). Screenshot or export for the auditor sample.",
-        "This finding is about root MFA only — not wildcard IAM policies or security groups. Vigil validates that the account root has a registered MFA device; re-scan after assignment to clear the control.",
+        "Verify that the AWS root account has an active MFA device configured.",
+        "Vigil reads root MFA configuration from the account summary. Root without a registered MFA device is flagged.",
       );
     case "iam.root.has_access_keys":
       return copy(
-        "Evidence: Root Security credentials showing no access keys, or deletion confirmation. Document automation audit proving nothing used root keys before deletion.",
-        "Root access keys bypass all IAM policies. Vigil flags any active root key — they should not exist; use IAM users or roles for programmatic access.",
+        "Verify that the AWS root account has no active access keys.",
+        "Vigil reads root access key status from the account summary. Any active root access key is flagged.",
       );
     case "iam.root.usage":
       return copy(
-        "Evidence: CloudTrail records of root API activity with business justification, plus plan to move tasks to IAM admin roles. Show reduced root usage after change.",
-        "Vigil detects recent root API activity. Root should be break-glass only — routine operations belong on IAM identities with scoped policies and MFA.",
+        "Verify that the AWS root account is not used for routine API operations.",
+        "Vigil reads credential-report and CloudTrail data for recent root API activity. Recent root API use is flagged.",
       );
     default:
       return copy(
-        "Evidence: Root account Security credentials and CloudTrail samples for root activity.",
-        "Vigil monitors root credential posture and recent root API usage.",
+        "Verify that AWS root account credential and usage controls meet baseline expectations.",
+        "Vigil reads root credential configuration and recent root API activity on each scan.",
       );
   }
 }
@@ -160,37 +182,37 @@ function s3(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
       : "bucket Block Public Access settings";
   if (checkId.includes("public_access")) {
     return copy(
-      `Evidence: AWS console or CLI output showing all four Block Public Access settings enabled at ${checkId.startsWith("s3.account") ? "account" : "bucket"} scope. Screenshot before/after remediation.`,
-      `Vigil verifies S3 public access block configuration. ${checkId.startsWith("s3.account") ? "Account-level" : "Bucket-level"} blocks prevent accidental public ACLs or policies from exposing objects.`,
+      `Verify that all four S3 Block Public Access settings are enabled at ${checkId.startsWith("s3.account") ? "account" : "bucket"} scope.`,
+      `Vigil reads S3 Block Public Access settings at ${checkId.startsWith("s3.account") ? "account" : "bucket"} scope. Any of the four block settings disabled is flagged.`,
     );
   }
   if (checkId === "s3.bucket.no_https_policy") {
     return copy(
-      "Evidence: Bucket policy JSON with Deny on aws:SecureTransport = false, or AWS Config rule compliance screenshot.",
-      "Vigil checks for a deny-insecure-transport statement so clients cannot read objects over unencrypted HTTP.",
+      "Verify that S3 bucket policies deny unencrypted HTTP access (aws:SecureTransport).",
+      "Vigil parses bucket policies for a Deny on aws:SecureTransport false. Buckets without that statement are flagged.",
     );
   }
   if (checkId === "s3.bucket.no_kms" || checkId === "s3.bucket.no_default_encryption") {
     return copy(
-      "Evidence: Default encryption configuration showing SSE-S3 or SSE-KMS enabled on the bucket.",
-      "Vigil flags buckets without default encryption at rest. Auditors expect new objects to inherit encryption automatically.",
+      "Verify that S3 buckets have default encryption at rest enabled (SSE-S3 or SSE-KMS).",
+      "Vigil reads bucket default encryption configuration. Buckets without default encryption at rest are flagged.",
     );
   }
   if (checkId === "s3.bucket.no_logging") {
     return copy(
-      "Evidence: Server access logging target bucket and prefix configuration enabled on the data bucket.",
-      "Vigil verifies S3 server access logging for object-level audit trails required in many SOC 2 samples.",
+      "Verify that S3 server access logging is enabled on data buckets.",
+      "Vigil reads bucket logging configuration. Buckets without server access logging enabled are flagged.",
     );
   }
   if (checkId === "s3.bucket.no_mfa_delete") {
     return copy(
-      "Evidence: Versioning + MFA Delete enabled (requires root), or documented exception if versioning not used.",
-      "Vigil flags versioned buckets without MFA Delete so a compromised IAM user cannot permanently wipe all object versions.",
+      "Verify that versioned S3 buckets have MFA Delete enabled where required.",
+      "Vigil reads versioning and MFA Delete settings. Versioned buckets without MFA Delete enabled are flagged.",
     );
   }
   return copy(
-    `Evidence: S3 ${bucket} configuration export for the affected bucket.`,
-    "Vigil evaluates S3 encryption, access, and logging controls during each scan.",
+    `Verify that S3 ${bucket} configuration meets your baseline policy.`,
+    "Vigil reads S3 encryption, public access, and logging configuration per bucket on each scan.",
   );
 }
 
@@ -198,38 +220,38 @@ function cloudtrail(checkId: string, _s: RemediationSummary): CheckComplianceCop
   switch (checkId) {
     case "cloudtrail.trail.not_enabled":
       return copy(
-        "Evidence: Multi-region trail configuration with S3 delivery bucket, management events enabled, and recent log delivery proof.",
-        "Vigil flags regions without an active CloudTrail trail. API audit logs are baseline evidence for SOC 2 logical access and change investigations.",
+        "Verify that a multi-region CloudTrail trail is enabled with management events and S3 log delivery.",
+        "Vigil lists CloudTrail trails per region. Regions without an active trail recording management events are flagged.",
       );
     case "cloudtrail.trail.no_log_validation":
       return copy(
-        "Evidence: Trail settings showing log file validation enabled, plus sample digest file reference.",
-        "Log file validation lets auditors detect tampering with stored CloudTrail objects. Vigil expects validation on production trails.",
+        "Verify that CloudTrail log file validation is enabled on production trails.",
+        "Vigil reads trail log file validation settings. Trails without validation enabled are flagged.",
       );
     case "cloudtrail.trail.no_kms":
       return copy(
-        "Evidence: Trail encryption settings with CMK ARN and key policy allowing CloudTrail delivery.",
-        "Vigil flags trails not encrypted with KMS so audit log confidentiality meets encryption control expectations.",
+        "Verify that CloudTrail trails encrypt log files with a customer-managed KMS key.",
+        "Vigil reads trail KMS encryption settings. Trails without KMS log encryption are flagged.",
       );
     case "cloudtrail.trail.s3_bucket_public":
       return copy(
-        "Evidence: S3 bucket policy and Block Public Access showing no public access on the log bucket — treat as urgent.",
-        "A public CloudTrail bucket exposes full API history. Vigil treats this as critical data exposure, not a minor misconfiguration.",
+        "Verify that the CloudTrail S3 log bucket is not publicly accessible.",
+        "Vigil reads Block Public Access and bucket policy on the trail S3 bucket. Publicly accessible trail buckets are flagged.",
       );
     case "cloudtrail.trail.no_cloudwatch_logs":
       return copy(
-        "Evidence: CloudWatch Logs integration on the trail with log group and IAM role for delivery.",
-        "Shipping trails to CloudWatch enables faster detection workflows; Vigil flags missing integration where real-time review is expected.",
+        "Verify that CloudTrail trails deliver logs to CloudWatch Logs where real-time review is expected.",
+        "Vigil reads CloudWatch Logs integration on trails. Trails without CloudWatch delivery are flagged.",
       );
     case "cloudtrail.trail.s3_bucket_no_logging":
       return copy(
-        "Evidence: Server access logging enabled on the CloudTrail S3 bucket with target log bucket named.",
-        "Access to the audit bucket itself should be logged. Vigil flags missing S3 access logging on the trail bucket.",
+        "Verify that server access logging is enabled on the CloudTrail S3 log bucket.",
+        "Vigil reads S3 access logging on the trail log bucket. Trail buckets without access logging are flagged.",
       );
     default:
       return copy(
-        "Evidence: CloudTrail trail configuration export and recent log delivery proof.",
-        "Vigil evaluates CloudTrail coverage and log integrity settings per region.",
+        "Verify that CloudTrail trail coverage and log integrity settings meet baseline expectations.",
+        "Vigil evaluates CloudTrail trail coverage and log integrity settings per region on each scan.",
       );
   }
 }
@@ -238,23 +260,23 @@ function ec2SecurityGroup(checkId: string, _s: RemediationSummary): CheckComplia
   switch (checkId) {
     case "ec2.security_group.unrestricted_ssh":
       return copy(
-        "Evidence: Security group rule export showing SSH (tcp/22) no longer allows 0.0.0.0/0 or ::/0 — restricted CIDR or SSM-only access documented.",
-        "Vigil flags security groups exposing SSH to the entire internet. CIS and SOC 2 network controls expect administrative access to be source-restricted.",
+        "Verify that security groups do not expose SSH (tcp/22) to the entire internet (0.0.0.0/0 or ::/0).",
+        "Vigil reads security group ingress rules. Rules allowing tcp/22 from 0.0.0.0/0 or ::/0 are flagged.",
       );
     case "ec2.security_group.unrestricted_rdp":
       return copy(
-        "Evidence: Security group rules showing RDP (tcp/3389) not open to 0.0.0.0/0, or alternative access method documented.",
-        "Internet-wide RDP is a common ransomware entry point. Vigil flags 0.0.0.0/0 on port 3389 for remediation before audit sampling.",
+        "Verify that security groups do not expose RDP (tcp/3389) to the entire internet.",
+        "Vigil reads security group ingress rules. Rules allowing tcp/3389 from 0.0.0.0/0 or ::/0 are flagged.",
       );
     case "ec2.security_group.default_allows_traffic":
       return copy(
-        "Evidence: Default security group with zero inbound/outbound rules in each VPC, plus launch template or runbook requiring named SGs.",
-        "Vigil flags custom rules on the VPC default SG — not live instance exposure. CIS expects the default SG empty so accidental launches do not inherit permissive rules.",
+        "Verify that VPC default security groups have no custom inbound or outbound rules.",
+        "Vigil reads the VPC default security group. Non-empty inbound or outbound rule sets are flagged.",
       );
     default:
       return copy(
-        "Evidence: Security group rule export for the affected group.",
-        "Vigil evaluates EC2 security group ingress against sensitive port baselines.",
+        "Verify that EC2 security group ingress rules meet your network baseline.",
+        "Vigil evaluates security group ingress against sensitive port baselines on each scan.",
       );
   }
 }
@@ -262,40 +284,40 @@ function ec2SecurityGroup(checkId: string, _s: RemediationSummary): CheckComplia
 function github(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
   if (checkId === "github.repo.no_codeowners" || checkId === "gitlab.repo.no_codeowners") {
     return copy(
-      "Evidence: CODEOWNERS file in repo or documented policy exception. Optional check — often disabled.",
-      "CODEOWNERS is optional hygiene for Git repos (GitHub and GitLab). SOC 2 change management typically relies on branch protection and required reviews, not CODEOWNERS alone.",
+      "Verify that repositories define code ownership for change-management review.",
+      "Vigil reads repository CODEOWNERS file presence. Repositories without CODEOWNERS are flagged when this optional check is enabled.",
     );
   }
   if (checkId.startsWith("github.org.")) {
     return copy(
-      "Evidence: GitHub organization security settings export (MFA, membership) after remediation.",
-      "Vigil syncs GitHub org settings for identity controls mapped to change-management and access evidence.",
+      "Verify that GitHub organization security settings meet your identity baseline.",
+      "Vigil syncs GitHub organization security settings via the GitHub API and flags values outside the configured baseline.",
     );
   }
   return copy(
-    "Evidence: Repository branch protection / ruleset screenshot showing required reviews and restrictions after change.",
-    "Vigil ingests GitHub branch protection and review settings for SOC 2 change-management controls — separate from AWS IAM scans.",
+    "Verify that GitHub repository branch protection and required review settings meet your change-management baseline.",
+    "Vigil reads branch protection and required-review settings per repository via the GitHub API and flags noncompliant repos.",
   );
 }
 
 function gitlab(checkId: string, _s: RemediationSummary): CheckComplianceCopy {
   if (checkId.startsWith("gitlab.org.")) {
     return copy(
-      "Evidence: GitLab group security settings (2FA, membership) after remediation.",
-      "Vigil syncs GitLab group settings for identity and access evidence in change-management mappings.",
+      "Verify that GitLab group security settings meet your identity baseline.",
+      "Vigil syncs GitLab group security settings via the GitLab API and flags values outside the configured baseline.",
     );
   }
   return copy(
-    "Evidence: Protected branch / merge request approval settings export after remediation.",
-    "Vigil evaluates GitLab merge request and branch protection rules for change-management evidence.",
+    "Verify that GitLab protected branches and merge request approval settings meet your change-management baseline.",
+    "Vigil reads protected-branch and merge-request approval rules per project via the GitLab API and flags noncompliant projects.",
   );
 }
 
 function defaultCopy(checkId: string, s: RemediationSummary): CheckComplianceCopy {
   const topic = checkId.split(".")[0] ?? "resource";
   return copy(
-    `Evidence: Configuration export or screenshot showing the issue is remediated (${s.impact.replace(/\.$/, "")}). Retain change ticket linking fix to owner.`,
-    `Vigil runs this ${topic} check on every scan. ${s.impact} ${s.risk} Re-scan after applying: ${s.fix}`,
+    `Verify that ${s.impact.replace(/\.$/, "").toLowerCase()}.`,
+    `Vigil evaluates ${topic} configuration on each scan and flags resources that match this check's failure criteria.`,
   );
 }
 
@@ -315,203 +337,203 @@ const BUILDERS: Record<string, (s: RemediationSummary) => CheckComplianceCopy> =
 const SPECIFIC: Record<string, (s: RemediationSummary) => CheckComplianceCopy> = {
   "iam.perm.granted_vs_used": () =>
     copy(
-      "Evidence: IAM access advisor export for the role showing granted vs. last-accessed services, plus policy diff with unused write actions removed.",
-      "Vigil compares granted write permissions against service last-accessed data. Unused write scope should be removed before audit sampling — this is the core least-privilege signal in Vigil.",
+      "Verify that IAM role policies do not grant write permissions on services with no recorded usage.",
+      "Vigil compares each role's granted write actions against service last-accessed data. Write permissions on services with no recorded use in the lookback window are flagged.",
     ),
   "iam.access_inventory_gap": () =>
     copy(
-      "Evidence: Successful full IAM scan completion and user roster export after fixing scan role permissions.",
-      "Vigil could not complete the IAM user inventory — access roster evidence may be incomplete until the scan role permissions are fixed and a new scan succeeds.",
+      "Verify that the IAM user inventory scan completes successfully so access roster evidence is complete.",
+      "Vigil records a scan failure when the IAM user inventory collector cannot complete. No per-user findings are produced until a later scan succeeds.",
     ),
   "iam.account.no_support_role": () =>
     copy(
-      "Evidence: IAM role with AWSSupportAccess (or AWS-managed Support role) and trust limited to support engineers.",
-      "AWS support cases should not require root. Vigil checks for a dedicated support-access role in the account.",
+      "Verify that a dedicated IAM role exists for AWS Support access instead of using root.",
+      "Vigil lists IAM roles and flags the account when no role matches the configured support-access pattern.",
     ),
   "iam.account.password_policy_weak": () =>
     copy(
-      "Evidence: IAM account password policy meeting your minimum length, complexity, reuse, and expiration settings.",
-      "Vigil compares the account password policy to baseline thresholds for human IAM user passwords.",
+      "Verify that the IAM account password policy meets your minimum length, complexity, reuse, and expiration requirements.",
+      "Vigil reads the account password policy and compares length, complexity, reuse, and expiration settings to configured thresholds.",
     ),
   "aws.account.contact_incomplete": () =>
     copy(
-      "Evidence: Screenshot or export of AWS Account → Contact information showing complete primary contact (address, city, country, phone).",
-      "CIS 1.1 requires current account contact details for billing and security notifications. Vigil reads account contact via the scan role.",
+      "Verify that AWS account primary contact information is complete (address, city, country, phone).",
+      "Vigil reads account primary contact fields via the scan role. Missing address, city, country, or phone is flagged.",
     ),
   "aws.account.security_contact_missing": () =>
     copy(
-      "Evidence: SECURITY alternate contact with email and phone in Account → Alternate contacts.",
-      "CIS 1.2 requires a registered security contact. Vigil flags missing SECURITY alternate contact data.",
+      "Verify that a SECURITY alternate contact with email and phone is registered on the AWS account.",
+      "Vigil reads alternate contact data for type SECURITY. Missing email or phone on that contact is flagged.",
     ),
   "iam.server_certificate.expired": () =>
     copy(
-      "Evidence: IAM server certificate list showing expired certs removed (or replacement cert in use).",
-      "CIS 1.18 — expired IAM server certificates should be deleted. Vigil lists server certs via ListServerCertificates.",
+      "Verify that expired IAM server certificates are removed from the account.",
+      "Vigil lists IAM server certificates via ListServerCertificates. Certificates past their expiration date are flagged.",
     ),
   "iam.cloudshell_full_access_granted": () =>
     copy(
-      "Evidence: IAM policy attachment export showing AWSCloudShellFullAccess detached from non-break-glass principals.",
-      "CIS 1.21 — restrict AWSCloudShellFullAccess to roles that truly need CloudShell.",
+      "Verify that AWSCloudShellFullAccess is not attached to non-break-glass IAM principals.",
+      "Vigil lists IAM policy attachments. Principals with AWSCloudShellFullAccess attached are flagged.",
     ),
   "kms.key.policy_wildcard_principal": () =>
     copy(
-      "Evidence: KMS key policy JSON with Principal scoped to specific accounts/roles — no \"*\" principals.",
-      "Vigil flags KMS key policies that allow wildcard principals, which can grant decrypt rights beyond intended workloads.",
+      "Verify that KMS key policies do not allow wildcard (\"*\") principals.",
+      "Vigil parses KMS key policies. Policies allowing Principal \"*\" are flagged.",
     ),
   "kms.key.no_rotation": () =>
     copy(
-      "Evidence: KMS key rotation status enabled (automatic annual rotation for symmetric keys).",
-      "Annual key rotation limits exposure if key material is compromised. Vigil flags symmetric CMKs without rotation enabled.",
+      "Verify that customer-managed symmetric KMS keys have automatic annual rotation enabled.",
+      "Vigil reads rotation status on customer-managed symmetric keys. Keys without automatic rotation enabled are flagged.",
     ),
   "guardduty.open_findings": () =>
     copy(
-      "Evidence: GuardDuty finding archive/suppression with justification, or remediation proof for underlying resource.",
-      "Vigil surfaces active GuardDuty findings so threat issues are not ignored during compliance review — triage or remediate before audit.",
+      "Verify that active GuardDuty findings are triaged or remediated.",
+      "Vigil lists active GuardDuty findings via the GuardDuty API. Findings not archived or suppressed are surfaced.",
     ),
   "guardduty.detector.not_enabled": () =>
     copy(
-      "Evidence: GuardDuty detector ENABLED in each in-scope region.",
-      "Vigil flags disabled GuardDuty detectors — continuous threat detection is expected in modern SOC 2 AWS samples.",
+      "Verify that GuardDuty detectors are enabled in each in-scope region.",
+      "Vigil reads GuardDuty detector status per region. Disabled or missing detectors are flagged.",
     ),
   "aws.config.rules_non_compliant": () =>
     copy(
-      "Evidence: AWS Config compliance timeline showing resource returned to COMPLIANT or approved exception record.",
-      "Vigil reports Config rules in NON_COMPLIANT state so configuration drift is visible before the auditor asks.",
+      "Verify that AWS Config rules in NON_COMPLIANT state are remediated or approved as exceptions.",
+      "Vigil lists AWS Config rule evaluation results. Rules in NON_COMPLIANT state are flagged.",
     ),
   "aws.config.not_enabled": () =>
     copy(
-      "Evidence: Config recorder ON with delivery channel to S3, plus sample configuration history item.",
-      "AWS Config provides configuration history for audits. Vigil flags accounts without an active recorder.",
+      "Verify that AWS Config recorder and delivery channel are active.",
+      "Vigil reads Config recorder and delivery channel status. Accounts without an active recorder are flagged.",
     ),
   "aws.access_analyzer.not_enabled": () =>
     copy(
-      "Evidence: IAM Access Analyzer created in active regions with finding review process documented.",
-      "Access Analyzer detects unintended external access to resources. Vigil flags missing analyzers in scanned regions.",
+      "Verify that IAM Access Analyzer is enabled in active regions.",
+      "Vigil lists Access Analyzer instances per scanned region. Regions without an active analyzer are flagged.",
     ),
   "aws.securityhub.not_enabled": () =>
     copy(
-      "Evidence: Security Hub enabled with AWS Foundational Security Best Practices (or org standard) active.",
-      "Security Hub aggregates control findings. Vigil flags disabled hubs where centralized compliance visibility is expected.",
+      "Verify that AWS Security Hub is enabled with your organization security standard.",
+      "Vigil reads Security Hub enrollment status. Accounts or regions without Security Hub enabled are flagged.",
     ),
   "vpc.flow_logs.not_enabled": () =>
     copy(
-      "Evidence: VPC flow log delivering to CloudWatch Logs or S3 with retention stated.",
-      "VPC flow logs support network forensics. Vigil flags VPCs without flow logging enabled.",
+      "Verify that VPC flow logs are enabled and delivering to CloudWatch Logs or S3.",
+      "Vigil reads VPC flow log configuration. VPCs without flow logging enabled are flagged.",
     ),
   "ec2.ami.aged": () =>
     copy(
-      "Evidence: Launch template or ASG using a newer AMI build date, plus patch cadence documentation.",
-      "Vigil flags AMIs older than the patch-age threshold so workloads are not launched from stale images.",
+      "Verify that EC2 workloads launch from AMIs within your patch-age threshold.",
+      "Vigil reads AMI creation dates. AMIs older than the configured patch-age threshold are flagged.",
     ),
   "ec2.ami.public": () =>
     copy(
-      "Evidence: AMI permissions showing Private — no allAccounts launch permission.",
-      "Public AMIs may leak application secrets or IP. Vigil flags AMIs shared with all AWS accounts.",
+      "Verify that custom AMIs are not shared publicly (allAccounts launch permission).",
+      "Vigil reads AMI launch permissions. AMIs with allAccounts (public) launch permission are flagged.",
     ),
   "ec2.instance.imdsv2_not_required": () =>
     copy(
-      "Evidence: Instance metadata options requiring IMDSv2 (HttpTokens required) on affected instances.",
-      "IMDSv1 enables SSRF-based credential theft from EC2. Vigil flags instances that still allow IMDSv1.",
+      "Verify that EC2 instances require IMDSv2 (HttpTokens required).",
+      "Vigil reads instance metadata options. Instances without HttpTokens set to required are flagged.",
     ),
   "ec2.ebs.encryption_not_default": () =>
     copy(
-      "Evidence: Regional EBS encryption-by-default enabled.",
-      "Vigil flags regions where new EBS volumes may be created unencrypted by default.",
+      "Verify that EBS encryption-by-default is enabled in each region.",
+      "Vigil reads EBS encryption-by-default settings per region. Regions where default encryption is disabled are flagged.",
     ),
   "ec2.ebs.volume_unencrypted": () =>
     copy(
-      "Evidence: Encrypted snapshot/volume replacement plan executed — new encrypted volume attached.",
-      "Existing unencrypted volumes violate encryption-at-rest expectations. Vigil flags attached unencrypted volumes.",
+      "Verify that attached EBS volumes are encrypted at rest.",
+      "Vigil lists attached EBS volumes. Volumes with encryption disabled are flagged.",
     ),
   "ec2.ebs.snapshot_public": () =>
     copy(
-      "Evidence: Snapshot permissions with no public createVolumePermission.",
-      "Public EBS snapshots can expose full disk contents. Vigil flags snapshots shared publicly.",
+      "Verify that EBS snapshots are not shared publicly.",
+      "Vigil reads snapshot create-volume permissions. Snapshots shared with all AWS accounts are flagged.",
     ),
   "ec2.ebs.snapshot_unencrypted": () =>
     copy(
-      "Evidence: Encrypted copy of the snapshot with migration plan to encrypted volumes.",
-      "Unencrypted snapshots carry the same data exposure as unencrypted volumes. Vigil flags them for remediation.",
+      "Verify that EBS snapshots are encrypted.",
+      "Vigil lists EBS snapshots. Snapshots without encryption are flagged.",
     ),
   "rds.instance.publicly_accessible": () =>
     copy(
-      "Evidence: RDS Modify showing Publicly accessible = No, plus security group restricting database port.",
-      "Vigil flags RDS instances with a public endpoint — databases should sit in private subnets with controlled ingress.",
+      "Verify that RDS instances are not publicly accessible.",
+      "Vigil reads RDS instance PubliclyAccessible attribute. Instances set to publicly accessible are flagged.",
     ),
   "rds.instance.no_encryption": () =>
     copy(
-      "Evidence: Encrypted snapshot restore or new encrypted instance — storage encryption at rest enabled.",
-      "RDS storage encryption is required for most SOC 2 data-at-rest samples. Vigil flags unencrypted instances.",
+      "Verify that RDS instances have storage encryption at rest enabled.",
+      "Vigil reads RDS storage encryption settings. Instances without storage encryption are flagged.",
     ),
   "rds.instance.no_automated_backup": () =>
     copy(
-      "Evidence: Backup retention period ≥ 7 days (or your policy minimum) on the instance.",
-      "Automated backups underpin recovery objectives. Vigil flags instances with backups disabled or zero retention.",
+      "Verify that RDS automated backups are enabled with retention meeting your policy minimum.",
+      "Vigil reads automated backup and retention settings. Instances with backups disabled or zero retention are flagged.",
     ),
   "rds.instance.no_deletion_protection": () =>
     copy(
-      "Evidence: Deletion protection enabled on production RDS instances.",
-      "Deletion protection prevents accidental destroy via a single API call. Vigil flags production instances without it.",
+      "Verify that production RDS instances have deletion protection enabled.",
+      "Vigil reads RDS deletion protection. Instances without deletion protection enabled are flagged.",
     ),
   "rds.instance.no_multi_az": () =>
     copy(
-      "Evidence: Multi-AZ enabled or documented HA architecture exception approved by management.",
-      "Single-AZ RDS has no automatic host failover. Vigil flags single-AZ databases where availability is in scope.",
+      "Verify that production RDS instances use Multi-AZ for high availability.",
+      "Vigil reads RDS Multi-AZ configuration. Single-AZ instances are flagged when this check is in scope.",
     ),
   "dynamodb.table.no_encryption": () =>
     copy(
-      "Evidence: Table encryption at rest enabled (AWS owned or CMK).",
-      "Vigil flags DynamoDB tables without explicit encryption at rest configuration.",
+      "Verify that DynamoDB tables have encryption at rest enabled.",
+      "Vigil reads table SSE configuration. Tables without server-side encryption at rest are flagged.",
     ),
   "dynamodb.table.no_pitr": () =>
     copy(
-      "Evidence: Point-in-time recovery enabled on the table.",
-      "PITR protects against accidental table deletes. Vigil flags tables without continuous backups.",
+      "Verify that DynamoDB tables have point-in-time recovery enabled.",
+      "Vigil reads continuous backup (PITR) settings. Tables without PITR enabled are flagged.",
     ),
   "acm.certificate.expiring": () =>
     copy(
-      "Evidence: Renewed or replaced certificate with expiry beyond the warning window, attached to listeners.",
-      "Vigil warns before ACM certificate expiry so TLS services do not break in production during audit periods.",
+      "Verify that ACM certificates are renewed before expiry within the warning window.",
+      "Vigil reads ACM certificate NotAfter dates. Certificates expiring within the configured warning window are flagged.",
     ),
   "lambda.function.deprecated_runtime": () =>
     copy(
-      "Evidence: Function configuration on a supported runtime after test/deploy.",
-      "Unsupported Lambda runtimes stop receiving security patches. Vigil flags deprecated runtimes before AWS blocks invocation.",
+      "Verify that Lambda functions run on supported runtimes.",
+      "Vigil reads function runtime identifiers. Functions on deprecated or unsupported runtimes are flagged.",
     ),
   "lambda.function.no_dlq": () =>
     copy(
-      "Evidence: Asynchronous invoke configuration with SQS/SNS dead-letter queue attached.",
-      "Failed async invocations without a DLQ leave no recovery path. Vigil flags missing DLQs on async functions.",
+      "Verify that asynchronously invoked Lambda functions have a dead-letter queue configured.",
+      "Vigil reads async-invoke DLQ configuration. Asynchronous functions without a configured dead-letter target are flagged.",
     ),
   "secretsmanager.secret.no_rotation": () =>
     copy(
-      "Evidence: Rotation enabled with Lambda rotation function and successful rotation history.",
-      "Static secrets in Secrets Manager should rotate automatically. Vigil flags secrets without rotation configured.",
+      "Verify that Secrets Manager secrets have automatic rotation enabled.",
+      "Vigil reads Secrets Manager rotation configuration. Secrets without automatic rotation enabled are flagged.",
     ),
   "ssm.parameter.plaintext_secret": () =>
     copy(
-      "Evidence: Parameter recreated as SecureString (or moved to Secrets Manager) with KMS key.",
-      "Plaintext SSM String parameters expose values in API responses. Vigil flags likely secrets stored unencrypted.",
+      "Verify that sensitive values are stored as SSM SecureString parameters or in Secrets Manager, not plaintext String parameters.",
+      "Vigil lists SSM String parameters and flags names matching likely-secret patterns stored as plaintext String type.",
     ),
   "elb.load_balancer.no_access_logs": () =>
     copy(
-      "Evidence: Access logs enabled with S3 bucket and prefix configured.",
-      "Load balancer access logs support request-level forensics for internet-facing services.",
+      "Verify that load balancers have access logging enabled to S3.",
+      "Vigil reads load balancer access log configuration. Load balancers without access logging enabled are flagged.",
     ),
   "elb.load_balancer.weak_tls_policy": () =>
     copy(
-      "Evidence: Listener security policy using TLS 1.2+ and modern cipher suites.",
-      "Legacy TLS policies allow weak ciphers. Vigil flags listeners below the configured TLS baseline.",
+      "Verify that load balancer listeners use TLS 1.2+ security policies with modern cipher suites.",
+      "Vigil reads listener TLS security policies. Policies below the configured TLS baseline are flagged.",
     ),
   "sns.topic.no_encryption": () =>
     copy(
-      "Evidence: SNS topic SSE-KMS configuration with CMK ARN.",
-      "Vigil flags SNS topics without KMS encryption at rest for messaging controls.",
+      "Verify that SNS topics use SSE-KMS encryption at rest.",
+      "Vigil reads SNS topic encryption settings. Topics without SSE-KMS encryption are flagged.",
     ),
   "sqs.queue.no_encryption": () =>
     copy(
-      "Evidence: SQS queue SSE-KMS enabled with CMK.",
-      "Vigil flags SQS queues without KMS server-side encryption on message payloads.",
+      "Verify that SQS queues use SSE-KMS encryption at rest.",
+      "Vigil reads SQS server-side encryption settings. Queues without KMS encryption are flagged.",
     ),
 };
 

@@ -44,7 +44,7 @@ export function SemanticNarrativeBlock({
   icon,
 }: {
   tag: string;
-  title: string;
+  title?: string;
   tone?: SemanticTone;
   children: ReactNode;
   icon?: ReactNode;
@@ -60,7 +60,9 @@ export function SemanticNarrativeBlock({
             {tag}
           </span>
         )}
-        <span className="pt-0.5 text-[13px] font-semibold leading-snug text-zinc-900">{title}</span>
+        {title ? (
+          <span className="pt-0.5 text-[13px] font-semibold leading-snug text-zinc-900">{title}</span>
+        ) : null}
       </div>
       <div className="border-t border-zinc-100/90 px-4 py-3 pr-5 text-[13px] leading-relaxed text-zinc-700">
         {children}

@@ -1,53 +1,71 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  EC2 security group remediation only (SSH/RDP). No S3.
-  Source of truth for handler logic: infra/lambda/remediation_runner.py
+  Customer-owned remediation runner — modular scoped-write IAM per finding family.
+  Lambda + EventBridge deploy only when Security Group remediation is enabled.
 
 Parameters:
   RemediationRoleName:
     Type: String
-    Default: VigilRemediationRole
-    Description: IAM role name (unique per account). Skip creating a new role if you pass ExistingRemediationRoleArn.
+    Default: VigilRemediationRunnerRole
   LambdaName:
     Type: String
     Default: VigilRemediationRunner
   ExistingRemediationRoleArn:
     Type: String
     Default: ""
-    Description: >
-      Optional. If set (e.g. from an existing Vigil-Runner stack), do not create RemediationRole —
-      only update Lambda + EventBridge. Example: arn:aws:iam::123456789012:role/VigilRemediationRole
   EventBusName:
     Type: String
     Default: default
-    Description: Event bus where this stack is deployed (put-events must use this bus's region).
   RemediationSigningPublicKeyBase64:
     Type: String
     Default: ""
-    Description: Optional Ed25519 public key from Vigil dispatch (verify signed plans).
   LambdaArtifactBucket:
     Type: String
-    Default: vigil-worm-storage
-    Description: S3 bucket with remediation_runner.zip (run infra/lambda/build.sh then upload).
+    Default: amzn-s3-vigil
   LambdaArtifactKey:
     Type: String
     Default: lambda/remediation_runner.zip
-    Description: S3 key for packaged Lambda (canonical source infra/lambda/remediation_runner.py).
   VigilExecutionWebhookUrl:
     Type: String
     Default: ""
-    Description: Optional Vigil API URL for execution callback (e.g. https://api.example.com/v1/public/remediation-execution).
+  EnableSecurityGroupRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableS3Remediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamAccessKeyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamPolicyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableCloudTrailRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
 
 Conditions:
   CreateRole: !Equals [!Ref ExistingRemediationRoleArn, ""]
+  SecurityGroupModule: !Equals [!Ref EnableSecurityGroupRemediation, "Yes"]
+  S3Module: !Equals [!Ref EnableS3Remediation, "Yes"]
+  IamAccessKeyModule: !Equals [!Ref EnableIamAccessKeyRemediation, "Yes"]
+  IamPolicyModule: !Equals [!Ref EnableIamPolicyRemediation, "Yes"]
+  CloudTrailModule: !Equals [!Ref EnableCloudTrailRemediation, "Yes"]
 
 Resources:
   RemediationDLQ:
+    Condition: SecurityGroupModule
     Type: AWS::SQS::Queue
     Properties:
       MessageRetentionPeriod: 1209600
 
   RemediationDLQPolicy:
+    Condition: SecurityGroupModule
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
@@ -81,25 +99,103 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: VigilRemediationEc2SecurityGroups
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Sid: Ec2SecurityGroupIngress
-                Effect: Allow
-                Action:
-                  - ec2:RevokeSecurityGroupIngress
-                  - ec2:DescribeSecurityGroups
-                Resource: "*"
-              - Sid: RemediationExecutionsDynamoDB
-                Effect: Allow
-                Action:
-                  - dynamodb:PutItem
-                  - dynamodb:GetItem
-                Resource: !GetAtt RemediationExecutionsTable.Arn
+
+  SecurityGroupRemediationPolicy:
+    Condition: SecurityGroupModule
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: VigilRemediationSecurityGroups
+      Roles:
+        - !Ref RemediationRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Ec2SecurityGroupIngress
+            Effect: Allow
+            Action:
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:AuthorizeSecurityGroupIngress
+            Resource: "*"
+          - Sid: RemediationExecutionsDynamoDB
+            Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+            Resource: !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/VigilRemediationExecutions"
+
+  S3RemediationPolicy:
+    Condition: S3Module
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: VigilRemediationS3
+      Roles:
+        - !Ref RemediationRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: S3PublicAccessRemediation
+            Effect: Allow
+            Action:
+              - s3:PutBucketPublicAccessBlock
+              - s3:PutBucketPolicy
+            Resource: "*"
+
+  IamAccessKeyRemediationPolicy:
+    Condition: IamAccessKeyModule
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: VigilRemediationIamAccessKeys
+      Roles:
+        - !Ref RemediationRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: IamAccessKeyRemediation
+            Effect: Allow
+            Action:
+              - iam:UpdateAccessKey
+              - iam:DeleteAccessKey
+            Resource: "*"
+
+  IamPolicyRemediationPolicy:
+    Condition: IamPolicyModule
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: VigilRemediationIamPolicy
+      Roles:
+        - !Ref RemediationRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: IamPolicyRemediation
+            Effect: Allow
+            Action:
+              - iam:PutRolePolicy
+              - iam:DetachRolePolicy
+              - iam:AttachRolePolicy
+              - iam:CreatePolicyVersion
+              - iam:DeletePolicyVersion
+            Resource: "*"
+
+  CloudTrailRemediationPolicy:
+    Condition: CloudTrailModule
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: VigilRemediationCloudTrail
+      Roles:
+        - !Ref RemediationRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudTrailRemediation
+            Effect: Allow
+            Action:
+              - cloudtrail:UpdateTrail
+              - cloudtrail:StartLogging
+            Resource: "*"
 
   RemediationExecutionsTable:
+    Condition: SecurityGroupModule
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: VigilRemediationExecutions
@@ -112,7 +208,10 @@ Resources:
           KeyType: HASH
 
   RemediationFunction:
+    Condition: SecurityGroupModule
     Type: AWS::Lambda::Function
+    DependsOn:
+      - SecurityGroupRemediationPolicy
     Properties:
       FunctionName: !Ref LambdaName
       Runtime: python3.12
@@ -124,12 +223,13 @@ Resources:
         Variables:
           REMEDIATION_SIGNING_PUBLIC_KEY_B64: !Ref RemediationSigningPublicKeyBase64
           VIGIL_EXECUTION_WEBHOOK_URL: !Ref VigilExecutionWebhookUrl
-          REMEDIATION_EXECUTIONS_TABLE: !Ref RemediationExecutionsTable
+          REMEDIATION_EXECUTIONS_TABLE: VigilRemediationExecutions
       Code:
         S3Bucket: !Ref LambdaArtifactBucket
         S3Key: !Ref LambdaArtifactKey
 
   RemediationInvokePermission:
+    Condition: SecurityGroupModule
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref RemediationFunction
@@ -138,12 +238,14 @@ Resources:
       SourceArn: !GetAtt RemediationRule.Arn
 
   RemediationLogGroup:
+    Condition: SecurityGroupModule
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub /aws/lambda/${LambdaName}
       RetentionInDays: 30
 
   RemediationRule:
+    Condition: SecurityGroupModule
     Type: AWS::Events::Rule
     Properties:
       Name: VigilRemediationApproved
@@ -173,12 +275,10 @@ Outputs:
   RemediationRoleArn:
     Value: !If [CreateRole, !GetAtt RemediationRole.Arn, !Ref ExistingRemediationRoleArn]
   RemediationFunctionArn:
+    Condition: SecurityGroupModule
     Value: !GetAtt RemediationFunction.Arn
   EventBusRegion:
     Value: !Ref AWS::Region
   RemediationExecutionsTableName:
+    Condition: SecurityGroupModule
     Value: !Ref RemediationExecutionsTable
-  DeployNote:
-    Value: >
-      Deploy this stack in the region where you run aws events put-events (event bus home).
-      Set VigilExecutionWebhookUrl to Vigil API /v1/public/remediation-execution. Upload Lambda zip to S3 first.

@@ -21,8 +21,20 @@ export function resourceName(arn: string): string {
   return `${label} · ${masked}`;
 }
 
+/** Regional account-level checks (Access Analyzer, GuardDuty, etc.) store regions in evidence. */
+export function regionsFromFindingEvidence(ev: Record<string, unknown>): string[] {
+  const raw = ev.disabled_regions ?? ev.affected_regions;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((r): r is string => typeof r === "string" && r.trim().length > 0);
+}
+
 export function resourceDisplayName(f: FindingLike): string {
   const e = f.evidence;
+  const regions = regionsFromFindingEvidence(e);
+  if (regions.length > 0) {
+    const n = typeof e.region_count === "number" ? e.region_count : regions.length;
+    return `${n} region${n === 1 ? "" : "s"}`;
+  }
   const pick = (...keys: string[]) => {
     for (const k of keys) {
       const v = e[k];

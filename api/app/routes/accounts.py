@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.aws import assume_role, ensure_vigil_role_trust, verify_account
+from app.services.policy_generation_messages import (
+    POLICY_GEN_ASSUME_FAILED_NOTE,
+    POLICY_GEN_NO_CONNECTOR_NOTE,
+    POLICY_GEN_NO_JOB_NOTE,
+)
 from app.services.access_analyzer_policy import (
+    apply_aa_resources_to_policy_doc,
     confidence_for,
     derive_advanced_role_arn,
     fetch_latest_generated_policy,
@@ -46,14 +52,35 @@ from app.models.resources import (
     S3AccountPublicAccessBlock, S3Bucket, SecretsManagerSecret, SecurityGroup,
     SecurityHubStatus, SnsTopic, SsmParameter, SqsQueue, Vpc,
 )
+from app.data.remediation_modules import (
+    REMEDIATION_MODULES,
+    remediation_deployed_dict,
+    remediation_modules_dict,
+    set_remediation_modules,
+)
 from app.models.org import Org
 
 router = APIRouter()
 settings = get_settings()
 
 
+class RemediationModulesIn(BaseModel):
+    security_groups: bool = False
+    s3_public_access: bool = False
+    iam_access_keys: bool = False
+    iam_policies: bool = False
+    cloudtrail_logging: bool = False
+
+
 class AccountIn(BaseModel):
     label: str = "AWS Account"
+    enable_advanced_policy_generation: bool = False
+    remediation_modules: RemediationModulesIn = RemediationModulesIn()
+
+
+class ConnectionOptionsIn(BaseModel):
+    enable_advanced_policy_generation: bool
+    remediation_modules: RemediationModulesIn
 
 
 class AccountOut(BaseModel):
@@ -63,50 +90,210 @@ class AccountOut(BaseModel):
     status: str
     external_id: str
     role_arn: str | None = None
+    enable_advanced_policy_generation: bool = False
+    remediation_modules: RemediationModulesIn
+    remediation_modules_deployed: RemediationModulesIn
+    advanced_policy_generation_deployed: bool = False
+    cfn_stack_name: str = "VigilAccountConnector"
     cfn_launch_url: str | None = None
+    cfn_update_launch_url: str | None = None
     cfn_template_url: str | None = None
     cfn_cli_command: str | None = None
+    cfn_update_cli_command: str | None = None
+    remediation_cfn_launch_url: str | None = None
+    remediation_cfn_template_url: str | None = None
+    remediation_cfn_cli_command: str | None = None
     last_scan_at: datetime | None = None
+    last_error: str | None = None
 
 
 class VerifyIn(BaseModel):
     role_arn: str
 
 
-def _launch_url(external_id: str) -> str:
+def _yes_no(flag: bool) -> str:
+    return "Yes" if flag else "No"
+
+
+def _remediation_modules_in(modules: dict[str, bool]) -> RemediationModulesIn:
+    return RemediationModulesIn(**{m.id: bool(modules.get(m.id, False)) for m in REMEDIATION_MODULES})
+
+
+def _modules_from_body(body: RemediationModulesIn) -> dict[str, bool]:
+    return body.model_dump()
+
+
+def _cfn_stack_params(
+    external_id: str,
+    *,
+    stack_name: str,
+    enable_advanced_policy_generation: bool,
+    remediation_modules: dict[str, bool],
+) -> dict[str, str]:
+    s = get_settings()
     params = {
-        "templateURL": settings.CFN_TEMPLATE_URL,
-        "stackName": "VigilReadOnly",
+        "templateURL": s.CFN_TEMPLATE_URL,
+        "stackName": stack_name,
         "param_ExternalId": external_id,
-        "param_VigilAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
+        "param_VigilAccountPrincipal": s.TRUST_PRINCIPAL_ARN,
+        "param_RoleName": s.CFN_SCANNER_ROLE_NAME,
+        "param_EnableAdvancedPolicyGeneration": _yes_no(enable_advanced_policy_generation),
+    }
+    for spec in REMEDIATION_MODULES:
+        params[f"param_{spec.cfn_parameter}"] = _yes_no(remediation_modules.get(spec.id, False))
+    return params
+
+
+def _launch_url(
+    external_id: str,
+    *,
+    stack_name: str,
+    enable_advanced_policy_generation: bool,
+    remediation_modules: dict[str, bool],
+) -> str:
+    params = _cfn_stack_params(
+        external_id,
+        stack_name=stack_name,
+        enable_advanced_policy_generation=enable_advanced_policy_generation,
+        remediation_modules=remediation_modules,
+    )
+    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
+    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
+
+
+def _update_launch_url(
+    external_id: str,
+    *,
+    stack_name: str,
+    enable_advanced_policy_generation: bool,
+    remediation_modules: dict[str, bool],
+) -> str:
+    params = _cfn_stack_params(
+        external_id,
+        stack_name=stack_name,
+        enable_advanced_policy_generation=enable_advanced_policy_generation,
+        remediation_modules=remediation_modules,
+    )
+    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
+    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/update/review?{qs}"
+
+
+def _cli_command(
+    external_id: str,
+    *,
+    stack_name: str,
+    enable_advanced_policy_generation: bool,
+    remediation_modules: dict[str, bool],
+) -> str:
+    s = get_settings()
+    lines = [
+        "aws cloudformation create-stack \\",
+        f"  --stack-name {stack_name} \\",
+        f"  --template-url {s.CFN_TEMPLATE_URL} \\",
+        "  --parameters \\",
+        f"    ParameterKey=ExternalId,ParameterValue={external_id} \\",
+        f"    ParameterKey=VigilAccountPrincipal,ParameterValue={s.TRUST_PRINCIPAL_ARN} \\",
+        f"    ParameterKey=RoleName,ParameterValue={s.CFN_SCANNER_ROLE_NAME} \\",
+        f"    ParameterKey=EnableAdvancedPolicyGeneration,ParameterValue={_yes_no(enable_advanced_policy_generation)} \\",
+    ]
+    for spec in REMEDIATION_MODULES:
+        lines.append(
+            f"    ParameterKey={spec.cfn_parameter},ParameterValue={_yes_no(remediation_modules.get(spec.id, False))} \\"
+        )
+    lines.append("  --capabilities CAPABILITY_NAMED_IAM")
+    return "\n".join(lines)
+
+
+def _update_cli_command(
+    external_id: str,
+    *,
+    stack_name: str,
+    enable_advanced_policy_generation: bool,
+    remediation_modules: dict[str, bool],
+) -> str:
+    s = get_settings()
+    lines = [
+        "aws cloudformation update-stack \\",
+        f"  --stack-name {stack_name} \\",
+        f"  --template-url {s.CFN_TEMPLATE_URL} \\",
+        "  --parameters \\",
+        f"    ParameterKey=ExternalId,ParameterValue={external_id} \\",
+        f"    ParameterKey=VigilAccountPrincipal,ParameterValue={s.TRUST_PRINCIPAL_ARN} \\",
+        f"    ParameterKey=RoleName,ParameterValue={s.CFN_SCANNER_ROLE_NAME} \\",
+        f"    ParameterKey=EnableAdvancedPolicyGeneration,ParameterValue={_yes_no(enable_advanced_policy_generation)} \\",
+    ]
+    for spec in REMEDIATION_MODULES:
+        lines.append(
+            f"    ParameterKey={spec.cfn_parameter},ParameterValue={_yes_no(remediation_modules.get(spec.id, False))} \\"
+        )
+    lines.append("  --capabilities CAPABILITY_NAMED_IAM")
+    return "\n".join(lines)
+
+
+def _remediation_launch_url() -> str:
+    params = {
+        "templateURL": get_settings().CFN_REMEDIATION_TEMPLATE_URL,
+        "stackName": "VigilRemediationRunner",
     }
     qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
     return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
 
 
-def _cli_command(external_id: str) -> str:
+def _remediation_cli_command() -> str:
     return (
         "aws cloudformation create-stack \\\n"
-        "  --stack-name VigilReadOnly \\\n"
-        f"  --template-url {settings.CFN_TEMPLATE_URL} \\\n"
-        "  --parameters \\\n"
-        f"    ParameterKey=ExternalId,ParameterValue={external_id} \\\n"
-        f"    ParameterKey=VigilAccountPrincipal,ParameterValue={settings.TRUST_PRINCIPAL_ARN} \\\n"
+        "  --stack-name VigilRemediationRunner \\\n"
+        f"  --template-url {get_settings().CFN_REMEDIATION_TEMPLATE_URL} \\\n"
         "  --capabilities CAPABILITY_NAMED_IAM"
     )
 
 
+def _create_stack_name() -> str:
+    """Launch/create URLs and CLI always target the current connector stack."""
+    return settings.CFN_STACK_NAME
+
+
+def _update_stack_name(acc: AwsAccount) -> str:
+    """Update URLs and CLI target the stack already deployed in the account."""
+    return acc.cfn_stack_name
+
+
+def _display_cfn_stack_name(acc: AwsAccount) -> str:
+    """UI label: pending legacy rows show current name; connected legacy keeps VigilReadOnly."""
+    if acc.status != "connected" and acc.cfn_stack_name == settings.CFN_STACK_NAME_LEGACY:
+        return settings.CFN_STACK_NAME
+    return acc.cfn_stack_name
+
+
 def _account_out(acc: AwsAccount) -> AccountOut:
+    modules = remediation_modules_dict(acc)
+    option_kwargs = dict(
+        enable_advanced_policy_generation=acc.enable_advanced_policy_generation,
+        remediation_modules=modules,
+    )
+    create_opts = dict(stack_name=_create_stack_name(), **option_kwargs)
+    update_opts = dict(stack_name=_update_stack_name(acc), **option_kwargs)
     return AccountOut(
         id=str(acc.id),
         label=acc.label,
         account_id=acc.account_id,
         status=acc.status,
         external_id=acc.external_id,
-        role_arn=acc.role_arn if acc.status == "connected" else None,
-        cfn_launch_url=_launch_url(acc.external_id),
-        cfn_template_url=settings.CFN_TEMPLATE_URL,
-        cfn_cli_command=_cli_command(acc.external_id),
+        role_arn=acc.role_arn if acc.role_arn and (acc.status == "connected" or acc.account_id) else None,
+        last_error=acc.last_error,
+        enable_advanced_policy_generation=acc.enable_advanced_policy_generation,
+        remediation_modules=_remediation_modules_in(modules),
+        remediation_modules_deployed=_remediation_modules_in(remediation_deployed_dict(acc)),
+        advanced_policy_generation_deployed=acc.advanced_policy_generation_deployed,
+        cfn_stack_name=_display_cfn_stack_name(acc),
+        cfn_launch_url=_launch_url(acc.external_id, **create_opts),
+        cfn_update_launch_url=_update_launch_url(acc.external_id, **update_opts),
+        cfn_template_url=get_settings().CFN_TEMPLATE_URL,
+        cfn_cli_command=_cli_command(acc.external_id, **create_opts),
+        cfn_update_cli_command=_update_cli_command(acc.external_id, **update_opts),
+        remediation_cfn_launch_url=None,
+        remediation_cfn_template_url=None,
+        remediation_cfn_cli_command=None,
         last_scan_at=acc.last_scan_at,
     )
 
@@ -121,15 +308,73 @@ def create_account(body: AccountIn, p=Depends(current_principal), db: Session = 
         org_id=uuid.UUID(p["org_id"]),
         label=body.label,
         external_id=ext,
+        cfn_stack_name=settings.CFN_STACK_NAME,
+        enable_advanced_policy_generation=body.enable_advanced_policy_generation,
     )
+    set_remediation_modules(acc, _modules_from_body(body.remediation_modules))
     db.add(acc)
     db.commit()
     return _account_out(acc)
 
 
+@router.patch("/{account_id}/connection-options", response_model=AccountOut)
+def update_connection_options(
+    account_id: str,
+    body: ConnectionOptionsIn,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    incoming = _modules_from_body(body.remediation_modules)
+    current = remediation_modules_dict(acc)
+    if (
+        acc.enable_advanced_policy_generation
+        and not body.enable_advanced_policy_generation
+        and acc.advanced_policy_generation_deployed
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Advanced IAM policy generation is verified in your deployed role. "
+            "Update your CloudFormation stack with EnableAdvancedPolicyGeneration=No, "
+            "run Verify permissions, then turn this off in Vigil.",
+        )
+    for spec in REMEDIATION_MODULES:
+        if (
+            current.get(spec.id)
+            and not incoming.get(spec.id)
+            and getattr(acc, spec.deployed_column)
+        ):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"{spec.label} remediation is verified in your deployed role. "
+                f"Update your stack with {spec.cfn_parameter}=No, verify, then disable in Vigil.",
+            )
+    if body.enable_advanced_policy_generation != acc.enable_advanced_policy_generation:
+        acc.advanced_policy_generation_deployed = False
+    for spec in REMEDIATION_MODULES:
+        if incoming.get(spec.id) != current.get(spec.id):
+            setattr(acc, spec.deployed_column, False)
+    acc.enable_advanced_policy_generation = body.enable_advanced_policy_generation
+    set_remediation_modules(acc, incoming)
+    db.commit()
+    return _account_out(acc)
+
+
+def _heal_established_account_after_failed_reverify(acc: AwsAccount) -> bool:
+    """Older clients set status=error on failed role update even when the good role_arn was kept."""
+    if acc.status == "error" and acc.account_id and acc.role_arn:
+        acc.status = "connected"
+        return True
+    return False
+
+
 @router.get("", response_model=list[AccountOut])
 def list_accounts(p=Depends(current_principal), db: Session = Depends(get_db)):
     rows = db.scalars(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"]))).all()
+    if any(_heal_established_account_after_failed_reverify(a) for a in rows):
+        db.commit()
     return [_account_out(a) for a in rows]
 
 
@@ -208,10 +453,15 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    role_update = acc.status == "connected" and bool(acc.role_arn)
     ok, aws_account_id, alias, err = verify_account(body.role_arn, acc.external_id, aws_account=acc)
     if not ok:
-        acc.status = "error"
-        acc.last_error = err
+        # Do not demote an established account when a role ARN update fails — keep scanning on the last good role.
+        if acc.status != "connected":
+            acc.last_error = err
+            acc.status = "error"
+        else:
+            acc.last_error = None
         db.commit()
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"assume role failed: {err}")
     acc.role_arn = body.role_arn
@@ -219,12 +469,36 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
     acc.label = alias or aws_account_id or acc.label
     acc.status = "connected"
     acc.last_error = None
+    from app.services.account_capabilities import apply_capability_verification
+
+    apply_capability_verification(acc)
     db.commit()
 
-    from app.worker.tasks import run_scan
-    run_scan.delay(str(acc.id))
+    if not role_update:
+        from app.worker.tasks import run_scan
+
+        run_scan.delay(str(acc.id))
 
     return _account_out(acc)
+
+
+@router.post("/{account_id}/verify-capabilities")
+def verify_capabilities(account_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Confirm optional CFN nested stacks are deployed (assume advanced role, check remediation runner)."""
+    from app.services.account_capabilities import apply_capability_verification
+
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    if acc.status != "connected" or not acc.role_arn:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Connect and verify the core scanner role before checking optional capabilities",
+        )
+    results = apply_capability_verification(acc)
+    db.commit()
+    verification = results.pop("verification", None)
+    return {"account": _account_out(acc), "capabilities": results, "verification": verification}
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -474,44 +748,42 @@ def _clean_policy_doc(
 
 
 _CONFIDENCE_NOTE = {
-    "high": "High confidence — actions and resource ARNs are CloudTrail-derived via IAM Access Analyzer.",
-    "medium": "Medium confidence — action-level scoping from IAM last-accessed; resource ARNs unavailable. "
-    "Enable the advanced Access Analyzer role for ARN-level scoping.",
+    "high": "High confidence — actions and resource ARNs come from a completed CloudTrail policy-generation job.",
+    "medium": "Medium confidence — action-level scoping from IAM last-accessed; resource ARNs need a "
+    "completed CloudTrail policy-generation job for this role.",
     "low": "Low confidence — only service-level evidence is available, so scoping stays broad. "
     "Permissions are preserved (never silently dropped); see warnings.",
 }
 
 
+def _opted_in_aws_regions(sess) -> list[str]:
+    ec2 = sess.client("ec2", region_name="us-east-1")
+    return [
+        r["RegionName"]
+        for r in ec2.describe_regions(
+            Filters=[{"Name": "opt-in-status", "Values": ["opt-in-not-required", "opted-in"]}]
+        )["Regions"]
+    ]
+
+
 def _resolve_advanced_policy_generation(
     db: Session, acc: AwsAccount, role_arn: str
 ) -> dict:
-    """Best-effort: assume the optional advanced role and fetch the latest *completed* Access
-    Analyzer generated policy for this principal. Never raises — any failure degrades to a note
-    so the action-level result (IAM last-accessed) is always returned. Read-only: no generation
-    is started inline and nothing is written to customer AWS.
+    """Fetch the latest completed CloudTrail policy-generation job for this IAM principal.
+
+    Uses access-analyzer policy-generation APIs (principalArn + CloudTrail). Does not require an
+    external/internal/unused Access Analyzer resource analyzer to be enabled. Never raises.
     """
-    active = db.scalars(
-        select(AccessAnalyzer).where(
-            AccessAnalyzer.account_id == acc.id,
-            AccessAnalyzer.status == "ACTIVE",
-        )
-    ).all()
-    if not active:
-        return {
-            "available": False,
-            "reason": "analyzer_off",
-            "note": "Enable IAM Access Analyzer in your active regions, then re-scan.",
-        }
-    advanced_arn = derive_advanced_role_arn(acc.role_arn)
-    if not advanced_arn:
+    policy_arn = derive_advanced_role_arn(acc.role_arn) or acc.role_arn
+    if not policy_arn:
         return {
             "available": False,
             "reason": "no_advanced_role",
-            "note": "Could not derive the advanced policy-gen role ARN from the connected role.",
+            "note": POLICY_GEN_NO_CONNECTOR_NOTE,
         }
     try:
         sess = assume_role(
-            advanced_arn,
+            policy_arn,
             acc.external_id,
             session_name="vigil-policy-gen",
             aws_account=acc,
@@ -521,12 +793,21 @@ def _resolve_advanced_policy_generation(
         return {
             "available": False,
             "reason": "assume_failed",
-            "note": (
-                "Advanced policy-generation role is not assumable. Re-deploy the CloudFormation "
-                "stack with EnableAdvancedPolicyGeneration=Yes to create the *AdvancedPolicyGen role."
-            ),
+            "note": POLICY_GEN_ASSUME_FAILED_NOTE,
         }
-    for region in [a.region for a in active if a.region]:
+    active = db.scalars(
+        select(AccessAnalyzer).where(
+            AccessAnalyzer.account_id == acc.id,
+            AccessAnalyzer.status == "ACTIVE",
+        )
+    ).all()
+    regions = list(dict.fromkeys(a.region for a in active if a.region))
+    if not regions:
+        try:
+            regions = _opted_in_aws_regions(sess)
+        except (ClientError, BotoCoreError):
+            regions = ["us-east-1"]
+    for region in regions:
         try:
             client = sess.client("accessanalyzer", region_name=region)
             result = fetch_latest_generated_policy(client, role_arn)
@@ -537,11 +818,7 @@ def _resolve_advanced_policy_generation(
     return {
         "available": False,
         "reason": "no_generation",
-        "note": (
-            "Access Analyzer is enabled but has no completed policy generation for this role yet. "
-            "Start one (Console -> Access Analyzer -> Generate policy based on CloudTrail), then "
-            "re-open this panel to integrate resource-level ARNs."
-        ),
+        "note": POLICY_GEN_NO_JOB_NOTE,
     }
 
 
@@ -551,9 +828,12 @@ def _policy_generation_meta(
     *,
     threshold_days: int,
     advanced: bool,
+    advanced_requested: bool | None = None,
     has_action_data: bool,
     aa: dict | None = None,
 ) -> dict:
+    if advanced_requested is None:
+        advanced_requested = advanced
     active_analyzers = db.scalars(
         select(AccessAnalyzer).where(
             AccessAnalyzer.account_id == account_id,
@@ -564,32 +844,41 @@ def _policy_generation_meta(
     aa_resource = bool(aa and aa.get("available") and aa.get("statements"))
     confidence = confidence_for(aa_resource_data=aa_resource, has_action_data=has_action_data)
 
+    if advanced and not aa_resource and (aa or {}).get("note"):
+        confidence_note = aa["note"]
+    elif not advanced and has_action_data:
+        confidence_note = (
+            "Action-level from IAM last accessed. For resource ARNs, enable Advanced IAM policy "
+            "generation on the connector and run a CloudTrail policy-generation job for this role."
+        )
+    else:
+        confidence_note = _CONFIDENCE_NOTE[confidence]
+
     if not advanced:
         advanced_note = None
     elif aa_resource:
         advanced_note = (
-            f"Integrated IAM Access Analyzer generated policy (job {aa.get('job_id')}, completed "
-            f"{aa.get('completed_on')}). Actions and resource ARNs are CloudTrail-derived."
+            f"CloudTrail policy generation job {aa.get('job_id')} completed "
+            f"{aa.get('completed_on')}. Actions and resource ARNs are CloudTrail-derived."
         )
     else:
-        advanced_note = (aa or {}).get("note") or (
-            "Enable IAM Access Analyzer in your active regions, then re-scan."
-        )
+        advanced_note = (aa or {}).get("note")
 
     meta = {
         "coverage": {"actions": has_action_data, "resources": aa_resource},
-        "source": "access_analyzer+iam_last_accessed" if aa_resource else "iam_last_accessed",
+        "source": "cloudtrail_policy_generation+iam_last_accessed" if aa_resource else "iam_last_accessed",
         "source_label": (
-            f"IAM Access Analyzer (CloudTrail) + IAM last accessed ({threshold_days} days)"
+            f"CloudTrail policy generation + IAM last accessed ({threshold_days} days)"
             if aa_resource
             else f"IAM last accessed ({threshold_days} days)"
         ),
         "access_analyzer_enabled": aa_on,
-        "advanced_available": aa_on,
-        "advanced_requested": advanced,
+        "advanced_available": advanced,
+        "advanced_requested": advanced_requested,
+        "advanced_effective": advanced,
         "advanced_note": advanced_note,
         "confidence": confidence,
-        "confidence_note": _CONFIDENCE_NOTE[confidence],
+        "confidence_note": confidence_note,
     }
     if advanced:
         meta["access_analyzer"] = {
@@ -641,12 +930,19 @@ def generate_role_policy(
     service_only = sorted(services_with_service_only_evidence(usages, cutoff))
     action_evidence = sorted(services_with_action_evidence(usages, cutoff))
 
-    # Advanced (opt-in): integrate IAM Access Analyzer CloudTrail-derived resource-scoped policy.
-    # Union-only merge — never drops a used service; degrades to action-level on any AA failure.
-    aa = _resolve_advanced_policy_generation(db, acc, role_arn) if advanced else None
+    # Advanced: integrate IAM Access Analyzer CloudTrail-derived resource-scoped policy when
+    # requested or when the account has policy-generation capability deployed/enabled.
+    use_advanced = (
+        advanced
+        or acc.enable_advanced_policy_generation
+        or acc.advanced_policy_generation_deployed
+    )
+    aa = _resolve_advanced_policy_generation(db, acc, role_arn) if use_advanced else None
+    aa_statements = None
     if aa and aa.get("available") and aa.get("statements"):
+        aa_statements = aa["statements"]
         used_actions, aa_merge_warnings = merge_access_analyzer(
-            used_actions, aa["statements"], used_set
+            used_actions, aa_statements, used_set
         )
         policy_warnings = [*policy_warnings, *aa_merge_warnings]
 
@@ -655,7 +951,8 @@ def generate_role_policy(
         db,
         acc.id,
         threshold_days=threshold_days,
-        advanced=advanced,
+        advanced=use_advanced,
+        advanced_requested=advanced,
         has_action_data=bool(tracked_actions),
         aa=aa,
     )
@@ -684,6 +981,8 @@ def generate_role_policy(
     total_modified = 0
     for policy_name, doc in inline.items():
         cleaned, removed, modified = _clean_policy_doc(doc, unused_set, used_set, used_actions)
+        if aa_statements:
+            cleaned = apply_aa_resources_to_policy_doc(cleaned, aa_statements)
         cleaned_policies[policy_name] = cleaned
         total_removed += removed
         total_modified += modified
@@ -889,14 +1188,21 @@ def blast_radius(
 
     # ── IAM Access Key ───────────────────────────────────────────────────────
     if check_id.startswith("iam.access_key."):
-        # resource_arn here is the user ARN; key_id is in the finding title/evidence
+        # iam.access_key.unused_90d uses "{user_arn}#{key_id}"; other key checks use user_arn only
+        user_arn = resource_arn
+        key_id_filter: str | None = None
+        if "#" in resource_arn:
+            user_arn, key_id_filter = resource_arn.rsplit("#", 1)
+
         keys = db.scalars(
             select(IamAccessKey).where(
                 IamAccessKey.account_id == acc.id,
-                IamAccessKey.user_arn == resource_arn,
+                IamAccessKey.user_arn == user_arn,
                 IamAccessKey.status == "Active",
             )
         ).all()
+        if key_id_filter:
+            keys = [k for k in keys if k.key_id == key_id_filter]
 
         key_data = []
         for k in keys:
@@ -1488,18 +1794,40 @@ def blast_radius(
             "warnings": ["AWS Config records all configuration changes and stores them in S3 — budget ~$2–$5/month for a typical startup account"],
         }
 
-    if check_id == "aws.securityhub.not_enabled":
-        return {
-            "resource_type": "securityhub",
-            "confidence": "high",
-            "warnings": ["Security Hub costs ~$0.001 per check per resource — typically $5–$20/month for a startup-scale account"],
-        }
-
     if check_id == "aws.access_analyzer.not_enabled":
+        disabled_regions = sorted(
+            r.region
+            for r in db.scalars(
+                select(AccessAnalyzer).where(
+                    AccessAnalyzer.account_id == acc.id,
+                    AccessAnalyzer.status != "ACTIVE",
+                )
+            ).all()
+        )
         return {
             "resource_type": "access_analyzer",
             "confidence": "high",
+            "disabled_regions": disabled_regions,
             "warnings": [],
+        }
+
+    if check_id == "aws.securityhub.not_enabled":
+        disabled_regions = sorted(
+            s.region
+            for s in db.scalars(
+                select(SecurityHubStatus).where(
+                    SecurityHubStatus.account_id == acc.id,
+                    SecurityHubStatus.enabled == False,  # noqa: E712
+                )
+            ).all()
+        )
+        return {
+            "resource_type": "securityhub",
+            "confidence": "high",
+            "disabled_regions": disabled_regions,
+            "warnings": [
+                "Security Hub costs ~$0.001 per check per resource — typically $5–$20/month for a startup-scale account"
+            ],
         }
 
     # ── IAM Policy ───────────────────────────────────────────────────────────

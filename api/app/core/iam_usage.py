@@ -142,7 +142,8 @@ def augment_used_actions_with_granted_for_service_only(
             warnings.append(
                 f"{svc}: used recently but IAM returned service-level evidence only and the grant is a "
                 f"wildcard. Preserved as {wildcard} so the workload keeps working — could not scope to "
-                "specific actions. Enable IAM Access Analyzer for action/resource-level least-privilege."
+                "specific actions. Run CloudTrail policy generation for this role (Remediation → "
+                "advanced generate) once CloudTrail has enough history for this service."
             )
         else:
             warnings.append(

@@ -11,7 +11,9 @@ from app.services.check_evidence import evidence_class_label, evidence_class_for
 # Vigil flags these but never performs the change — see _remediation_ownership.
 _CREDENTIAL_LIFECYCLE_CHECKS = frozenset({
     "iam.user.inactive_90d",
+    "iam.user.credentials_unused_45d",
     "iam.access_key.unused_90d",
+    "iam.access_key.unused_45d",
     "iam.access_key.no_rotation_90d",
     "iam.access_key.multiple_active",
     "iam.role.unassumed_90d",

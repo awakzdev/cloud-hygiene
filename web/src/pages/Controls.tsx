@@ -4,8 +4,15 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { labelForCheck } from "../data/checkLabels";
 import { FRAMEWORKS } from "../data/frameworks";
+import ConnectAwsEmptyState from "../components/ConnectAwsEmptyState";
 import { EvidencePackExportPanel } from "../components/EvidencePackExportPanel";
 import type { EvidenceCoverage } from "../lib/evidenceCoverage";
+import {
+  controlEvidenceSectionTitle,
+  controlEvidenceUsesType2Bar,
+  showControlEvidenceSection,
+} from "../lib/frameworkEvidenceCoverage";
+import { isAccountConnected } from "../lib/accountConnection";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
@@ -52,6 +59,22 @@ const AUDIT_WINDOWS = [
 ] as const;
 
 type StatusFilter = "all" | "pass" | "fail" | "no_data";
+
+/** How rows are ordered inside each control domain tab. */
+type ControlSortMode = "findings" | "control_id";
+
+const CONTROL_SORT_OPTIONS: { id: ControlSortMode; label: string; title: string }[] = [
+  {
+    id: "findings",
+    label: "Findings",
+    title: "Highest open finding count first",
+  },
+  {
+    id: "control_id",
+    label: "Control ID",
+    title: "Benchmark order (e.g. CC6.1, CC6.2, CC6.3)",
+  },
+];
 
 const statusAccent: Record<string, string> = {
   pass: "border-l-emerald-300/50",
@@ -200,7 +223,36 @@ function controlFamily(framework: string, controlId: string) {
   return { key: "other", label: "Other Controls" };
 }
 
-function groupControls(rows: ControlRow[], framework: string): ControlGroup[] {
+function controlIdSortKey(controlId: string): (string | number)[] {
+  const parts: (string | number)[] = [];
+  const re = /(\d+)|(\D+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(controlId)) !== null) {
+    parts.push(match[1] ? Number.parseInt(match[1], 10) : match[2]);
+  }
+  return parts;
+}
+
+function compareControlIds(a: string, b: string): number {
+  const pa = controlIdSortKey(a);
+  const pb = controlIdSortKey(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i += 1) {
+    const va = pa[i];
+    const vb = pb[i];
+    if (va === undefined) return -1;
+    if (vb === undefined) return 1;
+    if (typeof va === "number" && typeof vb === "number") {
+      if (va !== vb) return va - vb;
+    } else {
+      const cmp = String(va).localeCompare(String(vb));
+      if (cmp !== 0) return cmp;
+    }
+  }
+  return 0;
+}
+
+function groupControls(rows: ControlRow[], framework: string, sortMode: ControlSortMode): ControlGroup[] {
   const groups = new Map<string, ControlGroup>();
 
   for (const row of rows) {
@@ -224,13 +276,17 @@ function groupControls(rows: ControlRow[], framework: string): ControlGroup[] {
 
   for (const group of groups.values()) {
     group.rows.sort((a, b) => {
+      if (sortMode === "control_id") {
+        const idCmp = compareControlIds(a.control_id, b.control_id);
+        if (idCmp !== 0) return idCmp;
+        return b.finding_count - a.finding_count;
+      }
       const statusRank = (s: ControlRow["status"]) => (s === "fail" ? 0 : s === "no_data" ? 1 : 2);
       const rankDiff = statusRank(a.status) - statusRank(b.status);
       if (rankDiff !== 0) return rankDiff;
-      if (a.status === "fail" && b.status === "fail") {
-        return b.finding_count - a.finding_count;
-      }
-      return a.control_id.localeCompare(b.control_id);
+      const findingDiff = b.finding_count - a.finding_count;
+      if (findingDiff !== 0) return findingDiff;
+      return compareControlIds(a.control_id, b.control_id);
     });
   }
 
@@ -368,34 +424,16 @@ function EvidenceClassBadge({ evidenceClass }: { evidenceClass?: string }) {
   );
 }
 
-function CoverageTierBadge({ tier, label }: { tier?: string; label?: string | null }) {
-  if (!tier || tier === "core" || tier === "no_data") return null;
-  const text = label ?? (tier === "extended" ? "Supports control objective" : "Core + extended");
-  return (
-    <span
-      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
-        tier === "extended"
-          ? "bg-sky-50 text-sky-800 ring-sky-200/70"
-          : "bg-violet-50 text-violet-800 ring-violet-200/70"
-      }`}
-    >
-      {text}
-    </span>
-  );
-}
-
 const EMPTY_CHECK_COUNTS = new Map<string, number>();
 
 function MappedChecksList({
   checkIds,
-  checkTiers = {},
   checkEvidenceClasses = {},
   findingCountByCheck = EMPTY_CHECK_COUNTS,
   findingsOnly = false,
   hideHeader = false,
 }: {
   checkIds: string[];
-  checkTiers?: Record<string, string>;
   checkEvidenceClasses?: Record<string, string>;
   findingCountByCheck?: Map<string, number>;
   findingsOnly?: boolean;
@@ -447,9 +485,6 @@ function MappedChecksList({
                         )}
                       </p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        {checkTiers[cid] === "extended" && (
-                          <span className="text-[10px] font-medium text-sky-700">Supports control objective</span>
-                        )}
                         <EvidenceClassBadge evidenceClass={checkEvidenceClasses[cid]} />
                       </div>
                     </div>
@@ -523,12 +558,6 @@ function buildAuditorResponseForCopy(control: ControlRow): string {
   return "Evidence is collected continuously and retained for the selected audit period.";
 }
 
-function coverageMilestoneDays(total: number): number[] {
-  if (total >= 90) return [0, 30, 60, total];
-  if (total >= 30) return [0, Math.round(total / 2), total];
-  return [0, total];
-}
-
 function CoverageProgressBar({
   coverageDays,
   coverageTotal,
@@ -540,55 +569,19 @@ function CoverageProgressBar({
   coveragePct: number;
   barFillClass: string;
 }) {
-  const milestones = coverageMilestoneDays(coverageTotal);
-
   return (
     <div
-      className="group/bar relative h-2.5"
+      className="h-2.5 overflow-hidden rounded bg-zinc-200/60 ring-1 ring-inset ring-zinc-300/25"
       role="progressbar"
       aria-valuenow={coveragePct}
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={`${coverageDays} of ${coverageTotal} audit days with evidence (${coveragePct}%)`}
     >
-      <div className="absolute inset-0 overflow-hidden rounded bg-zinc-200/60 ring-1 ring-inset ring-zinc-300/25">
-        <div
-          className={`absolute inset-y-0 left-0 bg-gradient-to-r ${barFillClass} transition-all`}
-          style={{ width: `${Math.max(coveragePct, 2)}%` }}
-        />
-      </div>
-
-      <div className="pointer-events-none absolute inset-0 z-10" aria-hidden>
-        <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-zinc-300/35" />
-        {milestones.map((day) => {
-          const pct = coverageTotal > 0 ? (day / coverageTotal) * 100 : 0;
-          const hoverLabel = day > 0 ? `${day}d` : null;
-          const reached = coverageDays >= day;
-          const atStart = day === 0;
-          const atEnd = day === coverageTotal;
-
-          return (
-            <div
-              key={day}
-              className={`group/dot pointer-events-auto absolute top-1/2 -translate-y-1/2 ${
-                atStart ? "left-0" : atEnd ? "right-0" : "left-0 -translate-x-1/2"
-              }`}
-              style={atStart || atEnd ? undefined : { left: `${pct}%` }}
-            >
-              <span
-                className={`block h-2 w-2 rounded-full ring-2 ring-white/90 transition-colors ${
-                  reached ? "bg-zinc-500/90" : "bg-zinc-400/70"
-                } group-hover/bar:bg-zinc-500 group-hover/dot:bg-zinc-600`}
-              />
-              {hoverLabel && (
-                <span className="pointer-events-none absolute bottom-full left-1/2 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-zinc-600 opacity-0 shadow-sm ring-1 ring-zinc-200/70 bg-white/95 transition-opacity group-hover/bar:opacity-100 group-hover/dot:opacity-100">
-                  {hoverLabel}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <div
+        className={`h-full bg-gradient-to-r ${barFillClass} transition-all`}
+        style={{ width: `${Math.max(coveragePct, 2)}%` }}
+      />
     </div>
   );
 }
@@ -662,12 +655,6 @@ function ControlStatusBlock({
   }
   if (scans != null) supportMetrics.push({ value: String(scans), label: "Scans" });
 
-  const daysRemaining = Math.max(0, coverageTotal - coverageDays);
-  const coverageNote =
-    coverage?.warning && daysRemaining > 0
-      ? `${daysRemaining} additional audit day${daysRemaining === 1 ? "" : "s"} required to satisfy SOC 2 Type II evidence requirements.`
-      : null;
-
   const barFillClass =
     coveragePct >= 80 ? "from-emerald-500/90 to-emerald-600/80" : coveragePct >= 40 ? "from-amber-400/90 to-amber-500/80" : "from-rose-400/90 to-rose-500/80";
 
@@ -702,46 +689,42 @@ function ControlStatusBlock({
             )}
           </div>
 
+          {showControlEvidenceSection(framework) && (
           <div className="max-w-xl space-y-1.5 overflow-visible border-t border-zinc-200/60 pt-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Evidence coverage</p>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              {controlEvidenceSectionTitle(framework)}
+            </p>
 
             {coverage ? (
-              <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between gap-4">
-                  <p className="text-base leading-snug text-zinc-800">
-                    <span className="font-semibold tabular-nums text-zinc-900">{coverageDays}</span>
-                    <span className="tabular-nums text-zinc-600"> / </span>
-                    <span className="font-semibold tabular-nums text-zinc-900">{coverageTotal}</span>
-                    {" audit days collected"}
-                  </p>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-700">{coveragePct}%</span>
+              controlEvidenceUsesType2Bar(framework) ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between gap-4">
+                    <p className="text-base leading-snug text-zinc-800">
+                      <span className="font-semibold tabular-nums text-zinc-900">{coverageDays}</span>
+                      <span className="tabular-nums text-zinc-600"> / </span>
+                      <span className="font-semibold tabular-nums text-zinc-900">{coverageTotal}</span>
+                      {" audit days collected"}
+                    </p>
+                    <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-700">{coveragePct}%</span>
+                  </div>
+                  <CoverageProgressBar
+                    coverageDays={coverageDays}
+                    coverageTotal={coverageTotal}
+                    coveragePct={coveragePct}
+                    barFillClass={barFillClass}
+                  />
                 </div>
-                <CoverageProgressBar
-                  coverageDays={coverageDays}
-                  coverageTotal={coverageTotal}
-                  coveragePct={coveragePct}
-                  barFillClass={barFillClass}
-                />
-              </div>
+              ) : (
+                <p className="text-base leading-snug text-zinc-800">
+                  <span className="font-semibold tabular-nums text-zinc-900">{coverageDays}</span>
+                  {coverageDays === 1 ? " day" : " days"} collected in the selected export period
+                </p>
+              )
             ) : (
-              <p className="text-base font-semibold text-zinc-800">{periodDays}-day audit window</p>
-            )}
-
-            {coverageNote && (
-              <div
-                className="flex w-full items-center gap-2 rounded-md border border-amber-200/60 bg-gradient-to-br from-amber-50/95 via-amber-50/75 to-amber-100/35 px-2.5 py-1.5 text-xs font-medium leading-snug text-amber-950 shadow-[0_1px_2px_rgba(180,83,9,0.06),0_0_20px_-4px_rgba(251,191,36,0.28)] ring-1 ring-inset ring-white/50"
-                role="note"
-              >
-                <span
-                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-amber-100/90 text-[9px] font-bold leading-none text-amber-700 shadow-[0_0_10px_-2px_rgba(251,191,36,0.55)] ring-1 ring-amber-200/40"
-                  aria-hidden
-                >
-                  i
-                </span>
-                <span>{coverageNote}</span>
-              </div>
+              <p className="text-base font-semibold text-zinc-800">{periodDays}-day export window</p>
             )}
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -781,13 +764,11 @@ function ControlEvaluationBlock({ checkIds }: { checkIds: string[] }) {
 function ControlFindingsBlock({
   control,
   checkIds,
-  checkTiers,
   checkEvidenceClasses,
   findingCountByCheck,
 }: {
   control: ControlRow;
   checkIds: string[];
-  checkTiers?: Record<string, string>;
   checkEvidenceClasses?: Record<string, string>;
   findingCountByCheck: Map<string, number>;
 }) {
@@ -826,7 +807,6 @@ function ControlFindingsBlock({
         <div className="mt-2.5">
           <MappedChecksList
             checkIds={checkIds}
-            checkTiers={checkTiers}
             checkEvidenceClasses={checkEvidenceClasses}
             findingCountByCheck={findingCountByCheck}
             findingsOnly
@@ -1029,6 +1009,7 @@ export default function Controls() {
   const [periodKey, setPeriodKey] = useState<string | number>(90);
   const [asOf, setAsOf] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [controlSort, setControlSort] = useState<ControlSortMode>("control_id");
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
 
@@ -1037,9 +1018,9 @@ export default function Controls() {
     queryFn: () => api<Account[]>("/v1/accounts"),
   });
 
-  const connectedAccount = accounts.data?.find((a) => a.status === "connected");
+  const connectedAccount = accounts.data?.find((a) => isAccountConnected(a));
   const activeAccount =
-    (urlAccountId && accounts.data?.find((a) => a.id === urlAccountId && a.status === "connected")) ||
+    (urlAccountId && accounts.data?.find((a) => a.id === urlAccountId && isAccountConnected(a))) ||
     connectedAccount;
   const hasScanned = !!activeAccount?.last_scan_at;
   const activeFramework = FRAMEWORKS.find((fw) => fw.id === framework)!;
@@ -1150,7 +1131,10 @@ export default function Controls() {
     [rows, statusFilter]
   );
 
-  const groupedRows = useMemo(() => groupControls(filteredRows, framework), [filteredRows, framework]);
+  const groupedRows = useMemo(
+    () => groupControls(filteredRows, framework, controlSort),
+    [filteredRows, framework, controlSort],
+  );
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
   function openControl(ctrl: ControlRow) {
     setSelectedFamilyKey(controlFamily(framework, ctrl.control_id).key);
@@ -1194,22 +1178,7 @@ export default function Controls() {
   }
 
   if (!accounts.isLoading && !connectedAccount) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center px-8 py-20 text-center">
-        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-200 bg-white shadow-sm">
-          <svg className="h-7 w-7 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
-          </svg>
-        </div>
-        <h2 className="mb-2 text-lg font-semibold text-zinc-900">Connect AWS to view compliance</h2>
-        <p className="mb-6 max-w-sm text-sm leading-relaxed text-zinc-500">
-          Map SOC 2, CIS, and ISO 27001 controls to your AWS posture and export auditor-ready evidence packs.
-        </p>
-        <a href="/accounts" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
-          Connect AWS account
-        </a>
-      </div>
-    );
+    return <ConnectAwsEmptyState />;
   }
 
   return (
@@ -1284,6 +1253,7 @@ export default function Controls() {
                     className="absolute right-0 top-full z-[102] mt-2 rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-lg shadow-zinc-950/10"
                   >
                     <EvidencePackExportPanel
+                      frameworkId={framework}
                       frameworkLabel={activeFramework.label}
                       periodKey={periodKey}
                       onPeriodChange={setPeriodKey}
@@ -1294,6 +1264,11 @@ export default function Controls() {
                       controlsEvaluated={total}
                       openFindings={rows.reduce((sum, r) => sum + r.finding_count, 0)}
                       passingCount={passed}
+                      lastScanLabel={
+                        activeAccount?.last_scan_at
+                          ? lastScanLabel(activeAccount.last_scan_at)
+                          : null
+                      }
                       downloading={downloading}
                       onDownload={() => void downloadPack()}
                     />
@@ -1306,7 +1281,7 @@ export default function Controls() {
       )}
 
       {!controls.isLoading && total > 0 && (
-        <div className="mb-3 space-y-2">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/80 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
             {(
               [
@@ -1351,9 +1326,9 @@ export default function Controls() {
 
           {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
               <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-md shadow-zinc-950/[0.05] ring-1 ring-zinc-950/[0.03]">
-                <div className="border-b border-zinc-100 bg-zinc-50/50 px-5 py-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 bg-zinc-50/50 px-5 py-3.5">
                   <div
-                    className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/70 bg-white p-1 shadow-sm shadow-zinc-950/[0.02]"
+                    className="inline-flex min-w-0 flex-wrap items-center gap-1 rounded-xl border border-zinc-200/70 bg-white p-1 shadow-sm shadow-zinc-950/[0.02]"
                     role="tablist"
                     aria-label="Control domains"
                   >
@@ -1392,6 +1367,31 @@ export default function Controls() {
                         </button>
                       );
                     })}
+                  </div>
+                  <div
+                    className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-zinc-200/80 bg-white px-2 py-1 shadow-sm shadow-zinc-950/[0.03]"
+                    role="group"
+                    aria-label="Sort controls"
+                  >
+                    <span className="pl-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">Sort by</span>
+                    {CONTROL_SORT_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        title={opt.title}
+                        onClick={() => {
+                          setControlSort(opt.id);
+                          setExpanded(null);
+                        }}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition-all ${
+                          controlSort === opt.id
+                            ? "bg-zinc-100 text-zinc-900 ring-1 ring-zinc-200/80"
+                            : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -1441,7 +1441,6 @@ export default function Controls() {
                               <span className="text-sm font-semibold leading-snug text-zinc-900">
                                 {shortControlTitle(ctrl.title)}
                               </span>
-                              <CoverageTierBadge tier={ctrl.coverage_tier} label={ctrl.coverage_label} />
                             </div>
                             <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-zinc-500">{meta}</p>
                           </div>
@@ -1483,7 +1482,6 @@ export default function Controls() {
                                 <ControlFindingsBlock
                                   control={ctrl}
                                   checkIds={ctrl.check_ids}
-                                  checkTiers={ctrl.check_tiers}
                                   checkEvidenceClasses={ctrl.check_evidence_classes}
                                   findingCountByCheck={findingCountByCheck}
                                 />

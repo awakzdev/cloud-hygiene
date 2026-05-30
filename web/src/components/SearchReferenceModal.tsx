@@ -2,10 +2,10 @@ import { useMemo, useState, useEffect } from "react";
 
 const rows = [
   { key: "iam.root", value: "AWS account root identity findings, including MFA, root access key, and root usage checks.", examples: ["iam.root.no_mfa", "iam.root.has_access_keys", "iam.root.usage"], group: "IAM" },
-  { key: "iam.user", value: "IAM users collected from the account.", examples: ["iam.user.no_mfa", "iam.user.inactive_90d"], group: "IAM" },
+  { key: "iam.user", value: "IAM users collected from the account.", examples: ["iam.user.no_mfa", "iam.user.credentials_unused_45d"], group: "IAM" },
   { key: "iam.role", value: "IAM roles, trust policies, attached policies, and role activity.", examples: ["iam.role.unassumed_90d", "iam.role.trust_wildcard"], group: "IAM" },
   { key: "iam.policy", value: "Customer-managed IAM policies and attachment count.", examples: ["iam.policy", "PolicyName"], group: "IAM" },
-  { key: "iam.access_key", value: "IAM user access keys, status, last-used service, and rotation age.", examples: ["iam.access_key.unused_90d", "iam.access_key.no_rotation_90d"], group: "IAM" },
+  { key: "iam.access_key", value: "IAM user access keys, status, last-used service, and rotation age.", examples: ["iam.access_key.unused_45d", "iam.access_key.no_rotation_90d"], group: "IAM" },
   { key: "iam.password_policy", value: "Account password policy settings such as minimum length, reuse prevention, and age.", examples: ["iam.account.password_policy_weak"], group: "IAM" },
   { key: "iam.access_analyzer", value: "IAM Access Analyzer regional status.", examples: ["aws.access_analyzer.not_enabled"], group: "IAM" },
   { key: "s3.bucket", value: "S3 buckets and security posture flags such as encryption, logging, HTTPS-only, and public access.", examples: ["s3.bucket.no_kms", "s3.bucket.no_logging"], group: "S3" },

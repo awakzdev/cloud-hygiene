@@ -13,6 +13,16 @@ _MAPPINGS_PATH = Path(__file__).parent.parent.parent / "data" / "control_mapping
 
 FRAMEWORK_PRIORITY = ("soc2", "cis_aws_l1", "iso27001")
 
+# Open findings may still use pre-consolidation check_ids (90d); mappings use 45d only.
+CHECK_CONTROL_ALIASES: dict[str, str] = {
+    "iam.access_key.unused_90d": "iam.access_key.unused_45d",
+    "iam.user.inactive_90d": "iam.user.credentials_unused_45d",
+}
+
+
+def resolve_check_id_for_controls(check_id: str) -> str:
+    return CHECK_CONTROL_ALIASES.get(check_id, check_id)
+
 
 @lru_cache(maxsize=1)
 def _mapping_entries() -> list[dict[str, Any]]:
@@ -28,9 +38,10 @@ def _priority_index(framework: str) -> int:
 
 def controls_for_check(check_id: str) -> list[dict[str, Any]]:
     """All control rows that include this check, sorted by framework priority."""
+    mapped_id = resolve_check_id_for_controls(check_id)
     rows: list[dict[str, Any]] = []
     for entry in _mapping_entries():
-        if check_id not in entry.get("checks", []):
+        if mapped_id not in entry.get("checks", []):
             continue
         fw = entry["framework"]
         cid = entry["control_id"]

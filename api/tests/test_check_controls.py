@@ -30,3 +30,11 @@ def test_iso_reference_27002_obp():
     assert iso_rows
     for row in iso_rows:
         assert "27002" in row["reference_url"]
+
+
+def test_legacy_unused_access_key_maps_like_45d():
+    legacy = check_control_bundle("iam.access_key.unused_90d")
+    current = check_control_bundle("iam.access_key.unused_45d")
+    assert legacy["check_id"] == "iam.access_key.unused_90d"
+    assert len(legacy["controls"]) == len(current["controls"]) >= 1
+    assert {c["framework"] for c in legacy["controls"]} == {c["framework"] for c in current["controls"]}

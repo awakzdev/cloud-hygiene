@@ -144,6 +144,7 @@ def assume_role(
     *,
     aws_account: "AwsAccount | None" = None,
     purpose: str | None = None,
+    strict: bool = False,
 ) -> boto3.Session:
     """Assume the customer's read-only role and return a session.
 
@@ -156,7 +157,7 @@ def assume_role(
     except ClientError as e:
         err = e.response.get("Error", {})
         code = err.get("Code")
-        if code == "AccessDenied" and settings.APP_ENV == "dev":
+        if code == "AccessDenied" and settings.APP_ENV == "dev" and not strict:
             if ensure_vigil_role_trust(role_arn, external_id):
                 try:
                     resp = _sts_assume(role_arn, external_id, session_name)
@@ -177,7 +178,7 @@ def assume_role(
                     )
                 except ClientError:
                     pass
-            if _dev_use_direct_session(role_arn):
+            if not strict and _dev_use_direct_session(role_arn):
                 log.warning(
                     "assume_role.dev_direct_session",
                     role_arn=role_arn,
@@ -247,6 +248,7 @@ def verify_account(
             session_name="vigil-verify",
             aws_account=aws_account,
             purpose="verify",
+            strict=True,
         )
         ident = sess.client("sts", config=_boto_cfg).get_caller_identity()
         account_id = ident["Account"]

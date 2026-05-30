@@ -1,0 +1,266 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Vigil connector IAM role (nested child). CIS / SOC 2 / ISO checks, evidence packs, and optional
+  IAM Access Analyzer policy generation (extra inline policy when enabled). Deploy via vigil-stack.yaml.
+
+Parameters:
+  VigilAccountPrincipal:
+    Type: String
+    Description: ARN of the Vigil control plane principal (provided during onboarding).
+  ExternalId:
+    Type: String
+    Description: Unique ExternalId issued at onboarding. Required to assume the role.
+    NoEcho: true
+  RoleName:
+    Type: String
+    Default: VigilScannerRole
+    Description: Vigil connector role name. Do not rename on stack updates.
+  EnableAdvancedPolicyGeneration:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+    Description: >
+      Attach VigilAdvancedPolicyGeneration inline policy (IAM/Access Analyzer analysis jobs only;
+      does not modify customer resources).
+
+Conditions:
+  CreateAdvancedPolicyGeneration: !Equals [!Ref EnableAdvancedPolicyGeneration, "Yes"]
+
+Resources:
+  VigilRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Vigil AWS connector for compliance scanning and optional policy analysis.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref VigilAccountPrincipal
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: VigilMinimalReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: IamUserAndKeyEnumeration
+                Effect: Allow
+                Action:
+                  - iam:ListUsers
+                  - iam:ListMFADevices
+                  - iam:GetLoginProfile
+                  - iam:ListAccessKeys
+                  - iam:GetAccessKeyLastUsed
+                  - iam:GetAccountSummary
+                  - iam:ListAccountAliases
+                  - iam:GetAccountPasswordPolicy
+                Resource: "*"
+              - Sid: IamRoleEnumeration
+                Effect: Allow
+                Action:
+                  - iam:ListRoles
+                  - iam:ListRolePolicies
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:ListPolicies
+                Resource: "*"
+              - Sid: IamServiceLastAccessedRead
+                Effect: Allow
+                Action:
+                  - iam:GetServiceLastAccessedDetails
+                Resource: "*"
+              - Sid: IamServerCertificates
+                Effect: Allow
+                Action:
+                  - iam:ListServerCertificates
+                  - iam:GetServerCertificate
+                Resource: "*"
+              - Sid: AccountContacts
+                Effect: Allow
+                Action:
+                  - account:GetContactInformation
+                  - account:GetAlternateContact
+                Resource: "*"
+              - Sid: S3BucketConfiguration
+                Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - s3:GetAccountPublicAccessBlock
+                  - s3:GetBucketLogging
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:GetBucketPolicy
+                  - s3:GetBucketAcl
+                Resource: "*"
+              - Sid: KmsKeyConfiguration
+                Effect: Allow
+                Action:
+                  - kms:ListKeys
+                  - kms:DescribeKey
+                  - kms:GetKeyRotationStatus
+                  - kms:GetKeyPolicy
+                  - kms:ListAliases
+                Resource: "*"
+              - Sid: CloudTrailConfiguration
+                Effect: Allow
+                Action:
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                  - cloudtrail:LookupEvents
+                Resource: "*"
+              - Sid: GuardDutyConfiguration
+                Effect: Allow
+                Action:
+                  - guardduty:ListDetectors
+                  - guardduty:GetDetector
+                  - guardduty:ListFindings
+                  - guardduty:GetFindings
+                Resource: "*"
+              - Sid: SecurityHubConfiguration
+                Effect: Allow
+                Action:
+                  - securityhub:DescribeHub
+                Resource: "*"
+              - Sid: VpcAndSecurityGroupEnumeration
+                Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeFlowLogs
+                  - ec2:DescribeSecurityGroups
+                Resource: "*"
+              - Sid: Ec2InstanceEnumeration
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeSnapshotAttribute
+                  - ec2:DescribeImages
+                  - ec2:GetEbsEncryptionByDefault
+                Resource: "*"
+              - Sid: AccessAnalyzerEnumeration
+                Effect: Allow
+                Action:
+                  - access-analyzer:ListAnalyzers
+                Resource: "*"
+              - Sid: ConfigServiceConfiguration
+                Effect: Allow
+                Action:
+                  - config:DescribeConfigurationRecorders
+                  - config:DescribeConfigurationRecorderStatus
+                  - config:DescribeDeliveryChannels
+                  - config:DescribeComplianceByConfigRule
+                Resource: "*"
+              - Sid: IdentityCenterDirectory
+                Effect: Allow
+                Action:
+                  - sso:ListInstances
+                  - sso:DescribeInstance
+                  - sso-admin:ListPermissionSets
+                  - sso-admin:DescribePermissionSet
+                  - identitystore:ListUsers
+                  - identitystore:DescribeUser
+                Resource: "*"
+              - Sid: RdsConfiguration
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                Resource: "*"
+              - Sid: AcmCertificates
+                Effect: Allow
+                Action:
+                  - acm:ListCertificates
+                  - acm:DescribeCertificate
+                Resource: "*"
+              - Sid: LambdaConfiguration
+                Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunctionEventInvokeConfig
+                Resource: "*"
+              - Sid: SecretsManagerConfiguration
+                Effect: Allow
+                Action:
+                  - secretsmanager:ListSecrets
+                Resource: "*"
+              - Sid: SsmParameters
+                Effect: Allow
+                Action:
+                  - ssm:DescribeParameters
+                Resource: "*"
+              - Sid: ElbConfiguration
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeLoadBalancerAttributes
+                  - elasticloadbalancing:DescribeListeners
+                Resource: "*"
+              - Sid: DynamoDbConfiguration
+                Effect: Allow
+                Action:
+                  - dynamodb:ListTables
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                Resource: "*"
+              - Sid: SnsConfiguration
+                Effect: Allow
+                Action:
+                  - sns:ListTopics
+                  - sns:GetTopicAttributes
+                Resource: "*"
+              - Sid: SqsConfiguration
+                Effect: Allow
+                Action:
+                  - sqs:ListQueues
+                  - sqs:GetQueueAttributes
+                Resource: "*"
+              - Sid: OrganizationsAccountLabel
+                Effect: Allow
+                Action:
+                  - organizations:DescribeAccount
+                Resource: "*"
+
+  VigilAdvancedPolicyGenerationPolicy:
+    Type: AWS::IAM::Policy
+    Condition: CreateAdvancedPolicyGeneration
+    DependsOn: VigilRole
+    Properties:
+      PolicyName: VigilAdvancedPolicyGeneration
+      Roles:
+        - !Ref VigilRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: IamServiceLastAccessedGenerate
+            Effect: Allow
+            Action:
+              - iam:GenerateServiceLastAccessedDetails
+              - iam:GetServiceLastAccessedDetails
+            Resource: "*"
+          - Sid: AccessAnalyzerPolicyGeneration
+            Effect: Allow
+            Action:
+              - access-analyzer:ListAnalyzers
+              - access-analyzer:StartPolicyGeneration
+              - access-analyzer:GetGeneratedPolicy
+              - access-analyzer:ListPolicyGenerations
+              - access-analyzer:CancelPolicyGeneration
+            Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Paste this ARN into Vigil to finish onboarding.
+    Value: !GetAtt VigilRole.Arn
+  ExternalId:
+    Value: !Ref ExternalId

@@ -1,6 +1,24 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-30 (session 29 — CIS governance + detection UX)_
+_Last updated: 2026-05-30 (session 30 — deepsearch v6 map + UX polish)_
+
+---
+
+## Session 30 (2026-05-30) — shipped (deepsearch/v6.txt + UX)
+
+- **v6 map:** [`docs/deepsearch-v6-map.md`](docs/deepsearch-v6-map.md) — read-only vs policy-gen IAM actions, unified connector vs v6 two-role diagram, AA integration gaps, CIS 1.11 ≠ CFN permissions.
+- **Accounts:** capability chips only (removed redundant “Read + analysis” posture badge); pending remove skips confirm; onboarding/deploy UX retained.
+- **Compliance:** sort control on same row as CC6/CC7/CC8 domain tabs; default sort **Control ID**.
+- **Finding drawer:** What If / blast radius via `supportsBlastRadius()` (all `iam.role.*`); Analyse button (no auto-load); fixed white-screen (`GeneratePolicySection` wrongly nested in blast radius); policy gen auto-`advanced` when capability deployed; clearer AA notes.
+- **Policy gen verify:** `access-analyzer:ListPolicyGenerations` added to capability inspection (was in CFN but not verified).
+
+**Clarifications (v6):**
+
+- **CFN policy-gen actions are deployed** on `VigilScannerRole` when `EnableAdvancedPolicyGeneration=Yes` (inline `VigilAdvancedPolicyGeneration`). Scan already calls `GenerateServiceLastAccessedDetails`.
+- **API does not call `StartPolicyGeneration`** — `GET …/roles/generated-policy?advanced=true` only merges the latest **SUCCEEDED** Access Analyzer job (`fetch_latest_generated_policy`). Console job or future API work still needed for resource ARNs / high confidence per role.
+- **CIS 1.11 automated (detection)** — dedicated 45-day checks (`iam.user.credentials_unused_45d`, `iam.access_key.unused_45d`); 90-day checks remain for SOC2/ISO. Remediation is manual (read-only).
+
+**Still open from v6:** optional `StartPolicyGeneration` + poll in API; optional AA monitor role + CloudTrail bucket for org trails.
 
 ---
 
@@ -13,7 +31,7 @@ _Last updated: 2026-05-30 (session 29 — CIS governance + detection UX)_
 - **UI:** Evidence pack modal title/CTA → “Generate Audit Package” (Compliance button already renamed).
 - **Policy generator / IAM last-accessed:** service-level vs action-level mismatch fixed (no `service:*` plaster). Map: [`docs/policy-generator-iam-last-accessed.md`](docs/policy-generator-iam-last-accessed.md).
 - **CIS v5 L1 governance checks:** `aws.account.contact_incomplete`, `aws.account.security_contact_missing`, `iam.server_certificate.expired`, `iam.cloudshell_full_access_granted` — collectors in `run_scan`, migration `0035`, CFN `AccountContacts` + `IamServerCertificates`. Spec: [`docs/cis-v5-40-controls.md`](docs/cis-v5-40-controls.md).
-- **CIS matrix status:** **42/42** controls mapped in Compliance (**38** automated, **1** partial, **3** manual). **1 missing** for full automated parity — **1.11** (45-day unused credentials; Vigil uses 90-day threshold). Honest manual: **1.5**, **1.10**, **1.17**.
+- **CIS matrix status:** **42/42** controls mapped in Compliance (**39** automated, **0** partial, **3** manual). Honest manual: **1.5**, **1.10**, **1.17**. CIS **1.11** detection is automated at 45 days; credential disable remains manual.
 - **Detection coverage UX:** removed CIS disclaimer banner; “Hygiene only” → **Operational checks** (not used in compliance scoring).
 
 **Still open from v4:** SSM runbooks; auditor share UI + `shared_with`; expand hclpatch; customer Terraform modules for runner deploy (CFN remains canonical).
@@ -96,7 +114,8 @@ only, and only to say it's out of scope.
 - OAuth link flow re-issues session tokens on success so connecting a provider never drops the active session
 
 ### AWS account onboarding
-- Create account → CFN launch URL (pre-filled ExternalId + trust principal)
+- Create account → parent CFN `vigil-stack.yaml` launch URL (stack **`VigilAccountConnector`**; IAM scanner role **`VigilReadOnlyScannerRole`**)
+- Existing accounts keep **`VigilReadOnly`** stack name in DB for update URLs; new accounts use **`VigilAccountConnector`**
 - Verify role via `sts:AssumeRole`
 - Trigger scan → Celery task
 
@@ -894,7 +913,7 @@ digest one-click unsubscribe, `/reference` route, sample pack
 - What If tab: policy diff (`GeneratePolicySection`) for `iam.role.full_admin_policy` and other role checks
 
 **Product backlog:**
-- CIS **1.11** 45-day unused-credentials check (or document 90d as accepted partial) — **1 missing** vs full L1 automation
+- ~~CIS **1.11** 45-day unused-credentials check~~ — done (`credentials_unused_45d` + `unused_45d`)
 - Sigstore / per-org signing keys
 - Deeper IAM history UI (per-user drill-down, export slice in ZIP)
 - S3/CloudFront dependency hints in What If

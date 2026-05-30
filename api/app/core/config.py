@@ -45,10 +45,18 @@ class Settings(BaseSettings):
     # customer's account (S3 object URL — GitHub raw URLs are not reliable).
     # Override in prod to pin a versioned object when the template changes.
     CFN_TEMPLATE_URL: str = (
-        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/vigil-readonly-role.yaml"
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-stack.yaml"
     )
+    # Parent connector stack + IAM role names (nested child templates).
+    CFN_STACK_NAME: str = "VigilAccountConnector"
+    CFN_STACK_NAME_LEGACY: str = "VigilReadOnly"
+    CFN_SCANNER_ROLE_NAME: str = "VigilScannerRole"
+    # Legacy split-stack policy-gen role (pre-unified connector); derive_advanced_role_arn maps these.
+    CFN_POLICY_GENERATION_ROLE_NAME: str = "VigilPolicyGenerationRole"
+    CFN_SCANNER_ROLE_NAME_LEGACY: str = "VigilReadOnlyScannerRole"
+    CFN_REMEDIATION_RUNNER_ROLE_NAME: str = "VigilRemediationRunnerRole"
     CFN_REMEDIATION_TEMPLATE_URL: str = (
-        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/vigil-remediation-runner-ec2.yaml"
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-runner-ec2.yaml"
     )
 
     # Customer EventBridge bus where vigil-remediation-runner stack is deployed.

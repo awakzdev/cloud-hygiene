@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.core.client_ip import client_ip_from_request
+from app.core.config import get_settings
 from app.services.evidence_vault import vault_config
 from app.services.pack_signing import public_key_base64, signing_enabled
 
@@ -50,6 +51,23 @@ def evidence_vault_status() -> EvidenceVaultStatusOut:
         object_lock_mode=cfg["object_lock_mode"].value if loc else None,
         auditor_access_mode=cfg["auditor_access_mode"].value if loc else None,
         implementation=impl,
+    )
+
+
+class CfnTemplatesOut(BaseModel):
+    cfn_template_url: str
+    cfn_remediation_template_url: str
+    cfn_stack_name: str
+
+
+@router.get("/cfn-templates", response_model=CfnTemplatesOut)
+def cfn_templates() -> CfnTemplatesOut:
+    """Which S3 templates this API instance serves (verify env / deploy)."""
+    s = get_settings()
+    return CfnTemplatesOut(
+        cfn_template_url=s.CFN_TEMPLATE_URL,
+        cfn_remediation_template_url=s.CFN_REMEDIATION_TEMPLATE_URL,
+        cfn_stack_name=s.CFN_STACK_NAME,
     )
 
 

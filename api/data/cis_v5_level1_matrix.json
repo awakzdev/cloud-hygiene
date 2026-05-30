@@ -15,7 +15,7 @@
     {"id": "1.8", "title": "Ensure IAM password policy prevents password reuse", "vigil_status": "automated", "vigil_check_ids": ["iam.account.password_policy_weak"]},
     {"id": "1.9", "title": "Ensure MFA is enabled for all IAM users with console password", "vigil_status": "automated", "vigil_check_ids": ["iam.user.no_mfa"]},
     {"id": "1.10", "title": "Do not create access keys during initial user setup", "vigil_status": "manual"},
-    {"id": "1.11", "title": "Ensure credentials unused for 45 days or greater are disabled", "vigil_status": "partial", "vigil_check_ids": ["iam.user.inactive_90d", "iam.access_key.unused_90d"], "note": "Vigil uses 90-day threshold"},
+    {"id": "1.11", "title": "Ensure credentials unused for 45 days or greater are disabled", "vigil_status": "automated", "vigil_check_ids": ["iam.user.credentials_unused_45d", "iam.access_key.unused_45d"], "remediation_status": "manual", "note": "Vigil evaluates unused IAM credentials using the CIS 45-day threshold. Remediation is manual unless an optional remediation module is enabled."},
     {"id": "1.12", "title": "Ensure there is only one active access key per IAM user", "vigil_status": "automated", "vigil_check_ids": ["iam.access_key.multiple_active"]},
     {"id": "1.13", "title": "Ensure access keys are rotated every 90 days or less", "vigil_status": "automated", "vigil_check_ids": ["iam.access_key.no_rotation_90d"]},
     {"id": "1.14", "title": "Ensure IAM users receive permissions only through groups", "vigil_status": "automated", "vigil_check_ids": ["iam.user.direct_policy_attachment"]},

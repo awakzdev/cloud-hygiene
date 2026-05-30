@@ -1,15 +1,25 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, formatApiError } from "../api";
 import { IaCRemediationSection } from "./IaCRemediationSection";
 import { drawerPanel } from "./drawerStyles";
+import {
+  credentialUnusedFrameworkImpact,
+  type CredentialFrameworkImpactItem,
+} from "../data/credentialFrameworkImpact";
 import { frameworkLabel } from "../data/frameworks";
-import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
+import { supportsBlastRadius } from "../data/blastRadiusChecks";
 import { checkLabels } from "../data/checkLabels";
 import { documentationForCheck } from "../data/checkDocumentation";
+import { policyGenerationReasonLabel } from "../data/policyGenerationCopy";
 import { remediationSummaryFor } from "../data/remediationSummaries";
-import { daysAgo, resourceDisplayName, resourceTypeLabel } from "../lib/findingDisplay";
+import {
+  daysAgo,
+  regionsFromFindingEvidence,
+  resourceDisplayName,
+  resourceTypeLabel,
+} from "../lib/findingDisplay";
 import {
   applyCliPlaceholders,
   buildCliPlaceholders,
@@ -117,7 +127,7 @@ function RemediationModeToggle({
     { id: "console", label: "Console" },
     { id: "cli", label: "CLI" },
     ...(hideTerraform ? [] : [{ id: "terraform" as const, label: "Terraform" }]),
-    { id: "automation", label: "EventBridge" },
+    { id: "automation", label: "Automation" },
   ];
   return (
     <div className="inline-flex max-w-full flex-wrap gap-0.5 rounded-lg bg-zinc-100/80 p-0.5">
@@ -155,11 +165,25 @@ function SelectedResourceInspector({
   const accountId = awsAccountIdFromArn(finding.resource_arn);
   const ev = finding.evidence;
   const isUnusedRoleFinding = finding.check_id === "iam.role.unused_services_90d";
+  const isIamRoleFinding =
+    finding.check_id.startsWith("iam.role.") && finding.resource_arn.includes(":role/");
+  const showWhatIfHint = supportsBlastRadius(finding.check_id) && isIamRoleFinding;
   const unusedCount = (ev.unused_services as string[] | undefined)?.length;
   const totalGranted = ev.total_granted_services as number | undefined;
   const thresholdDays = ev.threshold_days as number | undefined;
   const withRecordedUse =
     totalGranted != null && unusedCount != null ? Math.max(0, totalGranted - unusedCount) : null;
+  const affectedRegions = regionsFromFindingEvidence(ev);
+  const affectedRegionsLabel =
+    finding.check_id === "aws.access_analyzer.not_enabled"
+      ? "Regions without Access Analyzer"
+      : finding.check_id === "guardduty.detector.not_enabled"
+        ? "Regions without GuardDuty"
+        : finding.check_id === "aws.securityhub.not_enabled"
+          ? "Regions without Security Hub"
+          : finding.check_id === "aws.config.not_enabled"
+            ? "Regions without full Config recording"
+            : "Affected regions";
 
   const statusLabel = finding.status.replace(/_/g, " ");
   const riskTone =
@@ -187,6 +211,17 @@ function SelectedResourceInspector({
           {finding.resource_arn}
         </ResourceFieldRow>
       </ResourceGroup>
+
+      {affectedRegions.length > 0 && (
+        <ResourceGroup>
+          <div className="px-4 py-3 pr-5">
+            <p className="mb-2.5 text-xs font-medium text-zinc-500">
+              {affectedRegionsLabel} ({affectedRegions.length})
+            </p>
+            <RegionPills regions={affectedRegions} />
+          </div>
+        </ResourceGroup>
+      )}
 
       {isUnusedRoleFinding && totalGranted != null && (
         <ResourceGroup>
@@ -239,9 +274,11 @@ function SelectedResourceInspector({
         </PostureMetricsRow>
       </ResourceGroup>
 
-      {isUnusedRoleFinding && (
+      {showWhatIfHint && (
         <p className="border-t border-zinc-100/80 bg-zinc-50/30 px-4 py-2.5 pr-5 text-[11px] leading-relaxed text-zinc-500">
-          Usage confidence and safe-removal analysis are on the What If tab.
+          {isUnusedRoleFinding
+            ? "Usage confidence and safe-removal analysis are on the What If tab."
+            : "Open the What If tab for used services, trust principals, and whether to proceed with caution before scoping this role."}
         </p>
       )}
     </div>
@@ -322,6 +359,45 @@ function OverviewSummaryRow({
   );
 }
 
+function FrameworkThresholdCard({ item }: { item: CredentialFrameworkImpactItem }) {
+  const isCis = item.isActive;
+  return (
+    <div
+      className={`flex flex-col rounded-xl px-3 py-2.5 ring-1 ${
+        isCis
+          ? "bg-gradient-to-b from-amber-50/95 to-amber-50/40 ring-amber-200/80"
+          : "bg-white ring-zinc-200/80"
+      }`}
+    >
+      <p className={`text-[13px] font-semibold leading-tight ${isCis ? "text-amber-950" : "text-zinc-900"}`}>
+        {item.framework}
+        {item.control ? <span className="font-medium text-zinc-500"> {item.control}</span> : null}
+      </p>
+      <p className="mt-1.5 text-[12px] font-medium text-zinc-700">Fails at {item.thresholdDays}+ days</p>
+      <p
+        className={`mt-1 text-[10px] font-medium uppercase tracking-wide ${
+          isCis ? "text-amber-800/90" : "text-zinc-400"
+        }`}
+      >
+        {item.statusLabel}
+      </p>
+    </div>
+  );
+}
+
+function FrameworkImpactCard({ items }: { items: readonly CredentialFrameworkImpactItem[] }) {
+  return (
+    <div className={`${drawerPanel} overflow-hidden px-4 py-4 shadow-sm shadow-zinc-900/[0.03]`}>
+      <h3 className="text-sm font-semibold text-zinc-900">Framework impact</h3>
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <FrameworkThresholdCard key={item.id} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OverviewTabContent({
   impact,
   risk,
@@ -342,6 +418,7 @@ function OverviewTabContent({
   const riskLine = documentation?.overview?.context ?? impact;
   const businessImpact = documentation?.overview?.exposure ?? risk;
   const recommendedAction = documentation?.overview?.fix ?? fix;
+  const frameworkImpact = credentialUnusedFrameworkImpact(finding.check_id);
   const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
   const severityClass =
     finding.severity === "critical" || finding.severity === "high"
@@ -395,6 +472,8 @@ function OverviewTabContent({
         </dl>
       </div>
 
+      {frameworkImpact && <FrameworkImpactCard items={frameworkImpact} />}
+
       {hasException && (
         <ExceptionFlowPanel
           reason={finding.exception_reason}
@@ -429,6 +508,16 @@ aws iam delete-login-profile --user-name <user>
 aws iam delete-user --user-name <user>`,
     risk: "Stale console users should be disabled or removed after ownership is confirmed.",
   },
+  "iam.user.credentials_unused_45d": {
+    why: "Console credentials unused for 45+ days are often forgotten accounts. Inactive users have no baseline of normal activity, making compromise harder to spot.",
+    console: ["Open IAM → Users → select the user", 'Click "Security credentials" tab', 'Under "Console sign-in", click "Disable console access"', "Confirm with the team, then delete the user if no longer needed"],
+    cli: `# Disable console access
+aws iam delete-login-profile --user-name <user>
+
+# Or delete the user entirely (remove keys + policies first)
+aws iam delete-user --user-name <user>`,
+    risk: "Stale console users should be disabled or removed after ownership is confirmed.",
+  },
   "iam.user.direct_policy_attachment": {
     why: "CIS expects permissions on IAM users to come from groups or roles — not policies attached directly to the user. Direct attachment is harder to audit, review, and revoke at scale.",
     console: [
@@ -451,6 +540,15 @@ aws iam delete-user-policy --user-name <user> --policy-name <policy-name>`,
   },
   "iam.access_key.unused_90d": {
     why: "Unused access keys are typically abandoned in scripts, CI config, or developer machines — often forgotten and never rotated. They're persistent credentials with no expiry.",
+    console: ["Open IAM → Users → select the user", 'Click "Security credentials" tab', "Find the key under Access Keys", 'Click "Deactivate" first to verify nothing breaks, then "Delete"'],
+    cli: `# Deactivate first, confirm nothing breaks, then delete
+aws iam update-access-key --access-key-id <key-id> --status Inactive --user-name <user>
+
+aws iam delete-access-key --access-key-id <key-id> --user-name <user>`,
+    risk: "Forgotten keys are long-lived credentials. Deactivate first, then delete after confirming nothing still depends on them.",
+  },
+  "iam.access_key.unused_45d": {
+    why: "Access keys unused for 45+ days are often abandoned in scripts, CI config, or developer machines and never rotated.",
     console: ["Open IAM → Users → select the user", 'Click "Security credentials" tab', "Find the key under Access Keys", 'Click "Deactivate" first to verify nothing breaks, then "Delete"'],
     cli: `# Deactivate first, confirm nothing breaks, then delete
 aws iam update-access-key --access-key-id <key-id> --status Inactive --user-name <user>
@@ -1740,8 +1838,8 @@ function generatePolicyIntro(cloudTrailLogging: boolean) {
   const action =
     "Vigil narrows action wildcards to the API calls recorded in the last 90 days.";
   const resource = cloudTrailLogging
-    ? "Resource scope still shows * in this output (actions only) — use Access Analyzer with your CloudTrail logs for ARN-level scope."
-    : "Resource scope is left as-is — IAM last-accessed does not record which ARNs were used.";
+    ? "Resource ARNs need a completed CloudTrail policy-generation job for this role (IAM → Roles → Permissions tab), or stay action-only from last-accessed data."
+    : "Resource scope stays broad without CloudTrail — IAM last-accessed does not record which ARNs were used.";
   return `${action} ${resource}`;
 }
 
@@ -1854,9 +1952,10 @@ aws iam list-attached-role-policies --role-name ${roleName}
 # 2. For each attached policy, review its document
 aws iam get-policy-version --policy-arn <policy-arn> --version-id v1
 
-# 3. Use Access Analyzer to generate a least-privilege replacement policy from CloudTrail
+# 3. Start CloudTrail policy generation for this role (IAM console: Permissions tab, or API)
 aws accessanalyzer start-policy-generation \\
-  --policy-generation-details '{"principalArn":"${arn}"}'
+  --policy-generation-details '{"principalArn":"${arn}"}' \\
+  --cloud-trail-details '{"trails":["<trail-arn>"]}'
 
 # 4. Poll for the generated policy (takes ~30s)
 aws accessanalyzer get-generated-policy --job-id <job-id>`;
@@ -2045,6 +2144,28 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
 
   if (resource_type === "iam_role") {
     const active = data.active_service_count ?? 0;
+    const scopePolicy =
+      checkId === "iam.role.full_admin_policy" ||
+      checkId === "iam.role.wildcard_action" ||
+      checkId === "iam.perm.granted_vs_used";
+    if (scopePolicy) {
+      if (confidence === "high") {
+        return {
+          text: "Low recent usage — scoping admin or wildcard grants is unlikely to break active workloads. Validate in non-prod before applying.",
+          type: "safe",
+        };
+      }
+      if (confidence === "medium") {
+        return {
+          text: `Proceed with caution — ${active} service${active !== 1 ? "s" : ""} show recent API use. Review the service list before narrowing permissions.`,
+          type: "caution",
+        };
+      }
+      return {
+        text: `Do not scope blindly — ${active} service${active !== 1 ? "s" : ""} were actively used in the last 30 days. Check used actions and trust principals first.`,
+        type: "warning",
+      };
+    }
     if (confidence === "high") {
       const never = data.days_since_last_assumed == null;
       return never
@@ -2351,13 +2472,16 @@ function InfoNote({ children }: { children: React.ReactNode }) {
 function BlastRadiusSection({
   accountId,
   finding,
-  cloudTrailLogging,
 }: {
   accountId: string;
   finding: Finding;
-  cloudTrailLogging: boolean;
 }) {
   const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    setEnabled(false);
+  }, [finding.id, finding.check_id, finding.resource_arn]);
+
   const { data, isLoading, error } = useQuery<BlastRadiusData>({
     queryKey: ["blast-radius", accountId, finding.resource_arn, finding.check_id, finding.last_seen],
     queryFn: () => api(`/v1/accounts/${accountId}/blast-radius?resource_arn=${encodeURIComponent(finding.resource_arn)}&check_id=${encodeURIComponent(finding.check_id)}`),
@@ -2368,14 +2492,17 @@ function BlastRadiusSection({
   if (!enabled) {
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-zinc-900">What If I fix this?</div>
-            <div className="text-xs text-zinc-400 mt-0.5">Analyse what currently depends on this resource before remediating.</div>
+            <div className="text-xs text-zinc-400 mt-0.5">
+              Analyse what currently depends on this resource before remediating.
+            </div>
           </div>
           <button
+            type="button"
             onClick={() => setEnabled(true)}
-            className="rounded-lg border border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+            className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-100"
           >
             Analyse
           </button>
@@ -2384,8 +2511,45 @@ function BlastRadiusSection({
     );
   }
 
-  if (isLoading) return <div className="rounded-xl border border-zinc-200 bg-white p-4 text-xs text-zinc-400">Analysing blast radius…</div>;
-  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs text-red-500">{String(error)}</div>;
+  if (isLoading) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-3 py-12"
+        role="status"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <svg
+          className="h-5 w-5 animate-spin text-zinc-400"
+          fill="none"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+        <p className="text-xs text-zinc-500">Analysing blast radius…</p>
+      </div>
+    );
+  }
+  if (error) {
+    const message = formatApiError(error);
+    const isNetwork =
+      error instanceof TypeError ||
+      (error instanceof Error && /failed to fetch|networkerror|load failed/i.test(error.message));
+    return (
+      <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs text-red-500 space-y-1">
+        <p>{message}</p>
+        {isNetwork && (
+          <p className="text-red-400">
+            Check that the API is running and <code className="font-mono">VITE_API_URL</code> matches your setup
+            (e.g. <code className="font-mono">http://localhost:8000</code> locally, or{" "}
+            <code className="font-mono">https://api.vigil.cclab.cloud-castles.com</code> on the remote host).
+          </p>
+        )}
+      </div>
+    );
+  }
   if (!data) return null;
 
   const verdict = buildVerdict(data, finding.check_id);
@@ -2427,8 +2591,13 @@ function BlastRadiusSection({
           )
       : [];
   const allNotices = mfaOnlyUserCheck ? [] : [...baseWarnings, ...keyUsageWarnings];
-  const infoRows = verdict.type === "safe" ? allNotices : [];
-  const warningRows = verdict.type === "safe" ? [] : allNotices.filter((warning) => {
+  const rootSafeMinimal = data.resource_type === "iam_root" && verdict.type === "safe";
+  const infoRows = rootSafeMinimal ? [] : verdict.type === "safe" ? allNotices : [];
+  const warningRows = rootSafeMinimal
+    ? []
+    : verdict.type === "safe"
+      ? []
+      : allNotices.filter((warning) => {
     const key = warningKey(warning);
     if (key === verdictKey) return false;
     if (seen.has(key)) return false;
@@ -2438,7 +2607,7 @@ function BlastRadiusSection({
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
-      <div className="px-4 py-3.5 border-b border-zinc-100 flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-4 py-3.5">
         <span className="text-[15px] font-semibold text-zinc-900">Blast radius</span>
         <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${conf.color}`}>
           <span className={`h-1.5 w-1.5 rounded-full ${conf.dot}`} />
@@ -2736,11 +2905,6 @@ function BlastRadiusSection({
           </div>
         )}
 
-        {/* IAM root: static info */}
-        {data.resource_type === "iam_root" && (
-          <p className="text-xs text-zinc-500 leading-relaxed">Root is the most privileged identity in AWS — all IAM policies and SCPs are bypassed. Changes to root identity settings have no effect on workloads or IAM users.</p>
-        )}
-
         {/* IAM password policy: current settings */}
         {data.resource_type === "iam_password_policy" && (
           <div className="grid grid-cols-3 gap-2 text-xs">
@@ -2772,16 +2936,6 @@ function BlastRadiusSection({
                 </span>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* GuardDuty: disabled regions */}
-        {data.resource_type === "guardduty" && data.disabled_regions && data.disabled_regions.length > 0 && (
-          <div>
-            <div className="mb-2.5 text-xs font-medium text-zinc-500">
-              Disabled regions ({data.disabled_regions.length})
-            </div>
-            <RegionPills regions={data.disabled_regions} />
           </div>
         )}
 
@@ -3031,14 +3185,6 @@ function BlastRadiusSection({
             )}
           </div>
         )}
-
-        {ROLE_POLICY_GEN_CHECKS.has(finding.check_id) && finding.resource_arn.includes(":role/") && (
-          <GeneratePolicySection
-            accountId={accountId}
-            finding={finding}
-            cloudTrailLogging={cloudTrailLogging}
-          />
-        )}
       </div>
     </div>
   );
@@ -3159,7 +3305,7 @@ function ComplianceTabContent({
         <p className="mt-2 text-[12px] leading-relaxed text-zinc-600">{primary.description}</p>
         {evidenceGuidance && (
           <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
-            <span className="font-medium text-zinc-600">Evidence guidance: </span>
+            <span className="font-medium text-zinc-600">Guidance: </span>
             {evidenceGuidance}
           </p>
         )}
@@ -3176,7 +3322,7 @@ function ComplianceTabContent({
         </div>
       </div>
       {auditNarrative && (
-        <SemanticNarrativeBlock tag="Audit" tone="neutral" title="Audit narrative (Vigil)">
+        <SemanticNarrativeBlock tag="Detection Logic" tone="neutral">
           {auditNarrative}
         </SemanticNarrativeBlock>
       )}
@@ -3229,6 +3375,8 @@ type GeneratedPolicy = {
   source_label?: string;
   access_analyzer_enabled?: boolean;
   advanced_available?: boolean;
+  advanced_requested?: boolean;
+  advanced_effective?: boolean;
   advanced_note?: string | null;
   policy_warnings?: string[];
   used_services_service_only?: string[];
@@ -3278,7 +3426,18 @@ function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
         </span>
       </p>
       <p className="mt-0.5 text-zinc-500">Source: {data.source_label ?? "IAM last accessed"}</p>
+      {data.advanced_requested != null && (
+        <p className="mt-0.5 text-zinc-500">
+          Advanced requested: {data.advanced_requested ? "yes" : "no"}
+          {data.advanced_effective && !data.advanced_requested ? " (auto-enabled from account)" : ""}
+        </p>
+      )}
       {data.confidence_note && <p className="mt-0.5 text-zinc-500">{data.confidence_note}</p>}
+      {data.access_analyzer && !data.access_analyzer.available && data.access_analyzer.reason && (
+        <p className="mt-0.5 text-amber-800">
+          {policyGenerationReasonLabel(data.access_analyzer.reason) ?? data.access_analyzer.reason}
+        </p>
+      )}
       {aaStatements.length > 0 && (
         <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1.5 text-emerald-950">
           <p className="font-semibold">Access Analyzer resource scope ({aaStatements.length})</p>
@@ -3298,7 +3457,13 @@ function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
         </div>
       )}
       {data.advanced_note && (
-        <p className="mt-2 rounded-md border border-indigo-100 bg-indigo-50/80 px-2 py-1.5 text-indigo-950">
+        <p
+          className={`mt-2 rounded-md border px-2 py-1.5 ${
+            data.access_analyzer && !data.access_analyzer.available
+              ? "border-amber-200/80 bg-amber-50/80 text-amber-950"
+              : "border-indigo-100 bg-indigo-50/80 text-indigo-950"
+          }`}
+        >
           {data.advanced_note}
         </p>
       )}
@@ -3619,14 +3784,13 @@ function GeneratePolicySection({
   cloudTrailLogging: boolean;
 }) {
   const [enabled, setEnabled] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(true);
   const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
   const { data, isLoading, error } = useQuery<GeneratedPolicy>({
-    queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen, advanced],
+    queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen],
     queryFn: () =>
       api(
-        `/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}&advanced=${advanced}`,
+        `/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}&advanced=true`,
       ),
     enabled,
     staleTime: 0,
@@ -3662,15 +3826,6 @@ function GeneratePolicySection({
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] leading-snug text-amber-900">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
       )}
       {enabled && data && <PolicyCoverageMeta data={data} />}
-      {enabled && data?.advanced_available && !advanced && (
-        <button
-          type="button"
-          className="mt-2 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
-          onClick={() => setAdvanced(true)}
-        >
-          Generate advanced (Access Analyzer) →
-        </button>
-      )}
       {enabled && data && data.has_inline_policies && data.original_policies && data.cleaned_policies && (
         <div className="mt-2.5 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
@@ -3705,7 +3860,7 @@ function GeneratePolicySection({
           {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
           {data.granularity === "service" && (
             <p className="text-[11px] leading-snug text-zinc-500">
-              Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or use Access Analyzer for action-level generation on wildcard policies.
+              Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or start CloudTrail policy generation for this role for tighter scoping.
             </p>
           )}
         </div>
@@ -4074,7 +4229,7 @@ export function FindingDrawer({
   }, [finding?.check_id, finding?.id, remTab]);
 
   const multiResource = (relatedFindings?.length ?? 0) > 1;
-  const showBlastRadius = !!finding && BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
+  const showBlastRadius = !!finding && supportsBlastRadius(finding.check_id) && !!accountId;
 
   useEffect(() => {
     if (!finding) return;
@@ -4276,11 +4431,7 @@ export function FindingDrawer({
         </div>
       )}
       {tab === "whatif" && showBlastRadius && (
-        <BlastRadiusSection
-          accountId={accountId!}
-          finding={finding}
-          cloudTrailLogging={cloudTrailLogging}
-        />
+        <BlastRadiusSection accountId={accountId!} finding={finding} />
       )}
     </div>
     <div className="flex gap-2 border-t border-zinc-200/50 bg-white/90 px-6 py-3 shadow-[0_-1px_0_rgba(0,0,0,0.03),0_-6px_16px_-6px_rgba(0,0,0,0.04)] backdrop-blur-sm">

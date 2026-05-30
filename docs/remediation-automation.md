@@ -63,7 +63,7 @@ aws cloudformation deploy \
     "Effect": "Allow",
     "Action": [
       "ec2:RevokeSecurityGroupIngress",
-      "ec2:DescribeSecurityGroups"
+      "ec2:AuthorizeSecurityGroupIngress"
     ],
     "Resource": "*"
   }]
@@ -88,8 +88,8 @@ Canonical source: `infra/lambda/remediation_runner.py`. Package and upload befor
 
 ```bash
 ./infra/lambda/build.sh
-# Upload to the bucket referenced by LambdaArtifactBucket (e.g. vigil-worm-storage or amzn-s3-vigil)
-aws s3 cp infra/lambda/remediation_runner.zip s3://vigil-worm-storage/lambda/remediation_runner.zip
+# Single artifact location (public CFN bucket — not vigil-worm-storage evidence vault)
+aws s3 cp infra/lambda/remediation_runner.zip s3://amzn-s3-vigil/lambda/remediation_runner.zip
 ```
 
 Set CFN parameter `VigilExecutionWebhookUrl` to your Vigil API, e.g. `https://your-api/v1/public/remediation-execution` (shown in Prepare EventBridge UI).

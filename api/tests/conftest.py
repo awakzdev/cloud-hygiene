@@ -9,7 +9,7 @@ import pytest
 
 
 def make_account(
-    role_arn: str = "arn:aws:iam::123456789012:role/VigilReadOnly",
+    role_arn: str = "arn:aws:iam::123456789012:role/VigilScannerRole",
     external_id: str = "test-external-id",
     account_id: str = "123456789012",
 ) -> MagicMock:

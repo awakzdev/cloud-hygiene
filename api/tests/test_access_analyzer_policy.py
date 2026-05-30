@@ -11,6 +11,7 @@ from app.services.access_analyzer_policy import (
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
+    apply_aa_resources_to_policy_doc,
     confidence_for,
     derive_advanced_role_arn,
     fetch_latest_generated_policy,
@@ -21,16 +22,23 @@ from app.services.access_analyzer_policy import (
 )
 
 
-def test_derive_advanced_role_arn_suffixes_role_name():
+def test_derive_advanced_role_arn_unified_connector_uses_same_role():
+    arn = "arn:aws:iam::123456789012:role/VigilScannerRole"
+    assert derive_advanced_role_arn(arn) == arn
+
+
+def test_derive_advanced_role_arn_maps_legacy_split_stack_scanner():
     assert (
-        derive_advanced_role_arn("arn:aws:iam::123456789012:role/VigilReadonly")
-        == "arn:aws:iam::123456789012:role/VigilReadonlyAdvancedPolicyGen"
+        derive_advanced_role_arn("arn:aws:iam::123456789012:role/VigilReadOnlyScannerRole")
+        == "arn:aws:iam::123456789012:role/VigilPolicyGenerationRole"
     )
 
 
 def test_derive_advanced_role_arn_idempotent_and_guards_bad_input():
-    already = "arn:aws:iam::123456789012:role/VigilReadonlyAdvancedPolicyGen"
-    assert derive_advanced_role_arn(already) == already
+    legacy = "arn:aws:iam::123456789012:role/VigilReadonlyAdvancedPolicyGen"
+    assert derive_advanced_role_arn(legacy) == legacy
+    current = "arn:aws:iam::123456789012:role/VigilPolicyGenerationRole"
+    assert derive_advanced_role_arn(current) == current
     assert derive_advanced_role_arn(None) is None
     assert derive_advanced_role_arn("not-an-arn") is None
     assert derive_advanced_role_arn("arn:aws:iam::123456789012:user/bob") is None
@@ -84,6 +92,61 @@ def test_confidence_tiers():
     assert confidence_for(aa_resource_data=True, has_action_data=True) == CONFIDENCE_HIGH
     assert confidence_for(aa_resource_data=False, has_action_data=True) == CONFIDENCE_MEDIUM
     assert confidence_for(aa_resource_data=False, has_action_data=False) == CONFIDENCE_LOW
+
+
+def test_apply_aa_resources_replaces_wildcard_resource():
+    doc = {
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Action": "dynamodb:GetItem", "Resource": "*"}],
+    }
+    aa_statements = [
+        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/orders"]},
+    ]
+
+    cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
+
+    assert cleaned["Statement"][0]["Resource"] == "arn:aws:dynamodb:us-east-1:123:table/orders"
+
+
+def test_apply_aa_resources_dedupes_and_preserves_specific_resources():
+    doc = {
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Effect": "Allow", "Action": "*", "Resource": "*"},
+            {
+                "Effect": "Allow",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::already-scoped/*",
+            },
+        ],
+    }
+    aa_statements = [
+        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/a"]},
+        {"actions": ["dynamodb:PutItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/a", "*"]},
+        {"actions": ["s3:GetObject"], "resources": ["arn:aws:s3:::bucket/key"]},
+    ]
+
+    cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
+
+    assert cleaned["Statement"][0]["Resource"] == [
+        "arn:aws:dynamodb:us-east-1:123:table/a",
+        "arn:aws:s3:::bucket/key",
+    ]
+    assert cleaned["Statement"][1]["Resource"] == "arn:aws:s3:::already-scoped/*"
+
+
+def test_apply_aa_resources_handles_list_wildcard_resource():
+    doc = {
+        "Version": "2012-10-17",
+        "Statement": [{"Effect": "Allow", "Action": "cloudfront:*", "Resource": ["*"]}],
+    }
+    aa_statements = [
+        {"actions": ["cloudfront:CreateInvalidation"], "resources": ["arn:aws:cloudfront::123:distribution/E123"]},
+    ]
+
+    cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
+
+    assert cleaned["Statement"][0]["Resource"] == "arn:aws:cloudfront::123:distribution/E123"
 
 
 def test_fetch_latest_generated_policy_picks_newest_succeeded():

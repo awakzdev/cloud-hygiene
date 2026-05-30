@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { isAccountConnected } from "../lib/accountConnection";
 
 type Account = { id: string; label: string; account_id: string | null; status: string };
 type Finding = {
@@ -13,7 +14,9 @@ type ScanRun = { id: string; status: string; started_at: string; finished_at: st
 const checkLabels: Record<string, string> = {
   "iam.user.no_mfa": "MFA not enabled",
   "iam.user.inactive_90d": "Inactive user",
+  "iam.user.credentials_unused_45d": "Unused credentials",
   "iam.access_key.unused_90d": "Unused access key",
+  "iam.access_key.unused_45d": "Unused access key",
   "iam.access_key.no_rotation_90d": "Long-lived access key",
   "iam.access_key.multiple_active": "Multiple active access keys",
   "iam.role.unassumed_90d": "Role unassumed",
@@ -83,7 +86,7 @@ export default function Dashboard() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
   const findings = useQuery({ queryKey: ["dashboard-findings"], queryFn: () => api<FindingPage>("/v1/findings?status=open&limit=500") });
 
-  const connectedAccount = accounts.data?.find((a) => a.status === "connected");
+  const connectedAccount = accounts.data?.find((a) => isAccountConnected(a));
 
   const scanRun = useQuery({
     queryKey: ["scan-run-latest", connectedAccount?.id],

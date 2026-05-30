@@ -185,7 +185,7 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
         "iam.perm.granted_vs_used": ["CC6.6"],
         "cloudtrail.trail.no_log_validation": ["CC7.2", "CIS 2.2"],
         "iam.user.no_mfa": ["CC6.1", "CIS 1.10"],
-        "iam.user.inactive_90d": ["CC6.2"],
+        "iam.user.credentials_unused_45d": ["CC6.2"],
         "github.repo.no_branch_protection": ["CC7.1"],
     }
 

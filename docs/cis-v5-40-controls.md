@@ -38,7 +38,7 @@ These remain in `control_mappings.json` with `checks: []` where mapped, or manua
 
 ## UI
 
-**Detection coverage** (`web/src/pages/DetectionCoverage.tsx`): no CIS banner in UI (packs/PDF still include `cis_benchmark_coverage.json`). Matrix today: **38** automated, **1** partial (**1.11** — the **1 missing** full-automation gap), **3** manual.
+**Detection coverage** (`web/src/pages/DetectionCoverage.tsx`): no CIS banner in UI (packs/PDF still include `cis_benchmark_coverage.json`). Matrix today: **39** automated, **0** partial, **3** manual. CIS **1.11** uses dedicated 45-day checks (`iam.user.credentials_unused_45d`, `iam.access_key.unused_45d`); 90-day hygiene checks remain for SOC2/ISO only.
 
 ## After deploy
 
@@ -50,4 +50,5 @@ These remain in `control_mappings.json` with `checks: []` where mapped, or manua
 ## Related
 
 - [deepsearch-v4-map.md](./deepsearch-v4-map.md)
+- [deepsearch-v6-map.md](./deepsearch-v6-map.md) — CIS 1.11 detection vs remediation split
 - [policy-generator-iam-last-accessed.md](./policy-generator-iam-last-accessed.md)
