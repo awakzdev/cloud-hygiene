@@ -340,7 +340,7 @@ export function RoleServiceUsageAnalysis({
             description="Dangerous to remove — used in the last 30 days"
             services={recentlyActive}
             emphasis="high"
-            defaultOpen
+            defaultOpen={false}
             tone="danger"
           />
           <DecisionSection
@@ -348,7 +348,7 @@ export function RoleServiceUsageAnalysis({
             description="Verify before removing — used 31–90 days ago"
             services={historicallyUsed}
             emphasis="low"
-            defaultOpen={historicallyUsed.length <= 6}
+            defaultOpen={false}
             tone="caution"
           />
           <DecisionSection
@@ -356,7 +356,7 @@ export function RoleServiceUsageAnalysis({
             description="No recorded use in 90+ days — best cleanup candidates"
             services={likelySafe}
             emphasis="muted"
-            defaultOpen={likelySafe.length <= 8}
+            defaultOpen={false}
             tone="safe"
           />
         </div>

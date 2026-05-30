@@ -340,6 +340,24 @@ Resources:
                   - access-analyzer:CancelPolicyGeneration
                 Resource: "*"
 
+  VigilAdvancedPolicyGenPassMonitorPolicy:
+    Type: AWS::IAM::Policy
+    Condition: CreateMonitorRole
+    Properties:
+      PolicyName: VigilPassAccessAnalyzerMonitor
+      Roles:
+        - !Ref VigilAdvancedPolicyGenRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PassAccessAnalyzerMonitorRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt AccessAnalyzerMonitorRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: access-analyzer.amazonaws.com
+
   AccessAnalyzerMonitorRole:
     Type: AWS::IAM::Role
     Condition: CreateMonitorRole

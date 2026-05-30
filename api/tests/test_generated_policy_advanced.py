@@ -23,9 +23,7 @@ def test_policy_generation_meta_medium_note_without_cloudtrail_job():
     )
 
     assert meta["confidence"] == "medium"
-    assert "CloudTrail" in meta["confidence_note"]
-    assert "External, internal" in meta["confidence_note"]
-    assert "Access Analyzer is enabled" not in meta["confidence_note"]
+    assert "Start CloudTrail analysis" in meta["confidence_note"]
     assert meta["advanced_requested"] is False
     assert meta["advanced_effective"] is True
     assert meta["advanced_available"] is True

@@ -1835,12 +1835,12 @@ function CollapsibleGrantedServices({ services }: { services: GrantedServicePill
 }
 
 function generatePolicyIntro(cloudTrailLogging: boolean) {
-  const action =
-    "Vigil narrows action wildcards to the API calls recorded in the last 90 days.";
+  const build =
+    "Build suggestion uses IAM last-accessed data and, when available, the latest completed AWS CloudTrail policy-generation job for this role. It does not start a new AWS analysis.";
   const resource = cloudTrailLogging
-    ? "Resource ARNs need a completed CloudTrail policy-generation job for this role (IAM → Roles → Permissions tab), or stay action-only from last-accessed data."
-    : "Resource scope stays broad without CloudTrail — IAM last-accessed does not record which ARNs were used.";
-  return `${action} ${resource}`;
+    ? "Use “Start CloudTrail analysis” below when you need a fresher job; resource ARNs are only applied when AWS returns concrete (non-template) ARNs."
+    : "Without CloudTrail logging, action scope comes from IAM last-accessed only; resources stay *.";
+  return `${build} ${resource}`;
 }
 
 function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean } }) {
@@ -3378,8 +3378,11 @@ type GeneratedPolicy = {
   advanced_requested?: boolean;
   advanced_effective?: boolean;
   advanced_note?: string | null;
+  improve_via_cloudtrail?: boolean;
   policy_warnings?: string[];
   used_services_service_only?: string[];
+  preserved_service_wildcards?: string[];
+  observed_action_count?: number;
   confidence?: "high" | "medium" | "low";
   confidence_note?: string;
   access_analyzer?: {
@@ -3387,8 +3390,12 @@ type GeneratedPolicy = {
     reason?: string | null;
     region?: string | null;
     job_id?: string | null;
+    generation_status?: string | null;
     completed_on?: string | null;
-    resource_statements?: { actions: string[]; resources: string[] }[];
+    has_concrete_resources?: boolean;
+    placeholder_resources_ignored?: number;
+    resource_statements?: { actions: string[]; resources: string[]; placeholder_resources?: string[] }[];
+    placeholder_resources?: string[];
   };
 };
 
@@ -3400,79 +3407,156 @@ const POLICY_CONFIDENCE_STYLE: Record<string, string> = {
 
 function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
   const cov = data.coverage ?? { actions: (data.used_actions?.length ?? 0) > 0, resources: false };
-  const aaStatements = data.access_analyzer?.resource_statements ?? [];
+  const preserved = data.preserved_service_wildcards ?? [];
+  const observed =
+    data.observed_action_count ??
+    (data.used_actions?.filter((a) => !a.endsWith(":*") && a !== "*").length ?? 0);
+  const aaStatements = (data.access_analyzer?.resource_statements ?? []).filter(
+    (st) => st.resources.length > 0,
+  );
+  const hasConcreteResources = data.access_analyzer?.has_concrete_resources ?? cov.resources;
+  const [techOpen, setTechOpen] = useState(false);
+  const jobCompleted = Boolean(data.access_analyzer?.job_id);
+  const showNoJobHint =
+    data.access_analyzer && !data.access_analyzer.available && data.access_analyzer.reason;
+
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-700">
-      <div className="flex items-center justify-between gap-2">
-        <p className="font-semibold text-zinc-800">Coverage</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         {data.confidence && (
           <span
-            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold capitalize tracking-wide ${
               POLICY_CONFIDENCE_STYLE[data.confidence] ?? POLICY_CONFIDENCE_STYLE.low
             }`}
-            title={data.confidence_note}
           >
             {data.confidence} confidence
           </span>
         )}
+        <p className="text-zinc-800">
+          <span className={cov.actions ? "text-emerald-800" : "text-amber-800"}>
+            {cov.actions ? "✓ Actions scoped" : "✗ Actions not scoped"}
+          </span>
+          <span className="mx-2 text-zinc-300">·</span>
+          <span className={cov.resources ? "text-emerald-800" : "text-zinc-600"}>
+            {cov.resources ? "✓ Resource scope applied" : "✕ Resources unchanged"}
+          </span>
+        </p>
       </div>
-      <p className="mt-1">
-        <span className={cov.actions ? "text-emerald-800" : "text-amber-800"}>
-          {cov.actions ? "✓" : "✗"} Actions
-        </span>
-        <span className="mx-2 text-zinc-300">·</span>
-        <span className={cov.resources ? "text-emerald-800" : "text-zinc-500"}>
-          {cov.resources ? "✓" : "✗"} Resources
-        </span>
+      {data.confidence_note && <p className="mt-1 text-zinc-600">{data.confidence_note}</p>}
+      <p className="mt-1 text-zinc-500">
+        <span className="font-medium text-zinc-600">Source</span>
+        <br />
+        {data.source_label ?? "IAM last accessed"}
       </p>
-      <p className="mt-0.5 text-zinc-500">Source: {data.source_label ?? "IAM last accessed"}</p>
-      {data.advanced_requested != null && (
-        <p className="mt-0.5 text-zinc-500">
-          Advanced requested: {data.advanced_requested ? "yes" : "no"}
-          {data.advanced_effective && !data.advanced_requested ? " (auto-enabled from account)" : ""}
+      <p className="mt-2 text-zinc-700">
+        {preserved.length > 0
+          ? "Vigil narrowed the full-admin policy to observed actions. Some services only returned service-level usage, so their wildcard permissions were preserved to avoid breaking the workload."
+          : observed > 0 && jobCompleted
+            ? `Vigil narrowed Action:* to ${observed} observed actions using IAM last-accessed and CloudTrail policy generation.`
+            : observed > 0
+              ? `Vigil narrowed the policy to ${observed} observed actions from IAM last-accessed data.`
+              : "Review the suggested policy against your workload before applying."}
+      </p>
+      {observed > 0 && !cov.resources && (
+        <p className="mt-2 text-zinc-600">
+          {preserved.length > 0
+            ? "AWS did not return apply-ready resource ARNs for some services; Resource remains * where needed."
+            : "AWS did not return apply-ready resource ARNs for this role, so Resource remains *."}
         </p>
       )}
-      {data.confidence_note && <p className="mt-0.5 text-zinc-500">{data.confidence_note}</p>}
-      {data.access_analyzer && !data.access_analyzer.available && data.access_analyzer.reason && (
-        <p className="mt-0.5 text-amber-800">
-          {policyGenerationReasonLabel(data.access_analyzer.reason) ?? data.access_analyzer.reason}
+      {data.access_analyzer?.reason === "in_progress" && (
+        <p className="mt-2 rounded-md border border-indigo-200/80 bg-indigo-50/80 px-2 py-1.5 text-indigo-950">
+          {policyGenerationReasonLabel("in_progress")}
         </p>
       )}
-      {aaStatements.length > 0 && (
+      {preserved.length > 0 && (
+        <p className="mt-2">
+          <span className="font-medium text-zinc-800">Preserved service wildcards</span>
+          <br />
+          <span className="font-mono text-[10px] text-zinc-700">{preserved.join(" · ")}</span>
+        </p>
+      )}
+      {preserved.length > 0 && (
+        <p className="mt-2 text-zinc-600">
+          <span className="font-medium text-zinc-700">Why</span> — AWS reported recent usage for these services but
+          did not return action or resource-level detail for this role.
+        </p>
+      )}
+      {observed > 0 && (
+        <p className="mt-2 text-zinc-600">
+          <span className="font-medium text-zinc-700">Result</span> —{" "}
+          {preserved.length > 0
+            ? `Action:* was replaced with ${observed} observed actions. Resource remains *.`
+            : cov.resources
+              ? `${observed} observed actions with resource ARNs where available.`
+              : `${observed} observed actions scoped. Resource remains *.`}
+        </p>
+      )}
+      {showNoJobHint && (
+        <p className="mt-2 text-amber-900">
+          {policyGenerationReasonLabel(data.access_analyzer!.reason) ?? data.access_analyzer!.reason}
+        </p>
+      )}
+      {data.advanced_note && hasConcreteResources && (
+        <p className="mt-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1.5 text-emerald-950">
+          {data.advanced_note}
+        </p>
+      )}
+      {hasConcreteResources && aaStatements.length > 0 && (
         <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1.5 text-emerald-950">
-          <p className="font-semibold">Access Analyzer resource scope ({aaStatements.length})</p>
+          <p className="font-semibold">Apply-ready resource ARNs ({aaStatements.length})</p>
           <ul className="mt-1 space-y-1">
-            {aaStatements.slice(0, 6).map((st, i) => (
+            {aaStatements.slice(0, 4).map((st, i) => (
               <li key={i} className="font-mono text-[10px] leading-snug">
-                {st.actions.slice(0, 3).join(", ")}
-                {st.actions.length > 3 ? ` +${st.actions.length - 3}` : ""}
-                {st.resources.length > 0 ? ` → ${st.resources[0]}` : ""}
+                {st.actions.slice(0, 2).join(", ")}
+                {st.actions.length > 2 ? ` +${st.actions.length - 2}` : ""}
+                {` → ${st.resources[0]}`}
                 {st.resources.length > 1 ? ` +${st.resources.length - 1}` : ""}
               </li>
             ))}
           </ul>
-          {aaStatements.length > 6 && (
-            <p className="mt-1 text-[10px] text-emerald-800">+{aaStatements.length - 6} more statements</p>
-          )}
         </div>
       )}
-      {data.advanced_note && (
-        <p
-          className={`mt-2 rounded-md border px-2 py-1.5 ${
-            data.access_analyzer && !data.access_analyzer.available
-              ? "border-amber-200/80 bg-amber-50/80 text-amber-950"
-              : "border-indigo-100 bg-indigo-50/80 text-indigo-950"
-          }`}
-        >
-          {data.advanced_note}
+      {(data.policy_warnings?.length ?? 0) > 0 && (
+        <p className="mt-2 rounded-md border border-amber-200/80 bg-amber-50/80 px-2 py-1.5 text-amber-950">
+          {data.policy_warnings![0]}
         </p>
       )}
-      {(data.policy_warnings?.length ?? 0) > 0 && (
-        <ul className="mt-2 space-y-1 rounded-md border border-amber-200/80 bg-amber-50/80 px-2 py-1.5 text-amber-950">
-          {data.policy_warnings!.map((w) => (
-            <li key={w}>{w}</li>
-          ))}
-        </ul>
+      {(jobCompleted || (data.access_analyzer?.placeholder_resources?.length ?? 0) > 0) && (
+        <div className="mt-2 border-t border-zinc-200/80 pt-2">
+          <button
+            type="button"
+            onClick={() => setTechOpen((o) => !o)}
+            className="text-[10px] font-medium text-zinc-500 hover:text-zinc-800"
+          >
+            {techOpen ? "Hide" : "Show"} technical details
+          </button>
+          {techOpen && (
+            <div className="mt-1.5 space-y-1 text-[10px] text-zinc-500">
+              <p>
+                CloudTrail policy generation:{" "}
+                {jobCompleted
+                  ? "completed"
+                  : data.access_analyzer?.reason === "in_progress"
+                    ? "in progress"
+                    : "none"}
+              </p>
+              <p>IAM last-accessed: available</p>
+              {(data.access_analyzer?.placeholder_resources_ignored ?? 0) > 0 && (
+                <p>
+                  Resource templates ignored: {data.access_analyzer!.placeholder_resources_ignored} (
+                  <span className="font-mono">${"{"}…{"}"}</span> placeholders are not apply-ready)
+                </p>
+              )}
+              {jobCompleted && data.access_analyzer?.job_id && (
+                <p className="font-mono">
+                  job {data.access_analyzer.job_id}
+                  {data.access_analyzer.completed_on ? ` · ${data.access_analyzer.completed_on}` : ""}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -3528,15 +3612,22 @@ function policyRenameHint(policyName: string, roleArn: string, narrowed: boolean
 function policyChangeSummary(data: GeneratedPolicy) {
   const removed = data.statements_removed ?? 0;
   const modified = data.statements_modified ?? 0;
-  const usedActions = data.used_actions?.length ?? 0;
-  const usedServices = data.used_services?.length ?? 0;
+  const preserved = data.preserved_service_wildcards ?? [];
+  const observed =
+    data.observed_action_count ??
+    (data.used_actions?.filter((a) => !a.endsWith(":*") && a !== "*").length ?? 0);
   const parts: string[] = [];
-  if (removed) parts.push(`${removed} statement${removed !== 1 ? "s" : ""} removed`);
-  if (modified) {
-    if (data.granularity === "action" && usedActions) {
-      parts.push(`${modified} action wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedActions} used action${usedActions !== 1 ? "s" : ""}`);
+  if (removed) parts.push(`${removed} unused statement${removed !== 1 ? "s" : ""} removed`);
+  if (modified && observed) {
+    if (preserved.length) {
+      parts.push(
+        `Full admin narrowed to ${observed} observed action${observed !== 1 ? "s" : ""}, with ${preserved.length} service wildcard${preserved.length !== 1 ? "s" : ""} preserved`,
+      );
+    } else if (data.granularity === "action") {
+      parts.push(`Action:* replaced with ${observed} observed action${observed !== 1 ? "s" : ""}`);
     } else {
-      parts.push(`${modified} action wildcard${modified !== 1 ? "s" : ""} narrowed to ${usedServices} used service${usedServices !== 1 ? "s" : ""}`);
+      const usedServices = data.used_services?.length ?? 0;
+      parts.push(`Scoped to ${usedServices} used service${usedServices !== 1 ? "s" : ""}`);
     }
   }
   return parts.length ? parts.join(" · ") : "No changes";
@@ -3544,7 +3635,18 @@ function policyChangeSummary(data: GeneratedPolicy) {
 
 type PolicyStatement = { Sid?: string; Effect?: string; Action?: string | string[]; Resource?: string | string[]; [k: string]: unknown };
 
-type PolicyDiffLine = { kind: "context" | "remove" | "add"; text: string };
+type PolicyDiffLine = { kind: "context" | "remove" | "add" | "header"; text: string };
+
+function actionService(action: string): string | null {
+  const i = action.indexOf(":");
+  return i > 0 ? action.slice(0, i).toLowerCase() : null;
+}
+
+function isSubsumedByPreservedWildcard(action: string, preserved: Set<string>): boolean {
+  if (preserved.has(action.toLowerCase())) return true;
+  const svc = actionService(action);
+  return svc != null && preserved.has(`${svc}:*`);
+}
 
 const POLICY_DIFF_PREVIEW = 14;
 
@@ -3558,12 +3660,36 @@ function diffPolicyField(
   orig: string[],
   clean: string[],
   mode: "removed" | "modified",
+  opts?: { preservedServiceWildcards?: string[] },
 ): PolicyDiffLine[] {
   const lines: PolicyDiffLine[] = [];
   const origSet = new Set(orig);
   const cleanSet = new Set(clean);
   const wildcardNarrowed =
     mode === "modified" && orig.length === 1 && orig[0] === "*" && clean.length > 0 && !clean.includes("*");
+
+  if (wildcardNarrowed && label === "Action") {
+    const preservedSet = new Set((opts?.preservedServiceWildcards ?? []).map((a) => a.toLowerCase()));
+    const preserved = [...clean].filter((a) => a.endsWith(":*") && preservedSet.has(a.toLowerCase())).sort();
+    const observed = [...clean]
+      .filter((a) => !isSubsumedByPreservedWildcard(a, preservedSet))
+      .sort();
+    lines.push({ kind: "header", text: "Removed" });
+    lines.push({ kind: "remove", text: `${label}: *` });
+    if (observed.length) {
+      lines.push({ kind: "header", text: "Added observed actions" });
+      for (const item of observed) {
+        lines.push({ kind: "add", text: `  ${item}` });
+      }
+    }
+    if (preserved.length) {
+      lines.push({ kind: "header", text: "Preserved service wildcards" });
+      for (const item of preserved) {
+        lines.push({ kind: "add", text: `  ${item}` });
+      }
+    }
+    return lines;
+  }
 
   if (wildcardNarrowed) {
     lines.push({ kind: "remove", text: `${label}: "*"` });
@@ -3622,7 +3748,7 @@ function buildNewStatementDiffLines(stmt: PolicyStatement): PolicyDiffLine[] {
 function buildStatementDiffLines(
   orig: PolicyStatement,
   clean: PolicyStatement | null,
-  opts: { hideUnchangedResources?: boolean },
+  opts: { hideUnchangedResources?: boolean; preservedServiceWildcards?: string[] },
 ): PolicyDiffLine[] {
   if (!clean) {
     const lines: PolicyDiffLine[] = [];
@@ -3636,7 +3762,11 @@ function buildStatementDiffLines(
   const lines: PolicyDiffLine[] = [];
   if (orig.Sid) lines.push({ kind: "context", text: `Sid: ${orig.Sid}` });
   if (orig.Effect) lines.push({ kind: "context", text: `Effect: ${orig.Effect}` });
-  lines.push(...diffPolicyField("Action", asPolicyList(orig.Action), asPolicyList(clean.Action), "modified"));
+  lines.push(
+    ...diffPolicyField("Action", asPolicyList(orig.Action), asPolicyList(clean.Action), "modified", {
+      preservedServiceWildcards: opts.preservedServiceWildcards,
+    }),
+  );
 
   const origRes = asPolicyList(orig.Resource);
   const cleanRes = asPolicyList(clean.Resource);
@@ -3653,6 +3783,13 @@ function buildStatementDiffLines(
 }
 
 function PolicyDiffLineRow({ line }: { line: PolicyDiffLine }) {
+  if (line.kind === "header") {
+    return (
+      <div className="border-t border-zinc-200/80 bg-zinc-100/90 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-zinc-500 first:border-t-0">
+        {line.text}
+      </div>
+    );
+  }
   const prefix = line.kind === "remove" ? "-" : line.kind === "add" ? "+" : " ";
   const rowClass =
     line.kind === "remove"
@@ -3725,11 +3862,13 @@ function PolicyDiffView({
   original,
   cleaned,
   hideUnchangedResources,
+  preservedServiceWildcards,
 }: {
   original: Record<string, unknown>;
   cleaned: Record<string, unknown>;
   granularity?: "action" | "service";
   hideUnchangedResources?: boolean;
+  preservedServiceWildcards?: string[];
 }) {
   const sections = Object.entries(original).map(([name, origDoc]) => {
     const origStmts: PolicyStatement[] = (origDoc as { Statement?: PolicyStatement[] })?.Statement ?? [];
@@ -3741,7 +3880,10 @@ function PolicyDiffView({
         const cleanJson = clean ? JSON.stringify(clean) : null;
         if (cleanJson && origJson === cleanJson) return null;
         const kind = !clean ? ("removed" as const) : ("modified" as const);
-        const lines = buildStatementDiffLines(stmt, clean ?? null, { hideUnchangedResources });
+        const lines = buildStatementDiffLines(stmt, clean ?? null, {
+          hideUnchangedResources,
+          preservedServiceWildcards,
+        });
         const title = kind === "removed" ? "Removed — no usage in 90 days" : undefined;
         return { index: i, lines, title };
       })
@@ -3774,6 +3916,63 @@ function PolicyDiffView({
   );
 }
 
+function PolicyCloudTrailStartAction({
+  accountId,
+  roleArn,
+  data,
+  onRefresh,
+}: {
+  accountId: string;
+  roleArn: string;
+  data: GeneratedPolicy;
+  onRefresh: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const inProgress = data.access_analyzer?.reason === "in_progress";
+  const canStart = data.improve_via_cloudtrail && data.confidence !== "high";
+
+  if (!canStart && !inProgress) return null;
+
+  const start = async () => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const res = await api<{ message: string }>(
+        `/v1/accounts/${accountId}/roles/policy-generation/start?role_arn=${encodeURIComponent(roleArn)}`,
+        { method: "POST" },
+      );
+      setFeedback(res.message);
+      onRefresh();
+    } catch (e) {
+      setFeedback(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-md border border-indigo-200/80 bg-indigo-50/50 px-2.5 py-2">
+      {inProgress ? (
+        <p className="text-[11px] text-indigo-950">{policyGenerationReasonLabel("in_progress")}</p>
+      ) : (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={start}
+          className="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-50 disabled:opacity-60"
+        >
+          {busy ? "Starting…" : "Start CloudTrail analysis"}
+        </button>
+      )}
+      {feedback && <p className="mt-1.5 text-[10px] leading-snug text-indigo-900">{feedback}</p>}
+      <p className="mt-1 text-[10px] text-indigo-800/90">
+        Starts an AWS policy-generation job (several minutes). Does not change IAM until you apply a policy yourself.
+      </p>
+    </div>
+  );
+}
+
 function GeneratePolicySection({
   accountId,
   finding,
@@ -3786,7 +3985,7 @@ function GeneratePolicySection({
   const [enabled, setEnabled] = useState(false);
   const [policyOpen, setPolicyOpen] = useState(true);
   const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
-  const { data, isLoading, error } = useQuery<GeneratedPolicy>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<GeneratedPolicy>({
     queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen],
     queryFn: () =>
       api(
@@ -3811,21 +4010,40 @@ function GeneratePolicySection({
             }}
             className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
           >
-            Generate
+            Build suggestion
           </button>
-        ) : undefined
+        ) : (
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:opacity-60"
+          >
+            {isFetching ? "Refreshing…" : "Rebuild"}
+          </button>
+        )
       }
     >
       <div className={drawerSectionBody}>
       {!enabled && (
         <p className="text-[13px] leading-snug text-zinc-600">{generatePolicyIntro(cloudTrailLogging)}</p>
       )}
-      {enabled && isLoading && <div className="py-2 text-[13px] text-zinc-500">Generating…</div>}
+      {enabled && isLoading && <div className="py-2 text-[13px] text-zinc-500">Building suggestion…</div>}
       {enabled && error && <div className="py-1 text-[13px] text-red-600">{String(error)}</div>}
       {enabled && data && !data.has_inline_policies && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] leading-snug text-amber-900">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
       )}
-      {enabled && data && <PolicyCoverageMeta data={data} />}
+      {enabled && data && (
+        <>
+          <PolicyCoverageMeta data={data} />
+          <PolicyCloudTrailStartAction
+            accountId={accountId}
+            roleArn={finding.resource_arn}
+            data={data}
+            onRefresh={() => void refetch()}
+          />
+        </>
+      )}
       {enabled && data && data.has_inline_policies && data.original_policies && data.cleaned_policies && (
         <div className="mt-2.5 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
@@ -3855,12 +4073,13 @@ function GeneratePolicySection({
               cleaned={data.cleaned_policies}
               granularity={data.granularity}
               hideUnchangedResources={finding.check_id === "iam.role.unused_services_90d"}
+              preservedServiceWildcards={data.preserved_service_wildcards}
             />
           )}
           {view !== "diff" && <CliBlock code={JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)} />}
-          {data.granularity === "service" && (
+          {data.granularity === "service" && !data.access_analyzer?.job_id && (
             <p className="text-[11px] leading-snug text-zinc-500">
-              Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh, or start CloudTrail policy generation for this role for tighter scoping.
+              Per-action usage not available yet — scoped to services with recorded activity. Run another scan to refresh.
             </p>
           )}
         </div>

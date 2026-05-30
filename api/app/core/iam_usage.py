@@ -142,8 +142,7 @@ def augment_used_actions_with_granted_for_service_only(
             warnings.append(
                 f"{svc}: used recently but IAM returned service-level evidence only and the grant is a "
                 f"wildcard. Preserved as {wildcard} so the workload keeps working — could not scope to "
-                "specific actions. Run CloudTrail policy generation for this role (Remediation → "
-                "advanced generate) once CloudTrail has enough history for this service."
+                "specific actions without per-action or CloudTrail detail for this service."
             )
         else:
             warnings.append(
@@ -151,6 +150,56 @@ def augment_used_actions_with_granted_for_service_only(
             )
 
     return sorted(seen.values(), key=str.lower), warnings
+
+
+def remove_service_wildcards_when_specific_actions_exist(actions: list[str]) -> list[str]:
+    """Drop ``svc:*`` when specific ``svc:Action`` entries exist (e.g. after CloudTrail merge)."""
+    services_with_specific = {
+        a.split(":", 1)[0].lower()
+        for a in actions
+        if ":" in a and not a.endswith(":*") and a != "*"
+    }
+    cleaned: list[str] = []
+    seen_lower: set[str] = set()
+    for action in actions:
+        if action == "*":
+            if "*" not in seen_lower:
+                seen_lower.add("*")
+                cleaned.append(action)
+            continue
+        if action.endswith(":*") and ":" in action:
+            service = action.split(":", 1)[0].lower()
+            if service in services_with_specific:
+                continue
+        key = action.lower()
+        if key in seen_lower:
+            continue
+        seen_lower.add(key)
+        cleaned.append(action)
+    return sorted(cleaned, key=str.lower)
+
+
+def filter_stale_wildcard_preservation_warnings(
+    warnings: list[str], used_actions: list[str]
+) -> list[str]:
+    """Remove 'preserved as svc:*' warnings when that service now has specific actions."""
+    services_with_specific = {
+        a.split(":", 1)[0].lower()
+        for a in used_actions
+        if ":" in a and not a.endswith(":*") and a != "*"
+    }
+    out: list[str] = []
+    for w in warnings:
+        if "Preserved as " in w:
+            skip = False
+            for svc in services_with_specific:
+                if w.startswith(f"{svc}:"):
+                    skip = True
+                    break
+            if skip:
+                continue
+        out.append(w)
+    return out
 
 
 def unused_services_from_usages(usages: list[IamPermUsage], cutoff: datetime) -> set[str]:

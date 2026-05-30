@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from app.core.iam_usage import (
     augment_used_actions_with_granted_for_service_only,
+    remove_service_wildcards_when_specific_actions_exist,
     used_actions_from_usages,
 )
 
@@ -144,3 +145,35 @@ def test_augment_warns_when_used_service_has_no_matching_grant():
 
     assert actions == []
     assert any("dynamodb" in w and "no matching grant" in w for w in warnings)
+
+
+def test_remove_service_wildcard_when_cloudtrail_actions_exist():
+    actions = [
+        "cloudfront:*",
+        "dynamodb:*",
+        "cloudfront:GetDistribution",
+        "cloudfront:ListTagsForResource",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+    ]
+    cleaned = remove_service_wildcards_when_specific_actions_exist(actions)
+    assert "cloudfront:*" not in cleaned
+    assert "dynamodb:*" not in cleaned
+    assert "cloudfront:GetDistribution" in cleaned
+    assert "dynamodb:GetItem" in cleaned
+
+
+def test_augment_does_not_add_wildcard_when_actions_already_merged_from_cloudtrail():
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    usages = [_usage(service="cloudfront", last_auth=recent, actions_json=None)]
+
+    actions, warnings = augment_used_actions_with_granted_for_service_only(
+        ["cloudfront:GetDistribution", "cloudfront:TagResource"],
+        usages,
+        cutoff,
+        ["*"],
+    )
+
+    assert "cloudfront:*" not in actions
+    assert not any("Preserved as" in w for w in warnings)

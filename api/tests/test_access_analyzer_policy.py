@@ -2,20 +2,27 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import boto3
 from botocore.stub import Stubber
 
 import app.core.aws  # noqa: F401 — side effect: clears empty AWS_* env so boto3 clients build
+from app.core.iam_usage import remove_service_wildcards_when_specific_actions_exist
 from app.services.access_analyzer_policy import (
+    latest_policy_generation_status,
+    start_policy_generation,
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
     apply_aa_resources_to_policy_doc,
     confidence_for,
     derive_advanced_role_arn,
+    derive_cloudtrail_access_role_arn,
     fetch_latest_generated_policy,
+    is_placeholder_resource,
     merge_access_analyzer,
+    normalize_aa_statements,
     parse_generated_policy,
     security_findings_only,
     validate_policy,
@@ -71,21 +78,57 @@ def test_parse_generated_policy_tolerates_garbage():
 
 
 def test_merge_never_drops_used_service_and_warns_on_uncovered():
-    # last-accessed says ec2 + dynamodb used; AA only has CloudTrail history for dynamodb.
     last_accessed = ["ec2:DescribeInstances"]
     aa_statements = [
-        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:::table/x"]},
+        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:::table/x"], "placeholder_resources": []},
     ]
     used_services = {"ec2", "dynamodb"}
 
-    actions, warnings = merge_access_analyzer(last_accessed, aa_statements, used_services)
+    actions, warnings = merge_access_analyzer(
+        last_accessed, aa_statements, used_services, policy_gen_job_completed=True
+    )
 
-    # union: ec2 (last-accessed) preserved, dynamodb (AA) added — nothing dropped
     assert "ec2:DescribeInstances" in actions
     assert "dynamodb:GetItem" in actions
-    # ec2 had no AA coverage -> warned it stays action-level; dynamodb covered -> no warning
-    assert any(w.startswith("ec2:") for w in warnings)
-    assert not any(w.startswith("dynamodb:") for w in warnings)
+    assert warnings == []
+
+
+def test_merge_then_cleanup_drops_service_wildcard_when_cloudtrail_has_actions():
+    last_accessed = ["cloudfront:*", "ec2:DescribeInstances"]
+    aa_statements = [
+        {
+            "actions": ["cloudfront:GetDistribution", "cloudfront:TagResource"],
+            "resources": ["arn:aws:cloudfront::123:distribution/E123"],
+            "placeholder_resources": [],
+        },
+    ]
+    merged, _ = merge_access_analyzer(
+        last_accessed, aa_statements, {"cloudfront", "ec2"}, policy_gen_job_completed=True
+    )
+    cleaned = remove_service_wildcards_when_specific_actions_exist(merged)
+    assert "cloudfront:*" not in cleaned
+    assert "cloudfront:GetDistribution" in cleaned
+    assert "ec2:DescribeInstances" in cleaned
+
+
+def test_parse_generated_policy_strips_placeholders():
+    policy = {
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": ["cloudfront:CreateInvalidation"],
+                "Resource": [
+                    "arn:aws:cloudfront::123:distribution/E123",
+                    "arn:aws:cloudfront::${Account}:distribution/${DistributionId}",
+                ],
+            }
+        ]
+    }
+    resp = {"generatedPolicyResult": {"generatedPolicies": [{"policy": json.dumps(policy)}]}}
+    statements = parse_generated_policy(resp)
+    assert statements[0]["resources"] == ["arn:aws:cloudfront::123:distribution/E123"]
+    assert len(statements[0]["placeholder_resources"]) == 1
+    assert is_placeholder_resource(statements[0]["placeholder_resources"][0])
 
 
 def test_confidence_tiers():
@@ -99,20 +142,21 @@ def test_apply_aa_resources_replaces_wildcard_resource():
         "Version": "2012-10-17",
         "Statement": [{"Effect": "Allow", "Action": "dynamodb:GetItem", "Resource": "*"}],
     }
-    aa_statements = [
-        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/orders"]},
-    ]
+    aa_statements = normalize_aa_statements(
+        [{"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/orders"]}]
+    )
 
     cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
 
     assert cleaned["Statement"][0]["Resource"] == "arn:aws:dynamodb:us-east-1:123:table/orders"
 
 
-def test_apply_aa_resources_dedupes_and_preserves_specific_resources():
+def test_apply_aa_resources_maps_by_service_only():
     doc = {
         "Version": "2012-10-17",
         "Statement": [
-            {"Effect": "Allow", "Action": "*", "Resource": "*"},
+            {"Effect": "Allow", "Action": "dynamodb:GetItem", "Resource": "*"},
+            {"Effect": "Allow", "Action": "cloudfront:CreateInvalidation", "Resource": "*"},
             {
                 "Effect": "Allow",
                 "Action": "s3:GetObject",
@@ -120,19 +164,22 @@ def test_apply_aa_resources_dedupes_and_preserves_specific_resources():
             },
         ],
     }
-    aa_statements = [
-        {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/a"]},
-        {"actions": ["dynamodb:PutItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/a", "*"]},
-        {"actions": ["s3:GetObject"], "resources": ["arn:aws:s3:::bucket/key"]},
-    ]
+    aa_statements = normalize_aa_statements(
+        [
+            {"actions": ["dynamodb:GetItem"], "resources": ["arn:aws:dynamodb:us-east-1:123:table/a"]},
+            {
+                "actions": ["cloudfront:CreateInvalidation"],
+                "resources": ["arn:aws:cloudfront::123:distribution/E123"],
+            },
+            {"actions": ["s3:GetObject"], "resources": ["arn:aws:s3:::bucket/key"]},
+        ]
+    )
 
     cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
 
-    assert cleaned["Statement"][0]["Resource"] == [
-        "arn:aws:dynamodb:us-east-1:123:table/a",
-        "arn:aws:s3:::bucket/key",
-    ]
-    assert cleaned["Statement"][1]["Resource"] == "arn:aws:s3:::already-scoped/*"
+    assert cleaned["Statement"][0]["Resource"] == "arn:aws:dynamodb:us-east-1:123:table/a"
+    assert cleaned["Statement"][1]["Resource"] == "arn:aws:cloudfront::123:distribution/E123"
+    assert cleaned["Statement"][2]["Resource"] == "arn:aws:s3:::already-scoped/*"
 
 
 def test_apply_aa_resources_handles_list_wildcard_resource():
@@ -140,9 +187,14 @@ def test_apply_aa_resources_handles_list_wildcard_resource():
         "Version": "2012-10-17",
         "Statement": [{"Effect": "Allow", "Action": "cloudfront:*", "Resource": ["*"]}],
     }
-    aa_statements = [
-        {"actions": ["cloudfront:CreateInvalidation"], "resources": ["arn:aws:cloudfront::123:distribution/E123"]},
-    ]
+    aa_statements = normalize_aa_statements(
+        [
+            {
+                "actions": ["cloudfront:CreateInvalidation"],
+                "resources": ["arn:aws:cloudfront::123:distribution/E123"],
+            }
+        ]
+    )
 
     cleaned = apply_aa_resources_to_policy_doc(doc, aa_statements)
 
@@ -175,7 +227,7 @@ def test_fetch_latest_generated_policy_picks_newest_succeeded():
                 "generatedPolicies": [{"policy": json.dumps(policy)}],
             },
         },
-        {"jobId": "new", "includeResourcePlaceholders": True},
+        {"jobId": "new", "includeResourcePlaceholders": False},
     )
 
     with stub:
@@ -238,3 +290,62 @@ def test_validate_policy_normalizes_and_security_filter():
     security = security_findings_only(findings)
     assert len(security) == 1
     assert security[0]["finding_type"] == "SECURITY_WARNING"
+
+
+def test_derive_cloudtrail_access_role_arn_from_scanner():
+    base = "arn:aws:iam::946796614687:role/VigilScannerRole"
+    assert (
+        derive_cloudtrail_access_role_arn(base)
+        == "arn:aws:iam::946796614687:role/VigilScannerRoleAccessAnalyzerMonitor"
+    )
+
+
+def test_start_policy_generation_calls_api():
+    principal = "arn:aws:iam::123456789012:role/app"
+    access_role = "arn:aws:iam::123456789012:role/VigilPolicyGenerationRole"
+    trail = "arn:aws:cloudtrail:us-east-1:123:trail/t1"
+    start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    client = boto3.client("accessanalyzer", region_name="us-east-1")
+    stub = Stubber(client)
+    stub.add_response(
+        "start_policy_generation",
+        {"jobId": "job-1"},
+        {
+            "policyGenerationDetails": {"principalArn": principal},
+            "cloudTrailDetails": {
+                "trails": [{"cloudTrailArn": trail}],
+                "accessRole": access_role,
+                "startTime": start,
+            },
+        },
+    )
+    with stub:
+        out = start_policy_generation(
+            client,
+            principal_arn=principal,
+            trail_arns=[trail],
+            access_role_arn=access_role,
+            start_time=start,
+        )
+    assert out["job_id"] == "job-1"
+    assert out["status"] == "IN_PROGRESS"
+
+
+def test_latest_policy_generation_status_returns_newest():
+    principal = "arn:aws:iam::123456789012:role/app"
+    client = boto3.client("accessanalyzer", region_name="us-east-1")
+    stub = Stubber(client)
+    stub.add_response(
+        "list_policy_generations",
+        {
+            "policyGenerations": [
+                {"jobId": "old", "principalArn": principal, "status": "SUCCEEDED", "startedOn": "2026-01-01T00:00:00Z"},
+                {"jobId": "new", "principalArn": principal, "status": "IN_PROGRESS", "startedOn": "2026-03-02T00:00:00Z"},
+            ]
+        },
+        {"principalArn": principal},
+    )
+    with stub:
+        row = latest_policy_generation_status(client, principal)
+    assert row["job_id"] == "new"
+    assert row["status"] == "IN_PROGRESS"

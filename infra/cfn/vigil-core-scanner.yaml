@@ -22,9 +22,26 @@ Parameters:
     Description: >
       Attach VigilAdvancedPolicyGeneration inline policy (IAM/Access Analyzer analysis jobs only;
       does not modify customer resources).
+  CloudTrailLogsBucketName:
+    Type: String
+    Default: ""
+    Description: >
+      S3 bucket where CloudTrail delivers logs (name only). Optional; leave empty to allow the
+      monitor role broad S3 read for policy generation. Set for least-privilege bucket scope.
+  CloudTrailLogsBucketPrefix:
+    Type: String
+    Default: "AWSLogs/"
+    Description: Key prefix under the bucket (include trailing slash if used).
+  CloudTrailLogsKmsKeyArn:
+    Type: String
+    Default: ""
+    Description: KMS key ARN if trail log objects use SSE-KMS (optional).
 
 Conditions:
   CreateAdvancedPolicyGeneration: !Equals [!Ref EnableAdvancedPolicyGeneration, "Yes"]
+  CreateMonitorRole: !Equals [!Ref EnableAdvancedPolicyGeneration, "Yes"]
+  HasCloudTrailBucket: !Not [!Equals [!Ref CloudTrailLogsBucketName, ""]]
+  HasCloudTrailKmsKey: !Not [!Equals [!Ref CloudTrailLogsKmsKeyArn, ""]]
 
 Resources:
   VigilRole:
@@ -231,10 +248,85 @@ Resources:
                   - organizations:DescribeAccount
                 Resource: "*"
 
+  VigilAccessAnalyzerMonitorRole:
+    Type: AWS::IAM::Role
+    Condition: CreateMonitorRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: !Sub "${RoleName}AccessAnalyzerMonitor"
+      Description: >
+        Assumed by access-analyzer.amazonaws.com to read CloudTrail logs during IAM policy
+        generation. Not assumed by Vigil directly.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: access-analyzer.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AccessAnalyzerCloudTrailRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Fn::If:
+                - HasCloudTrailBucket
+                - Fn::If:
+                    - HasCloudTrailKmsKey
+                    - - Sid: CloudTrailDiscovery
+                        Effect: Allow
+                        Action:
+                          - cloudtrail:DescribeTrails
+                          - cloudtrail:GetTrailStatus
+                        Resource: "*"
+                      - Sid: CloudTrailLogRead
+                        Effect: Allow
+                        Action:
+                          - s3:GetObject
+                          - s3:ListBucket
+                        Resource:
+                          - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}"
+                          - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}/${CloudTrailLogsBucketPrefix}*"
+                      - Sid: CloudTrailLogDecrypt
+                        Effect: Allow
+                        Action:
+                          - kms:Decrypt
+                          - kms:DescribeKey
+                        Resource: !Ref CloudTrailLogsKmsKeyArn
+                    - - Sid: CloudTrailDiscovery
+                        Effect: Allow
+                        Action:
+                          - cloudtrail:DescribeTrails
+                          - cloudtrail:GetTrailStatus
+                        Resource: "*"
+                      - Sid: CloudTrailLogRead
+                        Effect: Allow
+                        Action:
+                          - s3:GetObject
+                          - s3:ListBucket
+                        Resource:
+                          - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}"
+                          - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}/${CloudTrailLogsBucketPrefix}*"
+                - - Sid: CloudTrailDiscovery
+                    Effect: Allow
+                    Action:
+                      - cloudtrail:DescribeTrails
+                      - cloudtrail:GetTrailStatus
+                    Resource: "*"
+                  - Sid: CloudTrailLogRead
+                    Effect: Allow
+                    Action:
+                      - s3:GetObject
+                      - s3:ListBucket
+                    Resource: "*"
+
   VigilAdvancedPolicyGenerationPolicy:
     Type: AWS::IAM::Policy
     Condition: CreateAdvancedPolicyGeneration
-    DependsOn: VigilRole
+    DependsOn:
+      - VigilRole
+      - VigilAccessAnalyzerMonitorRole
     Properties:
       PolicyName: VigilAdvancedPolicyGeneration
       Roles:
@@ -257,6 +349,13 @@ Resources:
               - access-analyzer:ListPolicyGenerations
               - access-analyzer:CancelPolicyGeneration
             Resource: "*"
+          - Sid: PassAccessAnalyzerMonitorRole
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt VigilAccessAnalyzerMonitorRole.Arn
+            Condition:
+              StringEquals:
+                iam:PassedToService: access-analyzer.amazonaws.com
 
 Outputs:
   RoleArn:
@@ -264,3 +363,7 @@ Outputs:
     Value: !GetAtt VigilRole.Arn
   ExternalId:
     Value: !Ref ExternalId
+  AccessAnalyzerMonitorRoleArn:
+    Condition: CreateMonitorRole
+    Description: IAM role Access Analyzer assumes to read CloudTrail during policy generation.
+    Value: !GetAtt VigilAccessAnalyzerMonitorRole.Arn

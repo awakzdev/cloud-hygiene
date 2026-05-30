@@ -16,18 +16,26 @@ from app.services.policy_generation_messages import (
     POLICY_GEN_ASSUME_FAILED_NOTE,
     POLICY_GEN_NO_CONNECTOR_NOTE,
     POLICY_GEN_NO_JOB_NOTE,
+    POLICY_GEN_PASS_ROLE_HINT,
 )
 from app.services.access_analyzer_policy import (
     apply_aa_resources_to_policy_doc,
     confidence_for,
     derive_advanced_role_arn,
+    derive_cloudtrail_access_role_arn,
     fetch_latest_generated_policy,
+    latest_policy_generation_status,
     merge_access_analyzer,
+    placeholder_resources_from_statements,
+    start_policy_generation,
+    statements_have_concrete_resources,
 )
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.iam_usage import (
     augment_used_actions_with_granted_for_service_only,
+    filter_stale_wildcard_preservation_warnings,
+    remove_service_wildcards_when_specific_actions_exist,
     service_has_tracked_actions_in_window,
     services_with_action_evidence,
     services_with_service_only_evidence,
@@ -749,11 +757,55 @@ def _clean_policy_doc(
 
 _CONFIDENCE_NOTE = {
     "high": "High confidence — actions and resource ARNs come from a completed CloudTrail policy-generation job.",
-    "medium": "Medium confidence — action-level scoping from IAM last-accessed; resource ARNs need a "
-    "completed CloudTrail policy-generation job for this role.",
+    "medium": "Medium confidence — action scope improved; resource scope remains broad.",
     "low": "Low confidence — only service-level evidence is available, so scoping stays broad. "
-    "Permissions are preserved (never silently dropped); see warnings.",
+    "Permissions are preserved (never silently dropped).",
 }
+
+
+def _preserved_service_wildcards(used_actions: list[str], service_only: list[str]) -> list[str]:
+    """Service wildcards still present after merge — only when no per-action signal exists."""
+    services_with_specific = {
+        a.split(":", 1)[0].lower()
+        for a in used_actions
+        if ":" in a and not a.endswith(":*") and a != "*"
+    }
+    only = {s.lower() for s in service_only if s}
+    return sorted(
+        a
+        for a in used_actions
+        if a.endswith(":*")
+        and ":" in a
+        and a.split(":")[0].lower() in only
+        and a.split(":")[0].lower() not in services_with_specific
+    )
+
+
+def _observed_action_count(used_actions: list[str], preserved: list[str]) -> int:
+    preserved_set = {a.lower() for a in preserved}
+    return len(
+        [
+            a
+            for a in used_actions
+            if a != "*" and a.lower() not in preserved_set and not a.endswith(":*")
+        ]
+    )
+
+
+def _consolidate_policy_warnings(
+    warnings: list[str],
+    preserved_wildcards: list[str],
+    *,
+    policy_gen_job_completed: bool,
+) -> list[str]:
+    if preserved_wildcards:
+        return []
+    if policy_gen_job_completed and len(warnings) > 1:
+        return [
+            "Some services only returned service-level usage; wildcard permissions were preserved "
+            "where needed."
+        ]
+    return warnings
 
 
 def _opted_in_aws_regions(sess) -> list[str]:
@@ -815,6 +867,23 @@ def _resolve_advanced_policy_generation(
             continue
         if result:
             return {"available": True, "region": region, **result}
+        try:
+            status = latest_policy_generation_status(client, role_arn)
+        except (ClientError, BotoCoreError):
+            status = None
+        if status and status.get("status") in ("IN_PROGRESS", "RUNNING", "ACTIVE"):
+            return {
+                "available": False,
+                "reason": "in_progress",
+                "region": region,
+                "job_id": status.get("job_id"),
+                "generation_status": status.get("status"),
+                "started_on": status.get("started_on"),
+                "note": (
+                    "CloudTrail policy generation is in progress for this role. "
+                    "Rebuild the suggestion in a few minutes."
+                ),
+            }
     return {
         "available": False,
         "reason": "no_generation",
@@ -841,10 +910,16 @@ def _policy_generation_meta(
         )
     ).all()
     aa_on = len(active_analyzers) > 0
-    aa_resource = bool(aa and aa.get("available") and aa.get("statements"))
-    confidence = confidence_for(aa_resource_data=aa_resource, has_action_data=has_action_data)
+    aa_statements = (aa or {}).get("statements") or []
+    has_concrete_resources = bool(
+        aa and aa.get("available") and (aa.get("has_concrete_resources") or statements_have_concrete_resources(aa_statements))
+    )
+    policy_gen_job_completed = bool(aa and aa.get("available") and aa.get("job_id"))
+    confidence = confidence_for(aa_resource_data=has_concrete_resources, has_action_data=has_action_data)
 
-    if advanced and not aa_resource and (aa or {}).get("note"):
+    if policy_gen_job_completed and has_action_data and not has_concrete_resources:
+        confidence_note = _CONFIDENCE_NOTE["medium"]
+    elif advanced and not has_concrete_resources and (aa or {}).get("note"):
         confidence_note = aa["note"]
     elif not advanced and has_action_data:
         confidence_note = (
@@ -856,20 +931,21 @@ def _policy_generation_meta(
 
     if not advanced:
         advanced_note = None
-    elif aa_resource:
-        advanced_note = (
-            f"CloudTrail policy generation job {aa.get('job_id')} completed "
-            f"{aa.get('completed_on')}. Actions and resource ARNs are CloudTrail-derived."
-        )
+    elif policy_gen_job_completed and has_concrete_resources:
+        advanced_note = "CloudTrail policy generation returned apply-ready resource ARNs."
+    elif policy_gen_job_completed:
+        advanced_note = None
     else:
         advanced_note = (aa or {}).get("note")
 
     meta = {
-        "coverage": {"actions": has_action_data, "resources": aa_resource},
-        "source": "cloudtrail_policy_generation+iam_last_accessed" if aa_resource else "iam_last_accessed",
+        "coverage": {"actions": has_action_data, "resources": has_concrete_resources},
+        "source": "cloudtrail_policy_generation+iam_last_accessed"
+        if policy_gen_job_completed
+        else "iam_last_accessed",
         "source_label": (
-            f"CloudTrail policy generation + IAM last accessed ({threshold_days} days)"
-            if aa_resource
+            "IAM last-accessed + CloudTrail policy generation"
+            if policy_gen_job_completed
             else f"IAM last accessed ({threshold_days} days)"
         ),
         "access_analyzer_enabled": aa_on,
@@ -881,14 +957,24 @@ def _policy_generation_meta(
         "confidence_note": confidence_note,
     }
     if advanced:
+        placeholders = (aa or {}).get("placeholder_resources") or placeholder_resources_from_statements(
+            aa_statements
+        )
         meta["access_analyzer"] = {
-            "available": aa_resource,
+            "available": policy_gen_job_completed,
             "reason": (aa or {}).get("reason"),
             "region": (aa or {}).get("region"),
             "job_id": (aa or {}).get("job_id"),
+            "generation_status": (aa or {}).get("generation_status"),
             "completed_on": str((aa or {}).get("completed_on")) if (aa or {}).get("completed_on") else None,
-            "resource_statements": (aa or {}).get("statements") or [],
+            "resource_statements": aa_statements,
+            "placeholder_resources": placeholders,
+            "placeholder_resources_ignored": len(placeholders),
+            "has_concrete_resources": has_concrete_resources,
         }
+        meta["improve_via_cloudtrail"] = confidence != "high" and (
+            not policy_gen_job_completed or not has_concrete_resources
+        )
     return meta
 
 
@@ -923,9 +1009,6 @@ def generate_role_policy(
     used_set = used_services_from_usages(usages, cutoff)
     tracked_actions = used_actions_from_usages(usages, cutoff)
     granted = _granted_allow_actions_for_role(role)
-    used_actions, policy_warnings = augment_used_actions_with_granted_for_service_only(
-        tracked_actions, usages, cutoff, granted
-    )
     granularity = "action" if tracked_actions else "service"
     service_only = sorted(services_with_service_only_evidence(usages, cutoff))
     action_evidence = sorted(services_with_action_evidence(usages, cutoff))
@@ -939,12 +1022,33 @@ def generate_role_policy(
     )
     aa = _resolve_advanced_policy_generation(db, acc, role_arn) if use_advanced else None
     aa_statements = None
+    used_actions = list(tracked_actions)
+    policy_warnings: list[str] = []
     if aa and aa.get("available") and aa.get("statements"):
         aa_statements = aa["statements"]
-        used_actions, aa_merge_warnings = merge_access_analyzer(
-            used_actions, aa_statements, used_set
+        used_actions, policy_warnings = merge_access_analyzer(
+            used_actions,
+            aa_statements,
+            used_set,
+            policy_gen_job_completed=bool(aa.get("job_id")),
         )
-        policy_warnings = [*policy_warnings, *aa_merge_warnings]
+
+    augment_actions, augment_warnings = augment_used_actions_with_granted_for_service_only(
+        used_actions, usages, cutoff, granted
+    )
+    used_actions = remove_service_wildcards_when_specific_actions_exist(augment_actions)
+    policy_warnings = filter_stale_wildcard_preservation_warnings(
+        [*policy_warnings, *augment_warnings], used_actions
+    )
+
+    preserved_wildcards = _preserved_service_wildcards(used_actions, service_only)
+    policy_gen_done = bool(aa and aa.get("job_id"))
+    policy_warnings = _consolidate_policy_warnings(
+        policy_warnings,
+        preserved_wildcards,
+        policy_gen_job_completed=policy_gen_done,
+    )
+    observed_count = _observed_action_count(used_actions, preserved_wildcards)
 
     inline = role.inline_policies or {}
     meta = _policy_generation_meta(
@@ -961,6 +1065,8 @@ def generate_role_policy(
         "used_services": sorted(used_set),
         "used_services_action_tracked": action_evidence,
         "used_services_service_only": service_only,
+        "preserved_service_wildcards": preserved_wildcards,
+        "observed_action_count": observed_count,
         "policy_warnings": policy_warnings,
     }
 
@@ -1001,6 +1107,159 @@ def generate_role_policy(
         **base_out,
         **meta,
     }
+
+
+def _assume_policy_generation_session(acc: AwsAccount):
+    policy_arn = derive_advanced_role_arn(acc.role_arn) or acc.role_arn
+    if not policy_arn:
+        return None, POLICY_GEN_NO_CONNECTOR_NOTE
+    try:
+        sess = assume_role(
+            policy_arn,
+            acc.external_id,
+            session_name="vigil-policy-gen",
+            aws_account=acc,
+            purpose="policy_generation_start",
+        )
+    except (ClientError, BotoCoreError):
+        return None, POLICY_GEN_ASSUME_FAILED_NOTE
+    return sess, None
+
+
+def _policy_gen_regions(db: Session, acc: AwsAccount, sess) -> list[str]:
+    active = db.scalars(
+        select(AccessAnalyzer).where(
+            AccessAnalyzer.account_id == acc.id,
+            AccessAnalyzer.status == "ACTIVE",
+        )
+    ).all()
+    regions = list(dict.fromkeys(a.region for a in active if a.region))
+    if not regions:
+        try:
+            regions = _opted_in_aws_regions(sess)
+        except (ClientError, BotoCoreError):
+            regions = ["us-east-1"]
+    return regions
+
+
+@router.post("/{account_id}/roles/policy-generation/start")
+def start_role_policy_generation(
+    account_id: str,
+    role_arn: str,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Start AWS CloudTrail policy generation for an IAM role (async; minutes to complete)."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    role = db.scalar(select(IamRole).where(IamRole.account_id == acc.id, IamRole.arn == role_arn))
+    if not role:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "role not found — run a scan first")
+
+    use_advanced = (
+        acc.enable_advanced_policy_generation or acc.advanced_policy_generation_deployed
+    )
+    if not use_advanced:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Enable Advanced IAM policy generation on the connector first.",
+        )
+
+    sess, err_note = _assume_policy_generation_session(acc)
+    if not sess:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=err_note)
+
+    trails = db.scalars(
+        select(CloudTrailTrail).where(
+            CloudTrailTrail.account_id == acc.id,
+            CloudTrailTrail.is_logging == True,  # noqa: E712
+        )
+    ).all()
+    if not trails:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "No logging CloudTrail trails found. Enable CloudTrail and run a scan, then try again.",
+        )
+    trail_arns = list(dict.fromkeys(t.arn for t in trails))
+
+    regions = _policy_gen_regions(db, acc, sess)
+    last_err: str | None = None
+    for region in regions:
+        try:
+            client = sess.client("accessanalyzer", region_name=region)
+            existing = latest_policy_generation_status(client, role_arn)
+            if existing and existing.get("status") in ("IN_PROGRESS", "RUNNING", "ACTIVE"):
+                return {
+                    "job_id": existing.get("job_id"),
+                    "status": existing["status"],
+                    "region": region,
+                    "message": "Policy generation already in progress. Rebuild the suggestion when it completes.",
+                }
+            access_role = derive_cloudtrail_access_role_arn(acc.role_arn)
+            if not access_role:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Could not determine CloudTrail access role ARN for this account.",
+                )
+            started = start_policy_generation(
+                client,
+                principal_arn=role_arn,
+                trail_arns=trail_arns,
+                access_role_arn=access_role,
+            )
+            return {
+                "job_id": started["job_id"],
+                "status": "IN_PROGRESS",
+                "region": region,
+                "message": (
+                    "CloudTrail policy generation started. This usually takes several minutes. "
+                    "Use “Rebuild suggestion” when the job completes."
+                ),
+            }
+        except ClientError as exc:
+            err = str(exc)
+            if exc.response.get("Error", {}).get("Code") == "AccessDeniedException" and "PassRole" in err:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail=f"{err} {POLICY_GEN_PASS_ROLE_HINT}",
+                ) from exc
+            last_err = err
+            continue
+        except BotoCoreError as exc:
+            last_err = str(exc)
+            continue
+    raise HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        detail=last_err or "Could not start policy generation in any region.",
+    )
+
+
+@router.get("/{account_id}/roles/policy-generation/status")
+def role_policy_generation_status(
+    account_id: str,
+    role_arn: str,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    sess, err_note = _assume_policy_generation_session(acc)
+    if not sess:
+        return {"status": "UNAVAILABLE", "detail": err_note}
+
+    for region in _policy_gen_regions(db, acc, sess):
+        try:
+            client = sess.client("accessanalyzer", region_name=region)
+            row = latest_policy_generation_status(client, role_arn)
+        except (ClientError, BotoCoreError):
+            continue
+        if row:
+            return {"region": region, **row}
+    return {"status": "NONE"}
 
 
 @router.get("/{account_id}/s3/generated-https-policy")
