@@ -336,10 +336,18 @@ def remediation_dispatch(
 
 @router.post("/{finding_id}/recheck")
 def recheck(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    from app.services.fast_finding_recheck import try_fast_finding_recheck
     from app.worker.tasks import recheck_finding
+
     f = _get_owned(db, p, finding_id)
     acc = db.get(AwsAccount, f.account_id)
     if not acc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    actor = p.get("sub") or p.get("email") or "system"
+    fast = try_fast_finding_recheck(db, account=acc, finding=f, actor=str(actor))
+    if fast.get("checked"):
+        return fast
+
     recheck_finding.delay(str(acc.id), f.check_id)
     return {"queued": True, "check_id": f.check_id}
