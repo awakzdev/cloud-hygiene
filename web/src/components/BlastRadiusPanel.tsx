@@ -68,6 +68,11 @@ export function BlastRadiusCollapsible({
   );
 }
 
+function isServiceUsageOnlyNote(text: string) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^Service ['"`]?[^'"`]+['"`]?(?: was)?(?: last)? used \d+ days? ago\s*(?:—|–|-)\s*verify before removing\.?$/i.test(normalized);
+}
+
 /** Advisory notes — visually distinct from usage decision accordions below */
 export function BlastRadiusConsiderations({
   items,
@@ -76,8 +81,9 @@ export function BlastRadiusConsiderations({
   items: string[];
   tone?: "warning" | "info";
 }) {
-  const [open, setOpen] = useState(items.length <= 3);
-  if (items.length === 0) return null;
+  const visibleItems = items.filter((item) => !isServiceUsageOnlyNote(item));
+  const [open, setOpen] = useState(visibleItems.length <= 3);
+  if (visibleItems.length === 0) return null;
 
   const shell =
     tone === "warning"
@@ -113,7 +119,7 @@ export function BlastRadiusConsiderations({
           <div className="flex flex-wrap items-center gap-2">
             <span className={`text-[13px] font-semibold ${titleClass}`}>Before you change this</span>
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums ${badgeClass}`}>
-              {items.length} note{items.length !== 1 ? "s" : ""}
+              {visibleItems.length} note{visibleItems.length !== 1 ? "s" : ""}
             </span>
           </div>
           <p className={`mt-0.5 text-[11px] leading-snug ${subClass}`}>
@@ -124,7 +130,7 @@ export function BlastRadiusConsiderations({
       </button>
       {open && (
         <ul className={`space-y-2 border-t px-4 pb-3.5 pt-2.5 pr-5 ${listBorder}`}>
-          {items.map((text, i) => (
+          {visibleItems.map((text, i) => (
             <li key={i} className={`flex gap-2.5 text-[12px] leading-relaxed ${tone === "warning" ? "text-amber-950/90" : "text-zinc-600"}`}>
               <span className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${tone === "warning" ? "bg-amber-400" : "bg-zinc-400"}`} />
               <span>{text}</span>
