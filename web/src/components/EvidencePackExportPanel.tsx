@@ -71,7 +71,7 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "SOC 2 Type II",
       subtitle: "Build a reviewer-ready package around the Type II sampling window.",
       contextLabel: "90-day evidence window",
-      periodHint: "90d is the Type II default. Other windows are mainly for dry runs.",
+      periodNotice: "Exports generated today may not satisfy a full 90-day Type II period.",
     };
   }
 
@@ -80,7 +80,7 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "CIS AWS Foundations",
       subtitle: "Package benchmark posture with optional evidence history.",
       contextLabel: "Benchmark snapshot",
-      periodHint: "CIS is usually snapshot-based. History is optional.",
+      periodNotice: null,
     };
   }
 
@@ -89,7 +89,7 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "ISO 27001",
       subtitle: "Export control evidence and historical posture.",
       contextLabel: "Evidence history",
-      periodHint: "ISO does not require a fixed 90-day export window.",
+      periodNotice: null,
     };
   }
 
@@ -97,7 +97,7 @@ function getFrameworkExportCopy(frameworkId: string) {
     eyebrow: "Evidence export",
     subtitle: "Create an evidence package for this framework.",
     contextLabel: "Audit package",
-    periodHint: "Choose the export scope that matches the review request.",
+    periodNotice: null,
   };
 }
 
@@ -169,28 +169,19 @@ function EvidenceCoverageSection({
 }
 
 function PeriodWindowPicker({
-  frameworkId,
   scopeLabel,
-  hint,
+  notice,
   periodKey,
   onPeriodChange,
 }: {
-  frameworkId: string;
   scopeLabel: string;
-  hint: string;
+  notice: string | null;
   periodKey: string | number;
   onPeriodChange: (key: string | number) => void;
 }) {
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
-        {frameworkId === "soc2" && periodKey === 90 && (
-          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-100">
-            Recommended
-          </span>
-        )}
-      </div>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
 
       <div
         className="mt-2 grid grid-cols-5 gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1"
@@ -218,7 +209,17 @@ function PeriodWindowPicker({
         })}
       </div>
 
-      <p className="mt-2 text-xs leading-relaxed text-zinc-500">{hint}</p>
+      {notice && (
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200/70 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-950">
+          <span
+            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold leading-none text-amber-800 ring-1 ring-amber-200/80"
+            aria-hidden
+          >
+            i
+          </span>
+          <span>{notice}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -559,7 +560,6 @@ export function EvidencePackExportPanel({
     controlsEvaluated,
     lastScanLabel,
   });
-  const showPeriodControls = periodKey !== "last_scan";
   const scopeLabel = exportScopeSectionLabel(frameworkId);
   const asOfLabel = exportAsOfSectionLabel(frameworkId);
   const showType2AsOfHint = exportAsOfShowsType2Hint(frameworkId);
@@ -605,28 +605,25 @@ export function EvidencePackExportPanel({
 
         <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm">
           <PeriodWindowPicker
-            frameworkId={frameworkId}
             scopeLabel={scopeLabel}
-            hint={copy.periodHint}
+            notice={copy.periodNotice}
             periodKey={periodKey}
             onPeriodChange={onPeriodChange}
           />
 
-          {showPeriodControls && (
-            <div className="mt-4 border-t border-zinc-100 pt-4">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                {asOfLabel}
-                {showType2AsOfHint && (
-                  <span className="ml-1 normal-case tracking-normal text-zinc-400">
-                    · end of Type II sampling
-                  </span>
-                )}
-              </p>
-              <div className="mt-2">
-                <AuditAsOfPicker value={asOf} onChange={onAsOfChange} maxIso={maxIso} />
-              </div>
+          <div className="mt-4 border-t border-zinc-100 pt-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+              {asOfLabel}
+              {showType2AsOfHint && (
+                <span className="ml-1 normal-case tracking-normal text-zinc-400">
+                  · end of Type II sampling
+                </span>
+              )}
+            </p>
+            <div className="mt-2">
+              <AuditAsOfPicker value={asOf} onChange={onAsOfChange} maxIso={maxIso} />
             </div>
-          )}
+          </div>
         </section>
       </div>
 
@@ -640,7 +637,7 @@ export function EvidencePackExportPanel({
           <>
             <svg className="h-3.5 w-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 12h4Z" />
             </svg>
             Generating…
           </>
