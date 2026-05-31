@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 
-/** Shared “workflow” primitives — same rhythm as What If, reusable across drawer tabs */
+/** Shared workflow primitives. Same rhythm as What If, reusable across drawer tabs. */
 
 export function DrawerFlowLabel({ children }: { children: ReactNode }) {
   return (
@@ -171,6 +171,23 @@ export function FlowBadge({
   );
 }
 
+function ExceptionDetailCell({
+  label,
+  children,
+  muted = false,
+}: {
+  label: string;
+  children: ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-amber-200/45 bg-white/75 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-800/70">{label}</p>
+      <div className={`mt-1 text-[13px] leading-relaxed ${muted ? "text-zinc-400" : "text-zinc-800"}`}>{children}</div>
+    </div>
+  );
+}
+
 export function ExceptionFlowPanel({
   reason,
   approvedBy,
@@ -180,27 +197,36 @@ export function ExceptionFlowPanel({
   approvedBy?: string | null;
   expiresAt?: string | null;
 }) {
+  const hasApprovedBy = Boolean(approvedBy?.trim());
+  const hasExpiry = Boolean(expiresAt);
+  const hasReason = Boolean(reason?.trim());
+
   return (
-    <div className="overflow-hidden rounded-xl border border-dashed border-amber-300/70 bg-gradient-to-br from-amber-50/85 to-white shadow-sm shadow-amber-900/[0.03]">
-      <div className="flex items-center gap-2 border-b border-amber-200/50 px-4 py-2.5 pr-5">
-        <FlowBadge variant="caution">Exception</FlowBadge>
-        <span className="text-[12px] font-semibold text-amber-950">Documented risk acceptance</span>
+    <div className="w-full overflow-hidden rounded-xl border border-amber-200/70 bg-white shadow-sm shadow-amber-900/[0.04]">
+      <div className="flex items-start justify-between gap-3 border-b border-amber-100/80 bg-gradient-to-r from-amber-50/90 via-white to-white px-4 py-3 pr-5">
+        <div>
+          <div className="flex items-center gap-2">
+            <FlowBadge variant="caution">Exception</FlowBadge>
+            <span className="text-[12px] font-semibold text-zinc-900">Documented risk acceptance</span>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+            Kept in the evidence pack for auditor review.
+          </p>
+        </div>
       </div>
-      <div className="space-y-2 px-4 py-3 pr-5 text-[13px] leading-relaxed text-amber-950/90">
-        {reason && <p>{reason}</p>}
-        {approvedBy && (
-          <p>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/80">Approved by </span>
-            {approvedBy}
-          </p>
-        )}
-        {expiresAt && (
-          <p>
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/80">Expires </span>
-            {new Date(expiresAt).toLocaleDateString()}
-          </p>
-        )}
-        {!reason && !approvedBy && <p>Approved exception on this finding.</p>}
+
+      <div className="grid gap-2 px-4 py-3 pr-5 sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <ExceptionDetailCell label="Reason" muted={!hasReason}>
+            {hasReason ? reason : "No reason captured"}
+          </ExceptionDetailCell>
+        </div>
+        <ExceptionDetailCell label="Approved by" muted={!hasApprovedBy}>
+          {hasApprovedBy ? approvedBy : "Not captured"}
+        </ExceptionDetailCell>
+        <ExceptionDetailCell label="Expires" muted={!hasExpiry}>
+          {hasExpiry ? new Date(expiresAt!).toLocaleDateString() : "No expiry set"}
+        </ExceptionDetailCell>
       </div>
     </div>
   );
@@ -220,7 +246,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-/** Semantic group — whitespace + divider only, no section heading */
+/** Semantic group. Whitespace plus divider only, no section heading. */
 export function ResourceGroup({
   children,
   className = "",
