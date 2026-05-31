@@ -3,7 +3,12 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import ConnectAwsEmptyState from "../components/ConnectAwsEmptyState";
-import { FindingDrawer } from "../components/FindingDrawer";
+import {
+  FindingDrawer,
+  defaultFindingRemediationMode,
+  type FindingDrawerTab,
+  type FindingRemediationMode,
+} from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
 import { checkLabels } from "../data/checkLabels";
@@ -14,6 +19,10 @@ import { affectedResourcesPreview, daysAgo, severityLabel } from "../lib/finding
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 import { isAccountConnected } from "../lib/accountConnection";
 import NotificationsBell from "../components/NotificationsBell";
+import {
+  useRecheckNotifications,
+  type RecheckResponse,
+} from "../context/RecheckNotificationsContext";
 
 type Finding = {
   id: string;
@@ -556,15 +565,23 @@ function SortToggle({
 export default function Findings() {
   const qc = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [drawerResolved, setDrawerResolved] = useState(false);
-  const [verifying, setVerifying] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<StatusTab>("open");
   const [selected, setSelected] = useState<Finding | null>(null);
   const [drawerGroup, setDrawerGroup] = useState<Finding[] | null>(null);
+  const [drawerTab, setDrawerTab] = useState<FindingDrawerTab>("overview");
+  const [remTab, setRemTab] = useState<FindingRemediationMode>("console");
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const {
+    pendingRecheck,
+    recheckOutcome,
+    startRecheck,
+    applyRecheckResult,
+    failRecheck,
+    clearDrawerVerifyFlash,
+  } = useRecheckNotifications();
   const [searchTags, setSearchTags] = useState<string[]>(() => {
     const raw = searchParams.get("checks");
     return raw ? raw.split(",").filter(Boolean) : [];
@@ -584,13 +601,13 @@ export default function Findings() {
   const q = useQuery({
     queryKey: ["findings", status],
     queryFn: () => api<FindingPage>(`/v1/findings?status=${status}&limit=500`),
-    refetchInterval: verifying ? 3000 : false,
+    refetchInterval: pendingRecheck ? 3000 : false,
   });
 
   const openMetricsQ = useQuery({
     queryKey: ["findings", "open"],
     queryFn: () => api<FindingPage>("/v1/findings?status=open&limit=500"),
-    refetchInterval: verifying ? 3000 : false,
+    refetchInterval: pendingRecheck ? 3000 : false,
   });
 
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
@@ -627,21 +644,26 @@ export default function Findings() {
   const act = useMutation({
     mutationFn: ({ id, action }: { id: string; action: "recheck" | "reopen" }) =>
       api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
-    onSuccess: (data, { action }) => {
+    onSuccess: (data, { id, action }) => {
       if (action === "recheck") {
-        setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
-        setTimeout(() => setVerifying(false), 120000);
+        const result = data as RecheckResponse;
+        const checkId = selected?.check_id ?? result.check_id ?? "";
+        if (!applyRecheckResult(id, checkId, result)) {
+          setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
+        }
       } else {
         qc.invalidateQueries({ queryKey: ["findings"] });
         if (selected) setSelected(data as Finding);
         if (action === "reopen") {
-          setDrawerResolved(false);
+          clearDrawerVerifyFlash();
           setStatus("open");
         }
       }
     },
-    onError: (_err, { action }) => {
-      if (action === "recheck") setVerifying(false);
+    onError: (_err, { id, action }) => {
+      if (action === "recheck" && selected) {
+        failRecheck(id, selected.check_id);
+      }
     },
   });
 
@@ -665,14 +687,15 @@ export default function Findings() {
     const top = items.reduce((best, f) => (f.risk_score > best.risk_score ? f : best), items[0]);
     setDrawerGroup(items.length > 1 ? items : null);
     setSelected(top);
-    setDrawerResolved(false);
+    setDrawerTab("overview");
+    setRemTab(defaultFindingRemediationMode(top.check_id));
+    clearDrawerVerifyFlash();
   }
 
   function closeDrawer() {
     setSelected(null);
     setDrawerGroup(null);
-    setDrawerResolved(false);
-    setVerifying(false);
+    clearDrawerVerifyFlash();
   }
 
   function handleTagsChange(tags: string[]) {
@@ -718,16 +741,17 @@ export default function Findings() {
   const checkFrameworksApi = frameworkMapQ.data?.checks;
   const openFindingsForMetrics = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
 
-  useEffect(() => {
-    if (!verifying || !selected || drawerResolved) return;
-    const openItems = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
-    if (!openItems.some((f) => f.id === selected.id)) {
-      setDrawerResolved(true);
-      setVerifying(false);
-      setStatus("resolved");
-      qc.invalidateQueries({ queryKey: ["findings"] });
-    }
-  }, [verifying, selected, drawerResolved, openMetricsQ.data, status, findings, qc]);
+  const verifying = !!(selected && pendingRecheck?.findingId === selected.id);
+  const verified = !!(
+    selected &&
+    recheckOutcome?.findingId === selected.id &&
+    recheckOutcome.status === "verified"
+  );
+  const verifyUnchanged = !!(
+    selected &&
+    recheckOutcome?.findingId === selected.id &&
+    recheckOutcome.status === "unchanged"
+  );
 
   const metricBenchmarkScoped = useMemo(
     () => openFindingsForMetrics.filter((f) => matchesBenchmarkFilter(f, benchmarkFilter, checkFrameworksApi)),
@@ -947,11 +971,19 @@ export default function Findings() {
         relatedFindings={drawerGroup ?? undefined}
         onSelectRelated={(f) => setSelected(f)}
         accountId={connectedId ?? null}
-        resolved={drawerResolved}
+        tab={drawerTab}
+        onTabChange={setDrawerTab}
+        remTab={remTab}
+        onRemTabChange={setRemTab}
+        verified={verified}
+        verifyUnchanged={verifyUnchanged}
         verifying={verifying}
+        onDismissVerifyOutcome={clearDrawerVerifyFlash}
         onClose={closeDrawer}
         onAction={(id, action) => {
-          if (action === "recheck") setVerifying(true);
+          if (action === "recheck") {
+            startRecheck(id, selected?.check_id ?? "");
+          }
           act.mutate({ id, action });
         }}
       />

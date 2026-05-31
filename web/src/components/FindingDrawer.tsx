@@ -4729,9 +4729,7 @@ export function FindingDrawer({
           </span>
         </div>
         <p className="text-2xl font-bold tracking-tight text-emerald-950">Verified</p>
-        <p className="mt-2 max-w-xs text-sm leading-relaxed text-emerald-900/75">
-          Re-check passed — this finding is resolved.
-        </p>
+        <p className="mt-2 text-sm leading-relaxed text-emerald-900/75">Finding is resolved.</p>
       </div>
     )}
     <div className={`relative overflow-hidden bg-gradient-to-b ${wash} px-6 pt-5 pb-3`}>

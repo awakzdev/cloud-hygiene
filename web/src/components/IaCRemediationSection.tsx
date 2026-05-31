@@ -343,11 +343,6 @@ function SsmRemediationPanel({
                 SSM Automation completed successfully. Click Verify below — for this check, Vigil confirms the fix in
                 AWS directly (usually a few seconds).
               </p>
-              {persistedExecution?.plan_id && (
-                <p className="mt-1 font-mono text-[11px] text-emerald-900/70">
-                  Plan {persistedExecution.plan_id.slice(0, 8)}…
-                </p>
-              )}
             </div>
           )}
 
@@ -486,7 +481,7 @@ function SsmRemediationPanel({
         <PreviousExecutionNote findingId={findingId} />
       )}
 
-      {!startFailed && (
+      {!startFailed && !execSuccess && (
         <ExecutionStatus findingId={findingId} showStaleFailures={attemptedStart} />
       )}
     </div>
