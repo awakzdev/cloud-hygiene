@@ -38,7 +38,7 @@ type FindingPage = {
 
 type Account = { id: string; status: string; cfn_launch_url?: string };
 
-const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups"; // legacy — cleared on load
+const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups";
 
 const sevBadge: Record<string, string> = {
   critical: "bg-red-50 text-red-700 ring-red-200/70",
@@ -73,14 +73,52 @@ const statusTabLabels: Record<StatusTab, string> = {
   all: "All",
 };
 
+type SeverityFilter = "all" | "critical_high" | "medium" | "low";
+type SortKey = "severity" | "score" | "first_seen";
+type BenchmarkFilter = "all" | FrameworkId;
+
 function emptyFindingsLabel(status: StatusTab): string {
   if (status === "all") return "No findings";
   if (status === "excepted") return "No exceptions";
   return `No ${status} findings`;
 }
-type SeverityFilter = "all" | "critical_high" | "medium" | "low";
-type SortKey = "severity" | "score" | "first_seen";
-type BenchmarkFilter = "all" | FrameworkId;
+
+function lastScanLabel(iso: string): string {
+  const date = new Date(iso);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay ? `today at ${time}` : `${date.toLocaleDateString()} at ${time}`;
+}
+
+function matchesSeverityFilter(f: Finding, filter: SeverityFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "critical_high") return f.severity === "critical" || f.severity === "high";
+  return f.severity === filter;
+}
+
+function sortLabel(k: SortKey): string {
+  if (k === "first_seen") return "Age";
+  if (k === "score") return "Risk";
+  return "Severity";
+}
+
+function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
+  if (k !== active) return "";
+  return dir === "asc" ? "↑" : "↓";
+}
+
+function frameworksForCheck(checkId: string, apiMap: Record<string, string[]> | undefined): string[] {
+  return apiMap?.[checkId] ?? CHECK_FRAMEWORK_MAP[checkId] ?? [];
+}
+
+function matchesBenchmarkFilter(
+  f: Finding,
+  benchmarkFilter: BenchmarkFilter,
+  apiMap: Record<string, string[]> | undefined,
+): boolean {
+  if (benchmarkFilter === "all") return true;
+  return frameworksForCheck(f.check_id, apiMap).includes(benchmarkFilter);
+}
 
 function FindingIssueCard({
   checkId,
@@ -162,43 +200,6 @@ function FindingIssueCard({
   );
 }
 
-function lastScanLabel(iso: string): string {
-  const date = new Date(iso);
-  const sameDay = date.toDateString() === new Date().toDateString();
-  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return sameDay ? `today at ${time}` : `${date.toLocaleDateString()} at ${time}`;
-}
-
-function matchesSeverityFilter(f: Finding, filter: SeverityFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "critical_high") return f.severity === "critical" || f.severity === "high";
-  return f.severity === filter;
-}
-
-function sortLabel(k: SortKey): string {
-  if (k === "first_seen") return "Age";
-  if (k === "score") return "Risk";
-  return k.charAt(0).toUpperCase() + k.slice(1);
-}
-
-function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
-  if (k !== active) return "";
-  return dir === "asc" ? "↑" : "↓";
-}
-
-function frameworksForCheck(checkId: string, apiMap: Record<string, string[]> | undefined): string[] {
-  return apiMap?.[checkId] ?? CHECK_FRAMEWORK_MAP[checkId] ?? [];
-}
-
-function matchesBenchmarkFilter(
-  f: Finding,
-  benchmarkFilter: BenchmarkFilter,
-  apiMap: Record<string, string[]> | undefined,
-): boolean {
-  if (benchmarkFilter === "all") return true;
-  return frameworksForCheck(f.check_id, apiMap).includes(benchmarkFilter);
-}
-
 function BenchmarkScopeSelect({
   value,
   onChange,
@@ -274,36 +275,32 @@ function MetricStrip({
   ];
 
   return (
-    <div className="inline-flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-x-2">
+    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
       {segments.map((seg) => {
         const isActive = highlightActive && active === seg.key;
         const tone =
           seg.accent === "red"
             ? isActive
-              ? "bg-red-50 text-red-800 ring-red-200/70"
-              : "text-red-700 hover:bg-red-50/50"
+              ? "border-red-200/70 bg-red-50/70 text-red-800"
+              : "border-zinc-200/80 bg-white text-red-700 hover:border-red-200/70 hover:bg-red-50/40"
             : seg.accent === "amber"
               ? isActive
-                ? "bg-amber-50 text-amber-900 ring-amber-200/70"
-                : "text-amber-800 hover:bg-amber-50/40"
+                ? "border-amber-200/70 bg-amber-50/70 text-amber-900"
+                : "border-zinc-200/80 bg-white text-amber-800 hover:border-amber-200/70 hover:bg-amber-50/40"
               : isActive
-                ? "bg-zinc-100 text-zinc-900 ring-zinc-200/80"
-                : "text-zinc-700 hover:bg-zinc-50/80";
+                ? "border-zinc-300 bg-zinc-50 text-zinc-950"
+                : "border-zinc-200/80 bg-white text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50/70";
 
         return (
           <button
             key={seg.key}
             type="button"
             onClick={() => onSelect(seg.key)}
-            className={`inline-flex flex-col items-center rounded-lg px-2 py-1.5 transition sm:px-2.5 sm:py-2 ${tone} ${isActive ? "ring-1" : ""}`}
+            className={`rounded-xl border px-4 py-3 text-left shadow-sm transition ${tone}`}
           >
-            <span className={`tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
+            <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{seg.label}</span>
+            <span className={`mt-2 block tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
               {seg.value}
-            </span>
-            <span
-              className={`mt-1 uppercase tracking-wide ${seg.prominent ? "text-[11px] font-semibold text-zinc-500" : "text-[11px] font-medium text-zinc-400"}`}
-            >
-              {seg.label}
             </span>
           </button>
         );
@@ -326,41 +323,28 @@ function TagSearchInput({
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
-  const [popover, setPopover] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [refOpen, setRefOpen] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [addingInPopover, setAddingInPopover] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const popoverInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onMouseDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setPopover(false);
-        setHelpOpen(false);
-        setAddingInPopover(false);
         setOpen(false);
+        setHelpOpen(false);
         setInput("");
-        setAdding(false);
       }
     }
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, []);
 
-  const VISIBLE = 2;
-  const visibleTags = tags.slice(0, VISIBLE);
-  const hiddenTags = tags.slice(VISIBLE);
-  const showInput = tags.length === 0 || adding;
-  const showSearchHelp = tags.length === 0 && input.trim() === "";
-
   const suggestions = useMemo(() => {
     if (!input.trim()) return [];
     const q = input.toLowerCase();
     return ALL_CHECK_IDS.filter(
-      (s) => !tags.includes(s) && (s.includes(q) || (checkLabels[s] ?? "").toLowerCase().includes(q))
+      (s) => !tags.includes(s) && (s.includes(q) || (checkLabels[s] ?? "").toLowerCase().includes(q)),
     ).slice(0, 8);
   }, [input, tags]);
 
@@ -370,17 +354,16 @@ function TagSearchInput({
     setInput("");
     setOpen(false);
     setHi(0);
-    setAdding(false);
-    setAddingInPopover(false);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "," || e.key === "Enter" || e.key === "Tab") {
+      if (!input.trim() && e.key === "Tab") return;
       e.preventDefault();
       commit(suggestions[hi] ?? input);
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHi((h) => Math.min(h + 1, suggestions.length - 1));
+      setHi((h) => Math.min(h + 1, Math.max(0, suggestions.length - 1)));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setHi((h) => Math.max(h - 1, 0));
@@ -388,78 +371,91 @@ function TagSearchInput({
       onTagsChange(tags.slice(0, -1));
     } else if (e.key === "Escape") {
       setOpen(false);
-      setAdding(false);
-      setAddingInPopover(false);
+      setInput("");
     }
   }
 
   return (
     <div className="relative" ref={containerRef}>
-      {/* Main bar — left: chips+input scrollable, right: actions pinned */}
-      <div className={`flex h-10 items-center rounded-xl border border-zinc-200/90 bg-zinc-50/50 transition focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-950/[0.06] ${className ?? "w-80"}`}>
-        {/* Scrollable chips + input */}
-        <div
-          className="flex items-center gap-1.5 flex-1 min-w-0 h-full pl-3 overflow-hidden cursor-text"
-          onClick={() => { setAdding(true); setTimeout(() => inputRef.current?.focus(), 0); }}
-        >
-          {visibleTags.map((tag) => (
-            <span key={tag} className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs font-mono text-indigo-700 max-w-[110px]">
+      <div
+        className={`flex min-h-10 items-center rounded-xl border border-zinc-200/90 bg-white shadow-sm transition focus-within:border-zinc-300 focus-within:ring-2 focus-within:ring-zinc-950/[0.04] ${className ?? "w-80"}`}
+        onClick={() => inputRef.current?.focus()}
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-1.5">
+          {tags.map((tag) => (
+            <span key={tag} className="inline-flex max-w-[10rem] items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-mono text-indigo-700">
               <span className="truncate">{tag}</span>
-              <button type="button" className="ml-0.5 text-indigo-400 hover:text-indigo-700 leading-none shrink-0"
-                onClick={(e) => { e.stopPropagation(); onTagsChange(tags.filter((t) => t !== tag)); }}>×</button>
+              <button
+                type="button"
+                className="text-indigo-400 hover:text-indigo-700"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTagsChange(tags.filter((t) => t !== tag));
+                }}
+              >
+                ×
+              </button>
             </span>
           ))}
-          {showInput && (
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => { setInput(e.target.value); setOpen(true); setHi(0); }}
-              onKeyDown={handleKeyDown}
-              onFocus={() => setOpen(true)}
-              onBlur={() => { setTimeout(() => { setOpen(false); if (!input.trim()) setAdding(false); }, 150); }}
-              placeholder={tags.length === 0 ? "Search findings…" : "Add filter…"}
-              className="shrink-0 min-w-20 flex-1 text-sm text-zinc-800 outline-none bg-transparent placeholder:text-zinc-400"
-            />
-          )}
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setOpen(true);
+              setHi(0);
+            }}
+            onKeyDown={handleKeyDown}
+            onFocus={() => setOpen(true)}
+            placeholder={tags.length === 0 ? "Search findings…" : "Add filter…"}
+            className="min-w-28 flex-1 bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
+          />
         </div>
-
-        {/* Pinned right actions */}
-        <div className="flex items-center gap-1 pr-2 shrink-0">
-          {hiddenTags.length > 0 && (
-            <button type="button"
-              className="inline-flex items-center rounded-md bg-zinc-100 border border-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
-              onClick={(e) => { e.stopPropagation(); setPopover((p) => !p); }}>
-              +{hiddenTags.length}
-            </button>
-          )}
-          {showSearchHelp && (
+        <div className="flex items-center gap-1 pr-2">
+          {tags.length === 0 && input.trim() === "" && (
             <button
               type="button"
               aria-label="Search help"
               className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-xs font-bold text-zinc-400 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
-              onClick={(e) => { e.stopPropagation(); setHelpOpen((p) => !p); setOpen(false); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setHelpOpen((p) => !p);
+                setOpen(false);
+              }}
             >
               ?
             </button>
           )}
           {tags.length > 0 && (
-            <button type="button"
-              className="text-zinc-300 hover:text-zinc-500 transition-colors text-base leading-none px-0.5"
-              onClick={(e) => { e.stopPropagation(); onTagsChange([]); setAdding(false); setPopover(false); }}>
+            <button
+              type="button"
+              className="px-0.5 text-base leading-none text-zinc-300 transition hover:text-zinc-500"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTagsChange([]);
+              }}
+            >
               ×
             </button>
           )}
         </div>
       </div>
 
-      {helpOpen && showSearchHelp && (
+      {helpOpen && (
         <div className="absolute right-0 z-20 mt-1 w-80 rounded-xl border border-zinc-200 bg-white p-3 text-left shadow-lg">
           <div className="text-xs font-semibold text-zinc-700">Search lookup</div>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
             Search by check, resource, ARN, or resource family. Examples: <span className="font-mono text-zinc-700">iam.root</span>,{" "}
             <span className="font-mono text-zinc-700">s3.bucket</span>, <span className="font-mono text-zinc-700">ec2.instance</span>.
           </p>
-          <button type="button" onClick={() => { setHelpOpen(false); setRefOpen(true); }} className="mt-3 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+          <button
+            type="button"
+            onClick={() => {
+              setHelpOpen(false);
+              setRefOpen(true);
+            }}
+            className="mt-3 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+          >
             Open search reference
             <svg className="ml-1 h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -470,75 +466,74 @@ function TagSearchInput({
 
       {refOpen && <SearchReferenceModal onClose={() => setRefOpen(false)} />}
 
-      {/* Overflow popover */}
-      {popover && (
-        <div className="absolute z-20 mt-1 left-0 rounded-xl border border-zinc-200 bg-white shadow-lg p-2 w-80">
-          <div className="flex flex-wrap gap-1.5">
-            {hiddenTags.map((tag) => (
-              <span key={tag} className="inline-flex items-center gap-0.5 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs font-mono text-indigo-700">
-                {tag}
-                <button type="button" className="ml-0.5 text-indigo-400 hover:text-indigo-700 leading-none"
-                  onClick={() => { onTagsChange(tags.filter((t) => t !== tag)); if (hiddenTags.length <= 1) { setPopover(false); setAddingInPopover(false); } }}>×</button>
-              </span>
-            ))}
-          </div>
-
-          <div className="border-t border-zinc-100 mt-2 pt-2 relative">
-            {addingInPopover ? (
-              <>
-                <input
-                  ref={popoverInputRef}
-                  value={input}
-                  onChange={(e) => { setInput(e.target.value); setOpen(true); setHi(0); }}
-                  onKeyDown={handleKeyDown}
-                  onFocus={() => setOpen(true)}
-                  onBlur={() => { setTimeout(() => { setOpen(false); if (!input.trim()) setAddingInPopover(false); }, 150); }}
-                  placeholder="Type to add filter…"
-                  className="w-full text-xs text-zinc-700 outline-none bg-transparent placeholder:text-zinc-400 pl-1"
-                />
-                {open && suggestions.length > 0 && (
-                  <div className="absolute z-30 top-full left-0 right-0 mt-1 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
-                    {suggestions.map((s, i) => (
-                      <button key={s} type="button"
-                        className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${i === hi ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
-                        onMouseDown={() => commit(s)} onMouseEnter={() => setHi(i)}>
-                        <span className="text-xs font-mono font-semibold text-zinc-700 shrink-0">{s}</span>
-                        {checkLabels[s] && <span className="text-xs text-zinc-400 truncate">{checkLabels[s]}</span>}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
-            ) : (
-              <button type="button"
-                className="text-xs text-zinc-400 hover:text-indigo-600 transition-colors pl-1"
-                onClick={() => { setAddingInPopover(true); setTimeout(() => popoverInputRef.current?.focus(), 0); }}>
-                + Add filter…
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {open && !addingInPopover && suggestions.length > 0 && (
-        <div className="absolute z-20 mt-1 w-full min-w-80 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full min-w-80 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg">
           {suggestions.map((s, i) => (
             <button
               key={s}
               type="button"
-              className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${i === hi ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors ${i === hi ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
               onMouseDown={() => commit(s)}
               onMouseEnter={() => setHi(i)}
             >
-              <span className="text-xs font-mono font-semibold text-zinc-700 shrink-0">{s}</span>
-              {checkLabels[s] && <span className="text-xs text-zinc-400 truncate">{checkLabels[s]}</span>}
+              <span className="shrink-0 text-xs font-mono font-semibold text-zinc-700">{s}</span>
+              {checkLabels[s] && <span className="truncate text-xs text-zinc-400">{checkLabels[s]}</span>}
             </button>
           ))}
-          <div className="px-3 py-1.5 border-t border-zinc-100 text-[10px] text-zinc-400">
-            Tab / Enter / comma to add · Backspace to remove
+          <div className="border-t border-zinc-100 px-3 py-1.5 text-[10px] text-zinc-400">
+            Tab / Enter / comma to add. Backspace removes last filter.
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function StatusTabs({ status, onChange }: { status: StatusTab; onChange: (status: StatusTab) => void }) {
+  return (
+    <div className="flex items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
+      {statusTabs.map((s) => (
+        <button
+          key={s}
+          onClick={() => onChange(s)}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+            status === s
+              ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80"
+              : "text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          {statusTabLabels[s]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SortToggle({
+  sortKey,
+  sortDir,
+  onToggle,
+}: {
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
+  onToggle: (key: SortKey) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
+      {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+        <button
+          key={k}
+          onClick={() => onToggle(k)}
+          className={`inline-flex h-9 items-center gap-1 rounded-lg px-3.5 text-sm font-medium transition ${
+            sortKey === k
+              ? "bg-white font-semibold text-zinc-900 shadow-sm ring-1 ring-zinc-200/80"
+              : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          {sortLabel(k)}
+          {sortKey === k && <span className="text-xs text-zinc-400">{sortIcon(k, sortKey, sortDir)}</span>}
+        </button>
+      ))}
     </div>
   );
 }
@@ -570,6 +565,86 @@ export default function Findings() {
     queryFn: () => api<{ checks: Record<string, string[]> }>("/v1/controls/check-frameworks"),
     staleTime: 300_000,
   });
+
+  const q = useQuery({
+    queryKey: ["findings", status],
+    queryFn: () => api<FindingPage>(`/v1/findings?status=${status}&limit=500`),
+    refetchInterval: verifying ? 3000 : false,
+  });
+
+  const openMetricsQ = useQuery({
+    queryKey: ["findings", "open"],
+    queryFn: () => api<FindingPage>("/v1/findings?status=open&limit=500"),
+    refetchInterval: verifying ? 3000 : false,
+  });
+
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
+  const connectedAccount = accounts.data?.find((a) => isAccountConnected(a));
+  const connectedId = connectedAccount?.id;
+
+  const {
+    scanRun,
+    scanStatus,
+    isRunning,
+    scanTriggered,
+    isScanActive,
+    scanProgress,
+    triggerScan,
+  } = useTriggeredScan(connectedId, {
+    onScanComplete: () => qc.invalidateQueries({ queryKey: ["findings"] }),
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem(COLLAPSED_FINDINGS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isRefreshing && !q.isFetching) {
+      const t = setTimeout(() => setIsRefreshing(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [q.isFetching, isRefreshing]);
+
+  const act = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "recheck" | "reopen" }) =>
+      api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: (data, { action }) => {
+      if (action === "recheck") {
+        setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
+        setTimeout(() => setVerifying(false), 120000);
+      } else {
+        qc.invalidateQueries({ queryKey: ["findings"] });
+        if (selected) setSelected(data as Finding);
+        if (action === "reopen") {
+          setDrawerResolved(false);
+          setStatus("open");
+        }
+      }
+    },
+    onError: (_err, { action }) => {
+      if (action === "recheck") setVerifying(false);
+    },
+  });
+
+  const downloadCsv = useCallback(async () => {
+    const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
+    const t = token();
+    const res = await fetch(`${BASE}/v1/exports/findings.csv?status=${status}`, {
+      headers: t ? { Authorization: `Bearer ${t}` } : {},
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "vigil-findings.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [status]);
 
   function openReview(items: Finding[]) {
     const top = items.reduce((best, f) => (f.risk_score > best.risk_score ? f : best), items[0]);
@@ -604,91 +679,28 @@ export default function Findings() {
       return next;
     }, { replace: true });
   }
-  useEffect(() => {
-    try {
-      localStorage.removeItem(COLLAPSED_FINDINGS_KEY);
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
-  const downloadCsv = useCallback(async () => {
-    const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
-    const t = token();
-    const res = await fetch(`${BASE}/v1/exports/findings.csv?status=${status}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "vigil-findings.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [status]);
-
-  const q = useQuery({
-    queryKey: ["findings", status],
-    queryFn: () => api<FindingPage>(`/v1/findings?status=${status}&limit=500`),
-    refetchInterval: verifying ? 3000 : false,
-  });
-
-  const openMetricsQ = useQuery({
-    queryKey: ["findings", "open"],
-    queryFn: () => api<FindingPage>(`/v1/findings?status=open&limit=500`),
-    refetchInterval: verifying ? 3000 : false,
-  });
-  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
-  const connectedAccount = accounts.data?.find((a) => isAccountConnected(a));
-  const connectedId = connectedAccount?.id;
-
-  const {
-    scanRun,
-    scanStatus,
-    isRunning,
-    scanTriggered,
-    isScanActive,
-    scanProgress,
-    triggerScan,
-  } = useTriggeredScan(connectedId, {
-    onScanComplete: () => qc.invalidateQueries({ queryKey: ["findings"] }),
-  });
-
-  useEffect(() => {
-    if (isRefreshing && !q.isFetching) {
-      const t = setTimeout(() => setIsRefreshing(false), 600);
-      return () => clearTimeout(t);
-    }
-  }, [q.isFetching, isRefreshing]);
-
-  const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "recheck" | "reopen" }) =>
-      api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
-    onSuccess: (data, { action }) => {
-      if (action === "recheck") {
-        setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
-        setTimeout(() => setVerifying(false), 120000);
-      } else {
-        qc.invalidateQueries({ queryKey: ["findings"] });
-        if (selected) setSelected(data as Finding);
-        if (action === "reopen") {
-          setDrawerResolved(false);
-          setStatus("open");
-        }
-      }
-    },
-    onError: (_err, { action }) => {
-      if (action === "recheck") setVerifying(false);
-    },
-  });
+  function handleRefresh() {
+    if (isRefreshing) return;
+    qc.invalidateQueries({ queryKey: ["findings"] });
+    setIsRefreshing(true);
+  }
 
   function handleMetricSelect(filter: SeverityFilter) {
     setSeverityFilter(filter);
     if (status !== "open") setStatus("open");
   }
 
+  function toggleSort(k: SortKey) {
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(k === "severity" ? "asc" : "desc");
+    }
+  }
+
   const findings = q.data?.items ?? [];
   const checkFrameworksApi = frameworkMapQ.data?.checks;
-
   const openFindingsForMetrics = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
 
   useEffect(() => {
@@ -725,7 +737,6 @@ export default function Findings() {
     const arr = benchmarkScopedFindings.filter((f) => {
       if (status === "open" && !matchesSeverityFilter(f, severityFilter)) return false;
       if (searchTags.length === 0) return true;
-      // OR logic: finding matches any tag (exact check_id or text search)
       return searchTags.some((tag) => {
         if (f.check_id === tag) return true;
         const haystack = [f.title, f.check_id, f.resource_arn, checkLabels[f.check_id] ?? ""].join(" ").toLowerCase();
@@ -768,14 +779,6 @@ export default function Findings() {
     return entries;
   }, [rows, sortKey, sortDir]);
 
-  function toggleSort(k: SortKey) {
-    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(k);
-      setSortDir(k === "severity" ? "asc" : "desc");
-    }
-  }
-
   const chTotal = metricTotals.critical + metricTotals.high;
   const hasUrgent = chTotal > 0;
 
@@ -785,7 +788,7 @@ export default function Findings() {
 
   return (
     <div className="w-full px-6 py-6">
-      <div className="mb-5">
+      <div className="mb-5 rounded-xl border border-zinc-200/80 bg-white px-6 py-5 shadow-sm shadow-zinc-950/[0.03]">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
           {scanRun.data?.finished_at && (
@@ -795,18 +798,14 @@ export default function Findings() {
             <span className="text-sm font-medium text-indigo-700/90">{frameworkLabel(benchmarkFilter)} scope</span>
           )}
         </div>
-        <div className="mt-3 flex min-h-[4.25rem] flex-wrap items-center gap-x-4 gap-y-3">
+        <p className="mt-1 text-sm text-zinc-500">Security posture overview</p>
+        <div className="mt-4">
           <MetricStrip
             totals={metricTotals}
             active={severityFilter}
             onSelect={handleMetricSelect}
             highlightActive={status === "open"}
           />
-          <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
-            <button onClick={downloadCsv} className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900">Export</button>
-            <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
-            {connectedId && <button onClick={() => triggerScan(connectedId)} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
-          </div>
         </div>
       </div>
 
@@ -824,6 +823,7 @@ export default function Findings() {
           />
         </div>
       )}
+
       {scanStatus === "error" && scanRun.data?.error && (
         <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <div>
@@ -844,42 +844,56 @@ export default function Findings() {
         }`}
       >
         <div
-          className={`flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+          className={`space-y-3 border-b px-4 py-3 ${
             hasUrgent ? "border-red-100/80 bg-gradient-to-r from-red-50/40 via-white to-white" : "border-zinc-100 bg-zinc-50/40"
           }`}
         >
-          <div className="flex items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
-            {statusTabs.map((s) => (
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <StatusTabs status={status} onChange={setStatus} />
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               <button
-                key={s}
-                onClick={() => setStatus(s)}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  status === s
-                    ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80"
-                    : "text-zinc-500 hover:text-zinc-800"
-                }`}
+                onClick={downloadCsv}
+                className="inline-flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
               >
-                {statusTabLabels[s]}
+                Export
               </button>
-            ))}
-          </div>
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3 sm:justify-end">
-            <BenchmarkScopeSelect value={benchmarkFilter} onChange={handleBenchmarkChange} />
-            <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} className="min-w-0 flex-1 max-w-md" />
-            <div className="flex shrink-0 items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
-              {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+              <button
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isRefreshing && (
+                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
+                Refresh
+              </button>
+              {connectedId && (
                 <button
-                  key={k}
-                  onClick={() => toggleSort(k)}
-                  className={`inline-flex h-9 items-center gap-1 rounded-lg px-3.5 text-sm font-medium transition ${
-                    sortKey === k ? "bg-white font-semibold text-zinc-900 shadow-sm ring-1 ring-zinc-200/80" : "text-zinc-500 hover:text-zinc-700"
-                  }`}
+                  onClick={() => triggerScan(connectedId)}
+                  disabled={scanTriggered || isRunning}
+                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-indigo-600 px-3.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {sortLabel(k)}
-                  {sortKey === k && <span className="text-xs text-zinc-400">{sortIcon(k, sortKey, sortDir)}</span>}
+                  {(scanTriggered || isRunning) && (
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}
                 </button>
-              ))}
+              )}
             </div>
+          </div>
+
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
+              <BenchmarkScopeSelect value={benchmarkFilter} onChange={handleBenchmarkChange} />
+              <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} className="min-w-0 flex-1" />
+            </div>
+            <SortToggle sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
           </div>
         </div>
 
