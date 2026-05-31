@@ -32,6 +32,7 @@ _POLICY_GEN_ROLE_NAME = "VigilPolicyGenerationRole"
 _SCANNER_ROLE_NAME = "VigilScannerRole"
 _LEGACY_SCANNER_ROLE_NAME = "VigilReadOnlyScannerRole"
 _ACCESS_ANALYZER_MONITOR_SUFFIX = "AccessAnalyzerMonitor"
+_IAM_ACTION_RE = re.compile(r"^[a-z0-9-]+:[A-Za-z0-9*?]+$")
 _LEGACY_SCANNER_TO_POLICY_GEN: dict[str, str] = {
     _LEGACY_SCANNER_ROLE_NAME: _POLICY_GEN_ROLE_NAME,
 }
@@ -74,6 +75,14 @@ def derive_cloudtrail_access_role_arn(base_role_arn: str | None) -> str | None:
 def is_placeholder_resource(resource: str) -> bool:
     """AWS template placeholders from includeResourcePlaceholders are not apply-ready."""
     return bool(resource) and "${" in resource
+
+
+def is_valid_iam_action(action: str) -> bool:
+    if action == "*":
+        return True
+    if not isinstance(action, str) or "${" in action:
+        return False
+    return bool(_IAM_ACTION_RE.match(action))
 
 
 def split_resources(resources: list[str]) -> tuple[list[str], list[str]]:
@@ -132,7 +141,7 @@ def parse_generated_policy(get_generated_policy_response: dict) -> list[dict]:
             resources = st.get("Resource", [])
             if isinstance(resources, str):
                 resources = [resources]
-            actions = [a for a in actions if isinstance(a, str)]
+            actions = [a for a in actions if isinstance(a, str) and is_valid_iam_action(a)]
             resources = [r for r in resources if isinstance(r, str)]
             if not actions:
                 continue

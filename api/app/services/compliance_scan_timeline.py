@@ -172,6 +172,28 @@ def _period_summary(events: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _scan_cadence(scan_runs: list[ScanRun], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    posture_days: dict[str, int] = {}
+    for evt in events:
+        day = evt["timestamp"][:10]
+        posture_days[day] = posture_days.get(day, 0) + 1
+
+    days: dict[str, int] = {}
+    for run in scan_runs:
+        ts = run.finished_at or run.started_at
+        day = ts.date().isoformat()
+        days[day] = days.get(day, 0) + 1
+
+    return [
+        {
+            "date": day,
+            "scan_count": count,
+            "posture_change_count": posture_days.get(day, 0),
+        }
+        for day, count in sorted(days.items())
+    ]
+
+
 def _top_change(
     *,
     newly_failed: list[dict[str, Any]],
@@ -270,6 +292,7 @@ def build_compliance_scan_timeline(
             "current_posture_score": None,
             "total_failing": 0,
             "scan_count": 0,
+            "scan_cadence": [],
         }
 
     findings = list(db.scalars(select(Finding).where(Finding.account_id == account_id)).all())
@@ -427,4 +450,5 @@ def build_compliance_scan_timeline(
         "current_posture_score": current_posture_score,
         "total_failing": total_failing,
         "scan_count": len(scan_runs),
+        "scan_cadence": _scan_cadence(scan_runs, events),
     }

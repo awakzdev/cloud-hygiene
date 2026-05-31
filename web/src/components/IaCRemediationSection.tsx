@@ -27,13 +27,15 @@ type IaCResponse = {
 type DispatchResponse = {
   plan: Record<string, unknown>;
   plan_id?: string;
-  execution_webhook_url?: string;
-  event_bus_region?: string;
+  automation_region?: string;
+  document_name?: string;
   resource_region?: string;
   region?: string;
   iam_inline_policy?: Record<string, unknown>;
   signing_public_key_base64?: string | null;
-  cli: { put_events: string };
+  automation_execution_id?: string | null;
+  automation_error?: string | null;
+  cli: { put_events?: string; start_automation?: string };
   cfn_template_url: string;
   instructions: string[];
 };
@@ -69,10 +71,10 @@ function versionControlPrLabel(providers: string[]): string {
   return "Git PR";
 }
 
-/** Terraform or EventBridge panels embedded under Remediation steps (Console | CLI | …). */
+/** Terraform or customer automation panels embedded under Remediation steps (Console | CLI | …). */
 type RunnerStatus = {
   ready: boolean;
-  event_bus_region: string;
+  automation_region: string;
   blockers: string[];
   warnings: string[];
   hints: string[];
@@ -198,8 +200,8 @@ export function IaCRemediationSection({
         >
           <p className="font-semibold">
             {runnerStatus.ready
-              ? `Runner active in ${runnerStatus.event_bus_region}`
-              : "EventBridge runner not ready — deploy before put-events"}
+              ? `Automation ready in ${runnerStatus.automation_region}`
+              : "SSM automation not verified — deploy before execution"}
           </p>
           {runnerStatus.blockers.map((b) => (
             <p key={b} className="mt-1">
@@ -224,18 +226,18 @@ export function IaCRemediationSection({
         <li>
           Deploy{" "}
           <a
-            href="https://github.com/awakzdev/Vigil/blob/main/infra/cfn/vigil-remediation-runner-ec2.yaml"
+            href="https://github.com/awakzdev/Vigil/blob/main/infra/cfn/vigil-remediation-ssm.yaml"
             target="_blank"
             rel="noreferrer"
             className="font-medium text-amber-900 underline"
           >
-            vigil-remediation-runner-ec2.yaml
+            vigil-remediation-ssm.yaml
           </a>{" "}
-          in <span className="font-mono">{runnerStatus?.event_bus_region ?? "REMEDIATION_EVENT_BUS_REGION"}</span> (bus
-          home region, not necessarily the SG region).
+          in <span className="font-mono">{runnerStatus?.automation_region ?? "REMEDIATION_AUTOMATION_REGION"}</span> (automation
+          home region, not necessarily the resource region).
         </li>
-        <li>Confirm rule <span className="font-mono">VigilRemediationApproved</span> is ENABLED.</li>
-        <li>Prepare below, then run <code className="text-[10px]">put-events</code> only when status is green.</li>
+        <li>Confirm document <span className="font-mono">Vigil-RemediationPlanExecutor</span> exists.</li>
+        <li>Prepare below, then run <code className="text-[10px]">start-automation-execution</code>.</li>
       </ol>
 
       <button
@@ -244,20 +246,25 @@ export function IaCRemediationSection({
         onClick={() => dispatchMutation.mutate()}
         className="rounded-lg bg-amber-900 px-3 py-1.5 text-[12px] font-semibold text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {dispatchMutation.isPending ? "Preparing…" : "Prepare EventBridge apply"}
+        {dispatchMutation.isPending ? "Preparing…" : "Prepare SSM Automation"}
       </button>
 
       {dispatch && (
         <div className="space-y-2 rounded-lg border border-amber-100 bg-amber-50/40 px-3 py-3">
-          {dispatch.event_bus_region && (
+          {dispatch.automation_region && (
             <p className="text-[11px] text-amber-950">
-              Event bus region (put-events):{" "}
-              <span className="font-mono font-semibold">{dispatch.event_bus_region}</span>
-              {dispatch.resource_region && dispatch.resource_region !== dispatch.event_bus_region && (
+              SSM automation region:{" "}
+              <span className="font-mono font-semibold">{dispatch.automation_region}</span>
+              {dispatch.document_name && (
                 <>
                   {" "}
-                  · EC2 API region:{" "}
-                  <span className="font-mono font-semibold">{dispatch.resource_region}</span>
+                  · document: <span className="font-mono font-semibold">{dispatch.document_name}</span>
+                </>
+              )}
+              {dispatch.resource_region && dispatch.resource_region !== dispatch.automation_region && (
+                <>
+                  {" "}
+                  · API region: <span className="font-mono font-semibold">{dispatch.resource_region}</span>
                 </>
               )}
             </p>
@@ -268,19 +275,26 @@ export function IaCRemediationSection({
               text={JSON.stringify(dispatch.iam_inline_policy, null, 2)}
             />
           )}
-          <CopyBlock label="aws events put-events (run in target account)" text={dispatch.cli.put_events} />
+          {dispatch.automation_execution_id && (
+            <p className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-medium text-emerald-900">
+              Started SSM Automation execution{" "}
+              <span className="font-mono">{dispatch.automation_execution_id}</span>.
+            </p>
+          )}
+          {dispatch.automation_error && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950">
+              Vigil could not start SSM automatically: {dispatch.automation_error}. Use the CLI fallback below.
+            </p>
+          )}
+          <CopyBlock
+            label="aws ssm start-automation-execution (run in target account)"
+            text={dispatch.cli.start_automation ?? dispatch.cli.put_events ?? ""}
+          />
           {dispatch.instructions.map((line) => (
             <p key={line} className="text-[10px] text-amber-900/85">
               {line}
             </p>
           ))}
-          {dispatch.execution_webhook_url && (
-            <p className="text-[10px] text-amber-900/85">
-              Lambda should POST results to{" "}
-              <span className="font-mono">{dispatch.execution_webhook_url}</span> (set CFN parameter{" "}
-              VigilExecutionWebhookUrl).
-            </p>
-          )}
         </div>
       )}
 

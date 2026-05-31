@@ -24,7 +24,7 @@ SG_CHECKS = frozenset(
 AUTOMATION_CHECKS = frozenset(
     {
         *SG_CHECKS,
-        "s3.bucket.public_access_not_blocked",
+        "ssm.parameter.plaintext_secret",
     }
 )
 
@@ -49,7 +49,7 @@ def build_iac_remediation(db: Session, finding: Finding, org_id: uuid.UUID) -> d
         "repos": github["repos"],
         "note": (
             "Version-control PR automation is paused until repo-aware HCL patching ships. "
-            "Use declarative Terraform (S3/KMS) or EventBridge for security groups."
+            "Use declarative Terraform (S3/KMS) or SSM Automation for live changes."
         ),
     }
     from app.services.terraform_pr import PR_PATCH_CHECKS
@@ -102,7 +102,7 @@ def _github_context(db: Session, org_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
-# Declarative-safe checks only — SG ingress is imperative (Console/CLI/EventBridge).
+# Declarative-safe checks only — SG ingress is imperative (Console/CLI/SSM Automation).
 _TERRAFORM_SNIPPET_CHECKS = frozenset(
     {
         "s3.bucket.public_access_not_blocked",
@@ -219,7 +219,7 @@ def _sg_imperative_only(finding: Finding, ev: dict, *, port_label: str) -> dict[
         "cli": [],
         "reason": (
             f"Revoking live security group ingress is imperative, not declarative Terraform. "
-            f"Use Console or CLI above, or EventBridge automation for port {port_label}."
+            f"Use Console or CLI above, or SSM Automation for port {port_label}."
         ),
         "hints": [
             "Terraform PRs will require a matching rule in your connected repo (not generic snippets).",

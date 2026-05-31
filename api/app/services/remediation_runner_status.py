@@ -1,4 +1,4 @@
-"""Verify customer-account EventBridge remediation runner (read-only)."""
+"""Verify customer-account SSM remediation automation (read-only)."""
 from __future__ import annotations
 
 from typing import Any
@@ -9,26 +9,24 @@ from app.core.config import get_settings
 from app.core.aws import assume_role
 from app.models import AwsAccount
 
-RULE_NAME = "VigilRemediationApproved"
-LAMBDA_NAME = "VigilRemediationRunner"
+DOCUMENT_NAME = "Vigil-RemediationPlanExecutor"
 
 
 def check_remediation_runner(acc: AwsAccount) -> dict[str, Any]:
     """
-    Inspect EventBridge rule + Lambda in the remediation bus region.
-    Warn when Schema Registry discovery is off (console default).
+    Inspect the customer-owned SSM Automation document in the remediation region.
     """
     settings = get_settings()
-    bus_region = settings.REMEDIATION_EVENT_BUS_REGION
-    bus_name = settings.REMEDIATION_EVENT_BUS_NAME or "default"
+    automation_region = settings.REMEDIATION_AUTOMATION_REGION
+    document_name = settings.REMEDIATION_SSM_DOCUMENT_NAME or DOCUMENT_NAME
 
     out: dict[str, Any] = {
-        "event_bus_region": bus_region,
-        "event_bus_name": bus_name,
+        "automation_region": automation_region,
+        "document": {"name": document_name, "exists": False, "status": None},
         "ready": False,
-        "rule": {"name": RULE_NAME, "exists": False, "state": None},
-        "lambda": {"name": LAMBDA_NAME, "exists": False},
-        "schema_discovery": {"enabled": None, "note": None},
+        "rule": {"name": document_name, "exists": False, "state": None},
+        "lambda": {"name": None, "exists": False},
+        "schema_discovery": {"enabled": None, "note": "Not used by SSM Automation"},
         "blockers": [],
         "warnings": [],
         "hints": [],
@@ -50,100 +48,35 @@ def check_remediation_runner(acc: AwsAccount) -> dict[str, Any]:
         out["blockers"].append(f"Cannot assume role: {exc}")
         return out
 
-    events = sess.client("events", region_name=bus_region)
-    lam = sess.client("lambda", region_name=bus_region)
-
-    # Event bus exists
+    ssm = sess.client("ssm", region_name=automation_region)
     try:
-        bus = events.describe_event_bus(Name=bus_name)
-        out["event_bus_arn"] = bus.get("Arn")
-    except ClientError as e:
-        code = e.response.get("Error", {}).get("Code", "")
-        if code in ("ResourceNotFoundException", "NotFoundException"):
-            out["blockers"].append(
-                f"Event bus {bus_name!r} not found in {bus_region} — deploy "
-                "infra/cfn/vigil-remediation-runner-ec2.yaml in this region first"
-            )
-        else:
-            out["blockers"].append(f"Cannot describe event bus: {e}")
-        return out
-
-    # Rule
-    rule_arn = None
-    try:
-        rule = events.describe_rule(Name=RULE_NAME, EventBusName=bus_name)
+        doc = ssm.describe_document(Name=document_name)
+        status = (doc.get("Document") or {}).get("Status")
+        out["document"]["exists"] = True
+        out["document"]["status"] = status
         out["rule"]["exists"] = True
-        out["rule"]["state"] = rule.get("State")
-        rule_arn = rule.get("Arn")
-        if rule.get("State") != "ENABLED":
-            out["blockers"].append(
-                f"EventBridge rule {RULE_NAME} exists but State={rule.get('State')} — enable it in the console"
-            )
+        out["rule"]["state"] = status
+        if status not in (None, "Active"):
+            out["blockers"].append(f"SSM document {document_name} exists but Status={status}")
     except ClientError as e:
-        if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
+        if e.response.get("Error", {}).get("Code") in ("InvalidDocument", "InvalidDocumentOperation"):
             out["blockers"].append(
-                f"Rule {RULE_NAME} not found on bus {bus_name} in {bus_region} — deploy or update the CFN stack"
+                f"SSM Automation document {document_name} not found in {automation_region} — deploy vigil-remediation-ssm.yaml"
             )
         else:
-            out["blockers"].append(f"Cannot describe rule: {e}")
+            out["blockers"].append(f"Cannot describe SSM document: {e}")
 
-    # Targets
-    if rule_arn:
-        try:
-            targets = events.list_targets_by_rule(Rule=RULE_NAME, EventBusName=bus_name)
-            tgs = targets.get("Targets") or []
-            out["rule"]["target_count"] = len(tgs)
-            if not tgs:
-                out["blockers"].append("EventBridge rule has no targets — redeploy CFN stack")
-        except ClientError as e:
-            out["warnings"].append(f"Could not list rule targets: {e}")
-
-    # Lambda
-    try:
-        fn = lam.get_function(FunctionName=LAMBDA_NAME)
-        out["lambda"]["exists"] = True
-        out["lambda"]["runtime"] = fn.get("Configuration", {}).get("Runtime")
-        out["lambda"]["arn"] = fn.get("Configuration", {}).get("FunctionArn")
-    except ClientError as e:
-        if e.response.get("Error", {}).get("Code") == "ResourceNotFoundException":
-            out["blockers"].append(
-                f"Lambda {LAMBDA_NAME} not found in {bus_region} — deploy vigil-remediation-runner-ec2.yaml"
-            )
-        else:
-            out["blockers"].append(f"Cannot describe Lambda: {e}")
-
-    # Schema discovery (optional; often disabled by default)
-    try:
-        schemas = sess.client("schemas", region_name=bus_region)
-        discoverers = schemas.list_discoverers().get("Discoverers") or []
-        bus_arn = out.get("event_bus_arn") or ""
-        enabled = any(
-            d.get("State") == "ACTIVE" and (bus_arn in (d.get("SourceArn") or "") or bus_name == "default")
-            for d in discoverers
-        )
-        out["schema_discovery"]["enabled"] = enabled
-        if not enabled:
-            out["schema_discovery"]["note"] = (
-                "EventBridge schema discovery is off (AWS default). Not required for Vigil custom "
-                "events (vigil.security), but enable it in EventBridge → Schema registry → "
-                "Discoverers if you want automatic schema capture."
-            )
-            out["warnings"].append(out["schema_discovery"]["note"])
-    except ClientError:
-        out["schema_discovery"]["enabled"] = None
-        out["schema_discovery"]["note"] = "Could not read schema discoverers (schemas:ListDiscoverers missing on read role)"
-
-    out["ready"] = not out["blockers"] and out["rule"].get("exists") and out["lambda"].get("exists")
+    out["ready"] = not out["blockers"] and out["document"].get("exists")
     if out["ready"]:
         out["hints"] = [
-            f"Stack looks active in {bus_region}. Use Prepare EventBridge, then put-events to that region.",
-            "Re-scan after remediation so the plan matches live security group rules.",
+            f"SSM Automation is ready in {automation_region}. Prepare a plan, then start automation.",
+            "Re-scan after remediation so the next plan matches live resources.",
         ]
     else:
         out["hints"] = [
             "Deploy: aws cloudformation deploy --region "
-            f"{bus_region} --template-file infra/cfn/vigil-remediation-runner-ec2.yaml "
+            f"{automation_region} --template-file infra/cfn/vigil-remediation-ssm.yaml "
             "--capabilities CAPABILITY_NAMED_IAM",
-            f"Set REMEDIATION_EVENT_BUS_REGION={bus_region} in Vigil .env to match the stack region.",
+            f"Set REMEDIATION_AUTOMATION_REGION={automation_region} in Vigil .env to match the SSM document region.",
         ]
     return out

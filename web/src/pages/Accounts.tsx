@@ -1300,7 +1300,7 @@ function RemediationAutomationSection({
                       </ul>
                       {spec.runnerSupported && verify?.runner_ready === false && (
                         <p className="mt-2 text-[11px] font-medium text-amber-800">
-                          EventBridge remediation runner is not ready.
+                          SSM remediation automation is not ready.
                         </p>
                       )}
                     </div>

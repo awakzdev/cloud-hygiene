@@ -18,9 +18,9 @@ Vigil is a **continuous compliance evidence platform** — not a CSPM, not a com
 |---|---|
 | Automates SOC2 CC6/CC7, selected CIS AWS controls, ISO 27001 evidence | Replace Vanta/Drata (no HR/MDM/vendor/policy) |
 | Produces timestamped, auditor-ready evidence packs | Compete with Wiz/Prisma on scan breadth |
-| CloudTrail change timeline + GitHub/GitLab evidence in packs | Write to your AWS account from Vigil (read-only, always) |
+| CloudTrail change timeline + GitHub/GitLab evidence in packs | Write to your AWS account during scanning |
 | Shows blast radius before you remediate a finding | Generate AI summaries in evidence outputs |
-| Console / CLI / Terraform / optional customer Lambda remediation | Auto-remediate from Vigil’s control plane |
+| Console / CLI / Terraform / optional customer SSM Automation | Auto-remediate without customer approval |
 | Documents exceptions with approver + reason + expiry | Run agents inside customer VPCs |
 
 ---
@@ -78,13 +78,13 @@ AWS in dev: mount `~/.aws` (already in `compose.yml`) and set `AWS_PROFILE` in `
 2. **AWS Accounts** → choose connection mode:
    - **Core Scanner** (required, read-only) — CIS / SOC 2 / ISO checks and evidence packs.
    - **Advanced IAM policy generation** (optional) — adds `iam:GenerateServiceLastAccessedDetails` and Access Analyzer policy-generation actions to a separate CFN role. Starts AWS analysis jobs only; does not modify resources.
-   - **Remediation automation** (optional, second stack) — customer-owned Lambda + EventBridge for approved fixes (e.g. security groups). Not required for compliance scanning.
+   - **Remediation automation** (optional, second stack) — customer-owned SSM Automation for approved fixes (e.g. security groups). Not required for compliance scanning.
 3. **Continue to deploy** → **Launch CloudFormation stack** — template URL, ExternalId, trust principal, and optional parameters are pre-filled from your selections.
 4. Deploy the stack in the customer's AWS console → copy `RoleArn` output (and `AdvancedPolicyGenRoleArn` if enabled).
 5. Paste ARN → **Verify**. Vigil calls `sts:AssumeRole` to confirm trust + ExternalId.
 6. First scan triggers automatically. Findings appear in ~1–3 min.
 
-**IaC scanning** (Terraform on GitHub/GitLab pull requests) is separate: connect GitHub under Integrations. It does not use EventBridge or any AWS stack from the scanner CFN.
+**IaC scanning** (Terraform on GitHub/GitLab pull requests) is separate: connect GitHub under Integrations. It does not use the remediation SSM document.
 
 ---
 
@@ -177,7 +177,7 @@ Flag a finding as a formal documented exception: reason, approver, expiry date. 
 **Findings drawer**
 - Tabs: Overview, Resources, Compliance, Remediation, What If (when supported).
 - Opening a finding lands on **Overview**; switching resources in a group keeps your current tab.
-- **Remediation**: Console | CLI | Terraform | EventBridge in one panel.
+- **Remediation**: Console | CLI | Terraform | Automation in one panel.
 - **Verify** re-runs the check; if the issue is gone, the finding moves to **Resolved** automatically (no manual “mark resolved”).
 - **Reopen** on resolved/ignored findings.
 
@@ -189,21 +189,21 @@ Every evidence item is timestamped with collection time and source API. Evidence
 
 ---
 
-## Remediation (Vigil read-only + optional customer automation)
+## Remediation (read-only scanning + optional customer automation)
 
-Vigil **never** assumes a write role in your AWS account. Remediation paths:
+Vigil scanning is read-only. If you explicitly enable remediation modules, approved fixes run through customer-owned SSM Automation with scoped permissions. Remediation paths:
 
 | Path | What it does |
 |------|----------------|
 | **Console / CLI** | Step-by-step copy in the finding drawer (resource names interpolated). |
 | **Terraform** | Declarative snippets for **S3 / KMS** only — not security groups (no `null_resource` / local-exec). |
-| **Version-control PR** | `POST …/iac/repo-scan` scans repo `.tf`/`.hcl`; `POST …/iac/terraform-pr` opens PR for **S3 PAB** and **KMS rotation** when hclpatch finds an exact resource block. SG: scan shows file/line — fix via EventBridge. |
-| **EventBridge + Lambda** | Customer deploys [`infra/cfn/vigil-remediation-runner-ec2.yaml`](infra/cfn/vigil-remediation-runner-ec2.yaml) (Lambda zip from S3); Vigil plan v2; `put-events` in **event bus home region** (`REMEDIATION_EVENT_BUS_REGION`). UI checks runner before Prepare. |
+| **Version-control PR** | `POST …/iac/repo-scan` scans repo `.tf`/`.hcl`; `POST …/iac/terraform-pr` opens PR for **S3 PAB** and **KMS rotation** when hclpatch finds an exact resource block. SG: scan shows file/line — fix via SSM Automation. |
+| **SSM Automation** | Customer deploys [`infra/cfn/vigil-remediation-ssm.yaml`](infra/cfn/vigil-remediation-ssm.yaml); Vigil plan v2; `POST .../remediation/dispatch` starts SSM Automation when scoped permissions are enabled, with a CLI fallback. |
 
 **Security group checks** (`ec2.security_group.unrestricted_ssh` / `unrestricted_rdp`):
 - Collector flags port-specific public ingress (22 / 3389) and **all-traffic** `0.0.0.0/0`; findings include `exposing_rules` in evidence.
-- Remediation: **Console, CLI, EventBridge** — Lambda revokes `exact_match_rules` only; fixed EC2 IAM role.
-- Plan v2: `resource_region`, `event_bus_region`, `expires_at`, `content_sha256`, optional Ed25519 signature via `POST /v1/findings/{id}/remediation/dispatch`.
+- Remediation: **Console, CLI, SSM Automation** — the document revokes `exact_match_rules` only; fixed customer IAM role.
+- Plan v2: `resource_region`, `execution.runner_type=ssm`, `expires_at`, `content_sha256`, optional Ed25519 signature via `POST /v1/findings/{id}/remediation/dispatch`.
 
 **APIs**
 
@@ -211,17 +211,17 @@ Vigil **never** assumes a write role in your AWS account. Remediation paths:
 |----------|---------|
 | `GET /v1/findings/{id}/iac-snippets` | Terraform + apply paths |
 | `GET /v1/findings/{id}/remediation-plan` | Signed plan for customer executor |
-| `POST /v1/findings/{id}/remediation/dispatch` | EventBridge payload + `put-events` CLI (bus region, not resource region) |
+| `POST /v1/findings/{id}/remediation/dispatch` | SSM Automation payload + `start-automation-execution` CLI |
 | `POST /v1/findings/{id}/iac/terraform-pr` | Repo-aware GitHub PR (S3 checks; requires connected GitHub) |
-| `GET /v1/accounts/{id}/remediation-runner/status` | Read-only: rule + Lambda + schema-discovery hint before `put-events` |
+| `GET /v1/accounts/{id}/remediation-runner/status` | Read-only: SSM Automation document check before execution |
 | `POST /v1/findings/{id}/iac/repo-scan` | Scan GitHub repo for matching Terraform resources |
-| `GET /v1/findings/{id}/remediation-execution` | Dispatch / Lambda completion status by `plan_id` |
+| `GET /v1/findings/{id}/remediation-execution` | Dispatch / optional completion status by `plan_id` |
 | `POST /v1/findings/{id}/recheck` | Verify — targeted re-collect + re-run one check |
 | `POST /v1/findings/{id}/reopen` | Move resolved/ignored finding back to open |
 
 Full runbook: [docs/remediation-automation.md](docs/remediation-automation.md).
 
-**Roadmap:** `runner_type` = `ssm` for SSM Automation documents; GitLab MR; SG repo-aware Terraform PR; Lambda execution audit keyed by `plan_id`.
+**Roadmap:** GitLab MR; SG repo-aware Terraform PR; optional SSM execution callback keyed by `plan_id`.
 
 ---
 
@@ -272,8 +272,7 @@ tools/
   hclpatch/       Go HCL patcher for repo-aware Terraform PRs (S3 checks)
 infra/
   cfn/            vigil-readonly-role.yaml
-                  vigil-remediation-runner-ec2.yaml   ← SG remediation (Lambda from S3 + EventBridge)
-  lambda/         remediation_runner.py + build.sh → remediation_runner.zip
+                  vigil-remediation-ssm.yaml          ← SG/SSM remediation (SSM Automation)
 docs/             remediation-automation.md, evidence-vault.md
 compose.yml
 ```
@@ -306,8 +305,8 @@ Shipped in-repo (narrow technical / design-partner launch):
 | **History** | `/history` + `GET /v1/accounts/{id}/compliance-timeline` |
 | **Scan progress** | Worker `progress_step` / `progress_total` on latest scan run; UI shows steps (no ETA) |
 | **Finding lifecycle** | Verify → auto-resolve via `recheck_finding`; reopen endpoint; no manual resolve in UI |
-| **IaC three-tier model** | S3/KMS snippets; SG = Console/CLI/EventBridge only; GitHub PR for S3 (hclpatch + validate) |
-| **Remediation v2** | Plan signing, bus vs resource region, exact-match Lambda, runner status API, S3-packaged Lambda |
+| **IaC three-tier model** | S3/KMS snippets; SG = Console/CLI/SSM Automation only; GitHub PR for S3 (hclpatch + validate) |
+| **Remediation v2** | Plan signing, automation vs resource region, exact-match SSM Automation, status API |
 | **Evidence vault upload** | Object Lock `PutObject` on export when `EVIDENCE_VAULT_ENABLED` + `EVIDENCE_VAULT_S3_URI` |
 | **SG ingress evidence** | `public_exposure` on security groups; `exposing_rules` on findings |
 
@@ -318,16 +317,16 @@ Most of [deepsearch/v3.txt](deepsearch/v3.txt) **phase 1–2 and navigation (pha
 | v3 recommendation | Status |
 |-------------------|--------|
 | Remediation plan v2 (expiry, bus/resource region, `exact_match_rules`, signature) | **Done** |
-| `put-events` in bus home region, EC2 in `resource_region` | **Done** |
-| EventBridge rule filters `schema` + SG `check_id`s + `execution.runner_type` | **Done** |
+| Customer-owned automation in home region, EC2 in `resource_region` | **Done** |
+| SSM document validates schema + supported `check_id`s + `execution.runner_type` | **Done** |
 | No fake SG Terraform; SG = automation-only | **Done** |
-| Go **hclpatch** — scan `.tf`/`.hcl`, match resource by name/attrs, patch file | **Partial** — PR patch: **S3 PAB + KMS rotation**; **scan** also finds **security groups** (manual/EventBridge to fix) |
+| Go **hclpatch** — scan `.tf`/`.hcl`, match resource by name/attrs, patch file | **Partial** — PR patch: **S3 PAB + KMS rotation**; **scan** also finds **security groups** (manual/SSM Automation to fix) |
 | Repo-aware PR | **Partial** — `POST …/iac/repo-scan` then `…/iac/terraform-pr` when `can_patch` |
 | Evidence vault: WORM upload per `report_id` | **Partial** — export upload + presigned; auditor approval UI still open |
 | Activity log + compliance timeline + noise toggle | **Done** |
 | Activity log → related open findings | **Done** (token overlap on resource names/ARNs) |
-| Packaged Lambda artifact | **Done** — [`infra/lambda/build.sh`](infra/lambda/build.sh) → S3 `LambdaArtifactBucket`/`Key` |
-| Lambda execution per `plan_id` | **Done** — DynamoDB in customer stack + Vigil `remediation_executions` via webhook |
+| Customer-owned SSM Automation document | **Done** — [`infra/cfn/vigil-remediation-ssm.yaml`](infra/cfn/vigil-remediation-ssm.yaml) |
+| Execution per `plan_id` | **Partial** — dispatch is recorded; SSM output remains in customer account unless a callback is added |
 | `noindex` on app shell | **Done** |
 | Move long-form reference to external docs site | **Not done** |
 
@@ -339,7 +338,7 @@ Still manual / planned (not blockers for first design partners):
 | **Cryptographic pack signing** | Set `EVIDENCE_PACK_SIGNING_KEY` — `pack_signature.json`; public key at `GET /v1/meta/evidence-pack-signing-key` |
 | **Full CIS v5 parity** | `cis_v5_level1_matrix.json`; ~24 core-mapped in Compliance |
 | **IAM history UI** | `GET /v1/accounts/:id/iam-history?as_of=` + pack JSON only |
-| **SSM Automation runner** | `runner_type: ssm` — same plan schema |
+| **SSM Automation** | `runner_type: ssm` — same plan schema |
 | **GitLab MR + broader Terraform PR** | GitHub S3 PR only; SG/KMS repo patches later |
 | **Control copy template** | Standardize Controls UI blocks |
 | **Narrative audit automation** | Script: narrative ↔ `check_id` registry |
@@ -351,12 +350,12 @@ See [`docs/deepsearch-v4-map.md`](docs/deepsearch-v4-map.md) for the full featur
 
 | v4 recommendation | Status |
 |-------------------|--------|
-| Lambda/EventBridge MVP remediation (not Terraform local-exec) | **Done** |
+| SSM Automation remediation (not Terraform local-exec) | **Done** |
 | Signed plan v2 + exact-match SG rules | **Done** |
 | `approval` on dispatched plan (`token`, `approved_by`, `approved_at`) | **Done** (dispatch only; preview plan unchanged) |
 | Evidence vault Object Lock upload | **Done** when `EVIDENCE_VAULT_ENABLED` |
 | Export row vault metadata (`report_id`, S3 URI, version, lock mode) | **Done** (migration 0034) |
-| SSM Automation runner | **Not built** |
+| AWS-owned SSM runbook expansion | **Partial** — catalog exists; wire parameters per check before enabling |
 | Auditor approve → share UI | **Gap** |
 | Repo-aware Terraform beyond S3/KMS patch | **Partial** |
 | Docs said vault “scaffold only” | **Fixed** — code was ahead of docs |

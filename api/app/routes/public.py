@@ -28,7 +28,7 @@ def remediation_execution_webhook(
     x_vigil_content_sha256: str | None = Header(default=None, alias="X-Vigil-Content-Sha256"),
     db: Session = Depends(get_db),
 ):
-    """Lambda callback: record execution outcome keyed by plan_id (verified via content_sha256)."""
+    """Execution callback: record outcome keyed by plan_id (verified via content_sha256)."""
     if not x_vigil_content_sha256 or x_vigil_content_sha256 != body.content_sha256:
         raise HTTPException(status_code=401, detail="content_sha256 header mismatch")
     row = record_execution_result(

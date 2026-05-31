@@ -209,7 +209,7 @@ def create_exception(finding_id: str, body: ExceptionIn, p=Depends(current_princ
 
 @router.get("/{finding_id}/remediation-plan")
 def remediation_plan(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
-    """Customer-hosted remediation plan (Vigil stays read-only)."""
+    """Customer-hosted remediation plan preview (no execution)."""
     from app.services.remediation_plan import build_remediation_plan
 
     f = _get_owned(db, p, finding_id)
@@ -311,7 +311,7 @@ def get_remediation_execution(finding_id: str, p=Depends(current_principal), db:
 
 @router.post("/{finding_id}/remediation/dispatch")
 def remediation_dispatch(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
-    """EventBridge + CLI payload for customer-hosted Lambda remediation."""
+    """Approve and start customer-hosted SSM Automation when scoped permissions are enabled."""
     from app.services.remediation_dispatch import build_remediation_dispatch
 
     f = _get_owned(db, p, finding_id)

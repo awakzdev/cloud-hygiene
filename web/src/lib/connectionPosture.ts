@@ -10,7 +10,7 @@ export const SCANNER_ROLE_NAME = "VigilScannerRole";
 /** Legacy split-stack policy-gen role; new deploys use one connector role only. */
 export const POLICY_GENERATION_ROLE_NAME = "VigilPolicyGenerationRole";
 export const SCANNER_ROLE_NAME_LEGACY = "VigilReadOnlyScannerRole";
-export const REMEDIATION_RUNNER_ROLE_NAME = "VigilRemediationRunnerRole";
+export const REMEDIATION_AUTOMATION_ROLE_NAME = "VigilRemediationAutomationRole";
 export const CONNECTOR_STACK_NAME = "VigilAccountConnector";
 export const CONNECTOR_STACK_LEGACY = "VigilReadOnly";
 

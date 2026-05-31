@@ -1,4 +1,4 @@
-"""IAM policy fragments for customer remediation Lambda (per check family)."""
+"""IAM policy fragments for customer remediation automation (per check family)."""
 from __future__ import annotations
 
 from typing import Any
@@ -36,6 +36,15 @@ def inline_policy_for_check(check_id: str) -> list[dict[str, Any]]:
                 "Action": ["kms:GetKeyPolicy", "kms:PutKeyPolicy", "kms:EnableKeyRotation"],
                 "Resource": "*",
             },
+        ]
+    if check_id.startswith("ssm."):
+        return [
+            {
+                "Sid": "SsmParameterSecureStringMigration",
+                "Effect": "Allow",
+                "Action": ["ssm:GetParameter", "ssm:PutParameter"],
+                "Resource": "*",
+            }
         ]
     if check_id.startswith("iam."):
         return [

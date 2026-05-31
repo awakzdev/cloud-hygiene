@@ -79,6 +79,20 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         runner_supported=False,
     ),
     RemediationModuleSpec(
+        id="ssm_parameters",
+        label="SSM parameters",
+        badge_label="SSM remediation",
+        enable_column="enable_remediation_ssm_parameters",
+        deployed_column="remediation_ssm_parameters_deployed",
+        cfn_parameter="EnableSsmParameterRemediation",
+        iam_policy_name="VigilRemediationAutomation",
+        permissions=(
+            "ssm:GetParameter",
+            "ssm:PutParameter",
+        ),
+        runner_supported=True,
+    ),
+    RemediationModuleSpec(
         id="cloudtrail_logging",
         label="CloudTrail logging",
         badge_label="CloudTrail remediation",
@@ -95,7 +109,7 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
 )
 
 REMEDIATION_MODULE_BY_ID = {m.id: m for m in REMEDIATION_MODULES}
-DEFAULT_REMEDIATION_ROLE_NAME = "VigilRemediationRunnerRole"
+DEFAULT_REMEDIATION_ROLE_NAME = "VigilRemediationAutomationRole"
 
 
 def remediation_modules_dict(acc: Any) -> dict[str, bool]:

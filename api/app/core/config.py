@@ -54,14 +54,17 @@ class Settings(BaseSettings):
     # Legacy split-stack policy-gen role (pre-unified connector); derive_advanced_role_arn maps these.
     CFN_POLICY_GENERATION_ROLE_NAME: str = "VigilPolicyGenerationRole"
     CFN_SCANNER_ROLE_NAME_LEGACY: str = "VigilReadOnlyScannerRole"
-    CFN_REMEDIATION_RUNNER_ROLE_NAME: str = "VigilRemediationRunnerRole"
+    CFN_REMEDIATION_AUTOMATION_ROLE_NAME: str = "VigilRemediationAutomationRole"
     CFN_REMEDIATION_TEMPLATE_URL: str = (
-        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-runner-ec2.yaml"
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-ssm.yaml"
+    )
+    CFN_REMEDIATION_SSM_TEMPLATE_URL: str = (
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-ssm.yaml"
     )
 
-    # Customer EventBridge bus where vigil-remediation-runner stack is deployed.
-    REMEDIATION_EVENT_BUS_REGION: str = "us-east-1"
-    REMEDIATION_EVENT_BUS_NAME: str = "default"
+    # Customer remediation automation home region.
+    REMEDIATION_AUTOMATION_REGION: str = "us-east-1"
+    REMEDIATION_SSM_DOCUMENT_NAME: str = "Vigil-RemediationPlanExecutor"
     REMEDIATION_PLAN_TTL_MINUTES: int = 60
 
     # When True (default) hitting /v1/auth/{github,gitlab,google} *without*

@@ -96,7 +96,7 @@ def build_terraform_pr(
         )
         raise ValueError(
             scan.get("message")
-            or "Repo match may exist but automatic patch is not supported — use EventBridge or edit Terraform manually."
+            or "Repo match may exist but automatic patch is not supported — use SSM Automation or edit Terraform manually."
         )
 
     gh = db.scalar(

@@ -154,6 +154,7 @@ export default function ComplianceHistory() {
   const [days, setDays] = useState(90);
   const [framework, setFramework] = useState("soc2");
   const [accountId, setAccountId] = useState("");
+  const [showTimeline, setShowTimeline] = useState(false);
   const [drawer, setDrawer] = useState<{
     event: HistoryEvent;
     tab: "snapshot" | "compare";
@@ -268,6 +269,7 @@ export default function ComplianceHistory() {
           currentSummary={data.current_summary}
           periodSummary={data.period_summary}
           scanCount={data.scan_count}
+          scanCadence={data.scan_cadence}
           onSelectSnapshot={(scanRunId) => {
             const evt = events.find((e) => e.scan_run_id === scanRunId);
             if (!evt) return;
@@ -288,44 +290,59 @@ export default function ComplianceHistory() {
       )}
 
       {!isLoading && events.length > 0 && (
-        <section className="mt-10 w-full">
-          <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-base font-bold text-zinc-900">Audit timeline</h2>
-            <HistoryPeriodSummary summary={data?.period_summary} />
+        <section className="mt-6 w-full rounded-lg border border-zinc-200 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-zinc-900">Audit timeline</h2>
+              <HistoryPeriodSummary summary={data?.period_summary} />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowTimeline((v) => !v)}
+              className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100"
+            >
+              {showTimeline ? "Hide timeline" : `Show ${events.length} snapshot${events.length === 1 ? "" : "s"}`}
+            </button>
           </div>
-          <div className="relative min-w-0 space-y-8 pb-8 before:absolute before:left-[5px] before:top-2 before:bottom-10 before:w-px before:bg-zinc-200">
-            {events.map((evt) => (
-              <TimelineEventCard
-                key={evt.scan_run_id}
-                event={evt}
-                hasPrevious={!!previousByScanId.get(evt.scan_run_id)}
-                onViewEvidence={() =>
-                  setDrawer({
-                    event: evt,
-                    tab: "snapshot",
-                    previous: previousByScanId.get(evt.scan_run_id) ?? null,
-                    expandInfrastructure: false,
-                  })
-                }
-                onCompare={() =>
-                  setDrawer({
-                    event: evt,
-                    tab: "compare",
-                    previous: previousByScanId.get(evt.scan_run_id) ?? null,
-                    expandInfrastructure: false,
-                  })
-                }
-                onInfrastructure={() =>
-                  setDrawer({
-                    event: evt,
-                    tab: "snapshot",
-                    previous: previousByScanId.get(evt.scan_run_id) ?? null,
-                    expandInfrastructure: true,
-                  })
-                }
-              />
-            ))}
-          </div>
+          {showTimeline ? (
+            <div className="relative mx-4 min-w-0 space-y-8 border-t border-zinc-100 py-5 before:absolute before:left-[5px] before:top-7 before:bottom-8 before:w-px before:bg-zinc-200">
+              {events.map((evt) => (
+                <TimelineEventCard
+                  key={evt.scan_run_id}
+                  event={evt}
+                  hasPrevious={!!previousByScanId.get(evt.scan_run_id)}
+                  onViewEvidence={() =>
+                    setDrawer({
+                      event: evt,
+                      tab: "snapshot",
+                      previous: previousByScanId.get(evt.scan_run_id) ?? null,
+                      expandInfrastructure: false,
+                    })
+                  }
+                  onCompare={() =>
+                    setDrawer({
+                      event: evt,
+                      tab: "compare",
+                      previous: previousByScanId.get(evt.scan_run_id) ?? null,
+                      expandInfrastructure: false,
+                    })
+                  }
+                  onInfrastructure={() =>
+                    setDrawer({
+                      event: evt,
+                      tab: "snapshot",
+                      previous: previousByScanId.get(evt.scan_run_id) ?? null,
+                      expandInfrastructure: true,
+                    })
+                  }
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-500">
+              Latest snapshot: {scanShortDate(events[0].timestamp)} · {eventTypeLabel(events[0].type)}
+            </div>
+          )}
         </section>
       )}
 

@@ -7,8 +7,8 @@ Read-only / policy-gen posture: [deepsearch-v6-map.md](./deepsearch-v6-map.md).
 
 | v4 recommendation | Repo decision |
 |-------------------|---------------|
-| EventBridge + fixed-role Lambda for MVP remediation | **Current** — `remediation_dispatch.py`, `vigil-remediation-runner-ec2.yaml` |
-| SSM Automation for enterprise | **Not built** — no runbooks/CFN packs |
+| EventBridge + fixed-role Lambda for MVP remediation | **Superseded** — SSM Automation is now preferred |
+| SSM Automation for enterprise | **Current** — `vigil-remediation-ssm.yaml`, `runner_type: ssm` |
 | No Terraform `null_resource` / local-exec live remediation | **Aligned** — customer repo PR + automation only |
 | No runtime IAM attach/detach | **Aligned** — fixed inline policies per family in runner |
 | PR IaC only when resource match is deterministic | **Partial** — `tools/hclpatch`, S3 PAB + KMS rotation |
@@ -21,10 +21,10 @@ Read-only / policy-gen posture: [deepsearch-v6-map.md](./deepsearch-v6-map.md).
 |------|-----------|-----------|
 | Remediation plan + dispatch | `remediation_plan.py`, `remediation_dispatch.py`, `findings.py` | **Done** v2 fields; **dispatch** now seals `approval` block |
 | Read-only generated policies | `accounts.py` | **Done** |
-| Customer Lambda runner | `infra/lambda/remediation_runner.py`, `vigil-remediation-runner-ec2.yaml` | **Done** (prefer EC2/S3 artifact stack over inline generic CFN) |
+| Customer SSM Automation | `infra/cfn/vigil-remediation-ssm.yaml`, `remediation_dispatch.py` | **Done** for SG exact revoke + SSM plaintext secret |
 | Terraform PR / hclpatch | `terraform_pr.py`, `hcl_patch.py`, `tools/hclpatch` | **Partial** — S3/KMS patch; SG scan-only |
 | GitHub PR route | `POST …/iac/terraform-pr` | **Callable** (UI may still say automation-only for SG) |
-| SSM remediation | — | **Gap** |
+| SSM remediation | `vigil-remediation-ssm.yaml` | **Done** for first modules |
 | Evidence vault | `evidence_vault.py`, `evidence_pack.py` | **Done** upload + presign; docs synced in `evidence-vault.md` |
 | Export audit trail | `evidence_exports` table | **Extended** — `report_id` + vault columns (migration 0034) |
 | Compliance timeline | `compliance_scan_timeline.py`, `ComplianceHistory.tsx`, `HistoryDashboard.tsx` | **Partial** — KPI dashboard + charts shipped; see [history-dashboard.md](./history-dashboard.md) |
@@ -38,8 +38,8 @@ Read-only / policy-gen posture: [deepsearch-v6-map.md](./deepsearch-v6-map.md).
 |----------------|--------|
 | `approval_token`, `approved_by`, `approved_at` on dispatched plan | **Done** — `build_approved_remediation_plan()` on `POST …/remediation/dispatch` |
 | GET `…/remediation-plan` preview | **No approval** (unsigned preview body unchanged) |
-| `runner_type: ssm` | **Gap** |
-| Runner validates approval token | **Customer runner** — Vigil emits token; Lambda should check (document in `remediation-automation.md`) |
+| `runner_type: ssm` | **Done** |
+| Runner validates approval token | **Partial** — SSM validates schema/expiry/checksum; approval block is recorded in plan |
 | Idempotency `plan_id` + execution store | **Done** — `remediation_executions` |
 
 ## Evidence vault gaps (v4 § storage model)

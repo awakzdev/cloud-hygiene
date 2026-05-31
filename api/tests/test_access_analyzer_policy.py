@@ -77,6 +77,23 @@ def test_parse_generated_policy_tolerates_garbage():
     assert parse_generated_policy({"generatedPolicyResult": {"generatedPolicies": [{"policy": "{bad"}]}}) == []
 
 
+def test_parse_generated_policy_skips_malformed_actions():
+    policy = {
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Action": ["dynamodb:GetItem", "${account}:${region}", "not-an-action"],
+                "Resource": ["arn:aws:dynamodb:us-east-1:123456789012:table/orders"],
+            },
+        ],
+    }
+    resp = {"generatedPolicyResult": {"generatedPolicies": [{"policy": json.dumps(policy)}]}}
+
+    statements = parse_generated_policy(resp)
+
+    assert statements[0]["actions"] == ["dynamodb:GetItem"]
+
+
 def test_merge_never_drops_used_service_and_warns_on_uncovered():
     last_accessed = ["ec2:DescribeInstances"]
     aa_statements = [

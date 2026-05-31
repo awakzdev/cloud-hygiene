@@ -77,6 +77,7 @@ class RemediationModulesIn(BaseModel):
     s3_public_access: bool = False
     iam_access_keys: bool = False
     iam_policies: bool = False
+    ssm_parameters: bool = False
     cloudtrail_logging: bool = False
 
 
@@ -240,8 +241,8 @@ def _update_cli_command(
 
 def _remediation_launch_url() -> str:
     params = {
-        "templateURL": get_settings().CFN_REMEDIATION_TEMPLATE_URL,
-        "stackName": "VigilRemediationRunner",
+        "templateURL": get_settings().CFN_REMEDIATION_SSM_TEMPLATE_URL,
+        "stackName": "VigilRemediationSSM",
     }
     qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
     return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
@@ -250,8 +251,8 @@ def _remediation_launch_url() -> str:
 def _remediation_cli_command() -> str:
     return (
         "aws cloudformation create-stack \\\n"
-        "  --stack-name VigilRemediationRunner \\\n"
-        f"  --template-url {get_settings().CFN_REMEDIATION_TEMPLATE_URL} \\\n"
+        "  --stack-name VigilRemediationSSM \\\n"
+        f"  --template-url {get_settings().CFN_REMEDIATION_SSM_TEMPLATE_URL} \\\n"
         "  --capabilities CAPABILITY_NAMED_IAM"
     )
 
@@ -2464,7 +2465,7 @@ def remediation_runner_status(
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    """Read-only check: EventBridge rule + Lambda deployed in REMEDIATION_EVENT_BUS_REGION."""
+    """Read-only check: SSM Automation document deployed in REMEDIATION_AUTOMATION_REGION."""
     from app.services.remediation_runner_status import check_remediation_runner
 
     acc = db.get(AwsAccount, uuid.UUID(account_id))

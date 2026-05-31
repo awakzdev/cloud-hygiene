@@ -1,0 +1,320 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Customer-owned Vigil remediation executor using AWS Systems Manager Automation.
+
+Parameters:
+  AutomationDocumentName:
+    Type: String
+    Default: Vigil-RemediationPlanExecutor
+  AutomationRoleName:
+    Type: String
+    Default: VigilRemediationAutomationRole
+  EnableSecurityGroupRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableS3Remediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamAccessKeyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableIamPolicyRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableSsmParameterRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+  EnableCloudTrailRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+
+Conditions:
+  SecurityGroupModule: !Equals [!Ref EnableSecurityGroupRemediation, "Yes"]
+  S3Module: !Equals [!Ref EnableS3Remediation, "Yes"]
+  IamAccessKeyModule: !Equals [!Ref EnableIamAccessKeyRemediation, "Yes"]
+  IamPolicyModule: !Equals [!Ref EnableIamPolicyRemediation, "Yes"]
+  SsmParameterModule: !Equals [!Ref EnableSsmParameterRemediation, "Yes"]
+  CloudTrailModule: !Equals [!Ref EnableCloudTrailRemediation, "Yes"]
+
+Resources:
+  RemediationAutomationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref AutomationRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ssm.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: VigilRemediationAutomation
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - !If
+                - SecurityGroupModule
+                - Sid: Ec2SecurityGroupIngress
+                  Effect: Allow
+                  Action:
+                    - ec2:DescribeSecurityGroups
+                    - ec2:DescribeSecurityGroupRules
+                    - ec2:RevokeSecurityGroupIngress
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - S3Module
+                - Sid: S3PublicAccessRemediation
+                  Effect: Allow
+                  Action:
+                    - s3:PutBucketPublicAccessBlock
+                    - s3:PutBucketPolicy
+                    - s3:GetBucketPublicAccessBlock
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - SsmParameterModule
+                - Sid: SsmParameterSecureStringMigration
+                  Effect: Allow
+                  Action:
+                    - ssm:GetParameter
+                    - ssm:PutParameter
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - IamAccessKeyModule
+                - Sid: IamAccessKeyRemediation
+                  Effect: Allow
+                  Action:
+                    - iam:UpdateAccessKey
+                    - iam:DeleteAccessKey
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - IamPolicyModule
+                - Sid: IamPolicyRemediation
+                  Effect: Allow
+                  Action:
+                    - iam:PutRolePolicy
+                    - iam:DetachRolePolicy
+                    - iam:AttachRolePolicy
+                    - iam:CreatePolicyVersion
+                    - iam:DeletePolicyVersion
+                  Resource: "*"
+                - !Ref AWS::NoValue
+              - !If
+                - CloudTrailModule
+                - Sid: CloudTrailRemediation
+                  Effect: Allow
+                  Action:
+                    - cloudtrail:UpdateTrail
+                    - cloudtrail:StartLogging
+                  Resource: "*"
+                - !Ref AWS::NoValue
+
+  RemediationAutomationDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: !Ref AutomationDocumentName
+      DocumentType: Automation
+      DocumentFormat: YAML
+      Content:
+        schemaVersion: "0.3"
+        description: Execute an approved Vigil remediation plan in the customer account.
+        assumeRole: !GetAtt RemediationAutomationRole.Arn
+        parameters:
+          PlanJson:
+            type: String
+            description: Signed Vigil remediation plan JSON.
+        mainSteps:
+          - name: ExecutePlan
+            action: aws:executeScript
+            timeoutSeconds: 300
+            inputs:
+              Runtime: python3.11
+              Handler: handler
+              InputPayload:
+                PlanJson: "{{ PlanJson }}"
+              Script: |
+                import datetime
+                import hashlib
+                import json
+                import re
+
+                import boto3
+
+                PLAN_SCHEMA = "vigil_remediation_plan/v2"
+                SG_CHECKS = {
+                    "ec2.security_group.unrestricted_ssh",
+                    "ec2.security_group.unrestricted_rdp",
+                }
+                SSM_CHECKS = {"ssm.parameter.plaintext_secret"}
+
+                def _finish(plan, result):
+                    result["plan_id"] = plan.get("plan_id")
+                    return result
+
+                def _verify_plan(plan):
+                    if plan.get("schema") != PLAN_SCHEMA:
+                        return "unsupported schema"
+                    expires = plan.get("expires_at")
+                    if not expires:
+                        return "missing expires_at"
+                    try:
+                        exp = datetime.datetime.fromisoformat(expires.replace("Z", "+00:00"))
+                        if exp.tzinfo is None:
+                            exp = exp.replace(tzinfo=datetime.timezone.utc)
+                    except ValueError:
+                        return "invalid expires_at"
+                    if datetime.datetime.now(datetime.timezone.utc) > exp:
+                        return "plan_expired"
+                    expected = plan.get("content_sha256")
+                    if expected:
+                        body = {k: v for k, v in plan.items() if k not in ("content_sha256", "signature")}
+                        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+                        if hashlib.sha256(canonical.encode()).hexdigest() != expected:
+                            return "content_sha256_mismatch"
+                    return None
+
+                def _region_from_plan(plan):
+                    if plan.get("resource_region"):
+                        return plan["resource_region"]
+                    ev = plan.get("evidence") or {}
+                    if ev.get("region"):
+                        return ev["region"]
+                    arn = plan.get("resource_arn") or ""
+                    parts = arn.split(":")
+                    if len(parts) > 3 and parts[3]:
+                        return parts[3]
+                    return "us-east-1"
+
+                def _sg_from_plan(plan):
+                    ev = plan.get("evidence") or {}
+                    if ev.get("group_id"):
+                        return str(ev["group_id"])
+                    arn = plan.get("resource_arn") or ""
+                    if "/security-group/" in arn:
+                        return arn.split("/security-group/")[-1]
+                    return arn.split("/")[-1]
+
+                def _ssm_parameter_from_plan(plan):
+                    ev = plan.get("evidence") or {}
+                    if ev.get("parameter_name"):
+                        return str(ev["parameter_name"])
+                    arn = plan.get("resource_arn") or ""
+                    if ":parameter/" in arn:
+                        return "/" + arn.split(":parameter/", 1)[-1]
+                    if ":parameter" in arn:
+                        return arn.split(":parameter", 1)[-1]
+                    return ""
+
+                def _perm_to_match(perm, cidr, range_key):
+                    proto = str(perm.get("IpProtocol", ""))
+                    return {
+                        "protocol": "all" if proto == "-1" else proto,
+                        "from_port": perm.get("FromPort"),
+                        "to_port": perm.get("ToPort"),
+                        "cidr": cidr,
+                        "range_key": range_key,
+                    }
+
+                def _live_matches_rule(live, rule):
+                    if live.get("cidr") != rule.get("cidr"):
+                        return False
+                    r_proto = rule.get("protocol")
+                    l_proto = live.get("protocol")
+                    if r_proto == "all" or l_proto == "all":
+                        if r_proto not in ("all", l_proto) and l_proto not in ("all", r_proto, "-1"):
+                            return False
+                    elif str(l_proto) != str(r_proto):
+                        return False
+                    for key in ("from_port", "to_port"):
+                        rv, lv = rule.get(key), live.get(key)
+                        if rv is None and lv is None:
+                            continue
+                        if rv is None or lv is None:
+                            return False
+                        if int(rv) != int(lv):
+                            return False
+                    return True
+
+                def _revoke_exact_rules(ec2, sg_id, rules):
+                    if not rules:
+                        return []
+                    sg = ec2.describe_security_groups(GroupIds=[sg_id])["SecurityGroups"][0]
+                    revoked = []
+                    for perm in sg.get("IpPermissions", []):
+                        for range_key, public_cidr in (("IpRanges", "0.0.0.0/0"), ("Ipv6Ranges", "::/0")):
+                            for rng in perm.get(range_key, []):
+                                cidr = rng.get("CidrIp") if range_key == "IpRanges" else rng.get("CidrIpv6")
+                                if cidr != public_cidr:
+                                    continue
+                                live = _perm_to_match(perm, cidr, range_key)
+                                for rule in rules:
+                                    if not _live_matches_rule(live, rule):
+                                        continue
+                                    proto = str(perm.get("IpProtocol", ""))
+                                    ip_perm = {"IpProtocol": proto}
+                                    if proto != "-1":
+                                        ip_perm["FromPort"] = perm.get("FromPort")
+                                        ip_perm["ToPort"] = perm.get("ToPort")
+                                    if range_key == "IpRanges":
+                                        ip_perm["IpRanges"] = [{"CidrIp": cidr}]
+                                    else:
+                                        ip_perm["Ipv6Ranges"] = [{"CidrIpv6": cidr}]
+                                    ec2.revoke_security_group_ingress(GroupId=sg_id, IpPermissions=[ip_perm])
+                                    revoked.append({**rule, "revoked": True})
+                                    break
+                    return revoked
+
+                def _migrate_ssm_to_secure_string(ssm, name):
+                    current = ssm.get_parameter(Name=name, WithDecryption=False)["Parameter"]
+                    if current.get("Type") == "SecureString":
+                        return {"changed": False, "parameter_name": name, "parameter_type": "SecureString"}
+                    if current.get("Type") != "String":
+                        raise ValueError("unsupported parameter type {}".format(current.get("Type")))
+                    ssm.put_parameter(Name=name, Type="SecureString", Value=current["Value"], Overwrite=True)
+                    return {"changed": True, "parameter_name": name, "parameter_type": "SecureString"}
+
+                def handler(event, context):
+                    plan = json.loads(event["PlanJson"]) if isinstance(event.get("PlanJson"), str) else event["PlanJson"]
+                    check_id = plan.get("check_id", "")
+                    region = _region_from_plan(plan)
+                    err = _verify_plan(plan)
+                    if err:
+                        return _finish(plan, {"ok": False, "error": err})
+
+                    if check_id in SG_CHECKS:
+                        sg_id = _sg_from_plan(plan)
+                        if not sg_id:
+                            return _finish(plan, {"ok": False, "error": "missing security group id"})
+                        rules = plan.get("exact_match_rules") or []
+                        if not rules:
+                            return _finish(plan, {"ok": False, "error": "stale_plan"})
+                        revoked = _revoke_exact_rules(boto3.client("ec2", region_name=region), sg_id, rules)
+                        if not revoked:
+                            return _finish(plan, {"ok": False, "error": "stale_plan", "region": region, "group_id": sg_id})
+                        return _finish(plan, {"ok": True, "action": "revoke_exact_ingress", "region": region, "group_id": sg_id, "revoked": len(revoked), "rules": revoked})
+
+                    if check_id in SSM_CHECKS:
+                        name = _ssm_parameter_from_plan(plan)
+                        if not name:
+                            return _finish(plan, {"ok": False, "error": "missing SSM parameter name"})
+                        result = _migrate_ssm_to_secure_string(boto3.client("ssm", region_name=region), name)
+                        return _finish(plan, {"ok": True, "action": "migrate_ssm_string_to_secure_string", "region": region, **result})
+
+                    return _finish(plan, {"ok": False, "error": "unsupported check_id {}".format(check_id)})
+
+Outputs:
+  AutomationDocumentName:
+    Value: !Ref RemediationAutomationDocument
+  AutomationRoleArn:
+    Value: !GetAtt RemediationAutomationRole.Arn
+  RemediationRoleArn:
+    Value: !GetAtt RemediationAutomationRole.Arn

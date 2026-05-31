@@ -68,6 +68,12 @@ export interface CurrentSummary {
   controls_no_data: number;
 }
 
+export interface ScanCadenceDay {
+  date: string;
+  scan_count: number;
+  posture_change_count: number;
+}
+
 export interface ComplianceHistoryResponse {
   framework: string;
   period_days: number;
@@ -77,6 +83,7 @@ export interface ComplianceHistoryResponse {
   current_posture_score: number | null;
   total_failing: number;
   scan_count?: number;
+  scan_cadence?: ScanCadenceDay[];
 }
 
 export function scanDateLabel(iso: string) {

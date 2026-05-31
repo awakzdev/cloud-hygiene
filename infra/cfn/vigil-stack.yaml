@@ -34,6 +34,10 @@ Parameters:
     Type: String
     Default: "No"
     AllowedValues: ["Yes", "No"]
+  EnableSsmParameterRemediation:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
   EnableCloudTrailRemediation:
     Type: String
     Default: "No"
@@ -43,23 +47,14 @@ Parameters:
     Default: "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-core-scanner.yaml"
   RemediationTemplateURL:
     Type: String
-    Default: "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-runner-ec2.yaml"
-  LambdaArtifactBucket:
-    Type: String
-    Default: amzn-s3-vigil
-    Description: S3 bucket for remediation_runner.zip (same account as public CFN templates; not the evidence vault).
-  LambdaArtifactKey:
-    Type: String
-    Default: lambda/remediation_runner.zip
-  VigilExecutionWebhookUrl:
-    Type: String
-    Default: ""
+    Default: "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-ssm.yaml"
 
 Conditions:
   RemediationSg: !Equals [!Ref EnableSecurityGroupRemediation, "Yes"]
   RemediationS3: !Equals [!Ref EnableS3Remediation, "Yes"]
   RemediationIamKeys: !Equals [!Ref EnableIamAccessKeyRemediation, "Yes"]
   RemediationIamPolicy: !Equals [!Ref EnableIamPolicyRemediation, "Yes"]
+  RemediationSsmParameters: !Equals [!Ref EnableSsmParameterRemediation, "Yes"]
   RemediationCloudTrail: !Equals [!Ref EnableCloudTrailRemediation, "Yes"]
   CreateRemediation:
     Fn::Or:
@@ -67,6 +62,7 @@ Conditions:
       - !Condition RemediationS3
       - !Condition RemediationIamKeys
       - !Condition RemediationIamPolicy
+      - !Condition RemediationSsmParameters
       - !Condition RemediationCloudTrail
 
 Resources:
@@ -79,6 +75,12 @@ Resources:
         ExternalId: !Ref ExternalId
         RoleName: !Ref RoleName
         EnableAdvancedPolicyGeneration: !Ref EnableAdvancedPolicyGeneration
+        EnableSecurityGroupRemediation: !Ref EnableSecurityGroupRemediation
+        EnableS3Remediation: !Ref EnableS3Remediation
+        EnableIamAccessKeyRemediation: !Ref EnableIamAccessKeyRemediation
+        EnableIamPolicyRemediation: !Ref EnableIamPolicyRemediation
+        EnableSsmParameterRemediation: !Ref EnableSsmParameterRemediation
+        EnableCloudTrailRemediation: !Ref EnableCloudTrailRemediation
 
   RemediationStack:
     Type: AWS::CloudFormation::Stack
@@ -86,13 +88,11 @@ Resources:
     Properties:
       TemplateURL: !Ref RemediationTemplateURL
       Parameters:
-        LambdaArtifactBucket: !Ref LambdaArtifactBucket
-        LambdaArtifactKey: !Ref LambdaArtifactKey
-        VigilExecutionWebhookUrl: !Ref VigilExecutionWebhookUrl
         EnableSecurityGroupRemediation: !Ref EnableSecurityGroupRemediation
         EnableS3Remediation: !Ref EnableS3Remediation
         EnableIamAccessKeyRemediation: !Ref EnableIamAccessKeyRemediation
         EnableIamPolicyRemediation: !Ref EnableIamPolicyRemediation
+        EnableSsmParameterRemediation: !Ref EnableSsmParameterRemediation
         EnableCloudTrailRemediation: !Ref EnableCloudTrailRemediation
 
 Outputs:

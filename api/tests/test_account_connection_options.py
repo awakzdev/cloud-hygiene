@@ -21,6 +21,7 @@ _MODULES_OFF = {
     "s3_public_access": False,
     "iam_access_keys": False,
     "iam_policies": False,
+    "ssm_parameters": False,
     "cloudtrail_logging": False,
 }
 
@@ -70,7 +71,7 @@ def test_update_cli_uses_update_stack():
 
 def test_remediation_launch_url_legacy_helper():
     url = _remediation_launch_url()
-    assert "VigilRemediationRunner" in url
+    assert "VigilRemediationSSM" in url
 
 
 def _mock_account(*, status: str, cfn_stack_name: str) -> MagicMock:

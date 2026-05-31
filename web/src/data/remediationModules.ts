@@ -5,6 +5,7 @@ export type RemediationModuleId =
   | "s3_public_access"
   | "iam_access_keys"
   | "iam_policies"
+  | "ssm_parameters"
   | "cloudtrail_logging";
 
 export type RemediationModules = Record<RemediationModuleId, boolean>;
@@ -14,6 +15,7 @@ export const DEFAULT_REMEDIATION_MODULES: RemediationModules = {
   s3_public_access: false,
   iam_access_keys: false,
   iam_policies: false,
+  ssm_parameters: false,
   cloudtrail_logging: false,
 };
 
@@ -77,6 +79,16 @@ export const REMEDIATION_MODULE_SPECS: readonly RemediationModuleSpec[] = [
       "iam:DeletePolicyVersion",
     ],
     runnerSupported: false,
+  },
+  {
+    id: "ssm_parameters",
+    label: "SSM parameters",
+    badgeLabel: "SSM remediation",
+    cfnParameter: "EnableSsmParameterRemediation",
+    summary: "Migrate plaintext secrets",
+    bullets: ["Rewrite sensitive String parameters as SecureString", "Run through SSM Automation after approval"],
+    permissions: ["ssm:GetParameter", "ssm:PutParameter"],
+    runnerSupported: true,
   },
   {
     id: "cloudtrail_logging",
