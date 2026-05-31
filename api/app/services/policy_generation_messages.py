@@ -1,4 +1,4 @@
-"""User-facing copy for CloudTrail-based IAM policy generation (not external/internal analyzers)."""
+"""User-facing copy for IAM least-privilege policy generation."""
 
 from __future__ import annotations
 
@@ -10,36 +10,31 @@ IAM_POLICY_GEN_CONSOLE_PATH = (
 )
 
 POLICY_GEN_NO_JOB_NOTE = (
-    "No completed policy generation job was found for this role. "
-    'Use "Start CloudTrail analysis" in Vigil, or in AWS: '
-    f"{IAM_POLICY_GEN_CONSOLE_PATH}. "
-    "Analysis is read-only until you apply a policy yourself."
+    "No completed policy analysis exists for this role yet. "
+    "Start analysis in Vigil, or start the same AWS IAM policy-generation job from the IAM role page. "
+    "This only reads CloudTrail and IAM last-accessed data; permissions are not changed until you apply a policy."
 )
 
 POLICY_GEN_ASSUME_FAILED_NOTE = (
-    "Connector role is not assumable or lacks policy-generation API permissions "
-    "(StartPolicyGeneration, GetGeneratedPolicy, ListPolicyGenerations). "
-    "Update the Vigil connector stack with Advanced IAM policy generation enabled."
+    "Vigil cannot start policy analysis with the connector role. "
+    "Update the AWS connector with Advanced IAM policy generation enabled, then verify capabilities again."
 )
 
 POLICY_GEN_PASS_ROLE_HINT = (
-    "Update your Vigil CloudFormation stack (Advanced IAM policy generation enabled) so the connector "
-    "can iam:PassRole the VigilAccessAnalyzerMonitor role to access-analyzer.amazonaws.com. "
-    "That monitor role reads CloudTrail logs; it is not the VigilScannerRole itself."
+    "The connector must pass the Vigil Access Analyzer monitor role to access-analyzer.amazonaws.com. "
+    "That monitor role is used by AWS to read CloudTrail logs for policy generation; it is not a remediation role."
 )
 
 POLICY_GEN_NO_CONNECTOR_NOTE = "Connect the Vigil connector role first."
 
 POLICY_GEN_MONITOR_ROLE_MISSING = (
-    "The CloudTrail reader role for Access Analyzer is not in this account. "
-    "Update your Vigil connector stack with Advanced IAM policy generation enabled, "
-    "then run Verify permissions again."
+    "The Access Analyzer monitor role is missing from this account. "
+    "Update the Vigil connector with Advanced IAM policy generation enabled, then verify capabilities again."
 )
 
 POLICY_GEN_WRONG_REGION_HINT = (
-    "CloudTrail analysis could not be started in any region Vigil tried. "
-    "Run a scan so Access Analyzer regions are collected, or retry after enabling "
-    "IAM Access Analyzer in your primary AWS region."
+    "AWS could not start policy analysis in the available regions. "
+    "Run a scan so Vigil can refresh CloudTrail and Access Analyzer regions, then try again."
 )
 
 
@@ -51,44 +46,38 @@ def _client_error_parts(exc: BaseException) -> tuple[str, str]:
 
 
 def user_friendly_policy_generation_error(exc: BaseException) -> str:
-    """Map AWS/boto errors to copy suitable for end users (no raw API or restart instructions)."""
+    """Map AWS/boto errors to copy suitable for end users."""
     code, msg = _client_error_parts(exc)
     lower = f"{code} {msg}".lower()
     compact = lower.replace(" ", "").replace("_", "")
 
     if "missing regions or allregions" in lower:
         return (
-            "CloudTrail is not configured the way AWS expects for this analysis. "
-            "Ensure at least one logging trail is enabled (multi-region is best), run a scan, then try again."
+            "CloudTrail is not configured for AWS policy analysis. "
+            "Enable at least one logging trail, preferably multi-region, run a scan, then try again."
         )
     if "invalid against requested date format" in lower or "endtime must be after starttime" in lower:
-        return "Could not start CloudTrail analysis due to a timestamp issue. Please try again in a moment."
+        return "AWS rejected the analysis time window. Try again in a moment."
     if "no logging cloudtrail" in lower or "no_trails" in lower:
-        return "No active CloudTrail trails found. Enable CloudTrail logging, run a scan, then try again."
+        return "No active CloudTrail trail was found. Enable CloudTrail logging, run a scan, then try again."
     if "nosuchentity" in compact and "accessanalyzermonitor" in compact:
         return POLICY_GEN_MONITOR_ROLE_MISSING
     if "passrole" in compact:
-        return (
-            "Vigil can call Access Analyzer APIs but cannot pass the CloudTrail reader role to the service. "
-            f"{POLICY_GEN_PASS_ROLE_HINT}"
-        )
+        return f"Vigil can start analysis, but AWS blocked the monitor role handoff. {POLICY_GEN_PASS_ROLE_HINT}"
     if "accessanalyzermonitor" in compact and (
         "accessdenied" in lower or "not authorized" in lower or code == "AccessDeniedException"
     ):
         return (
-            "The CloudTrail reader role exists but Access Analyzer cannot use it (trust policy or S3 log access). "
-            "Update the connector stack and confirm CloudTrail log bucket settings if your template asks for them."
+            "The Access Analyzer monitor role exists, but AWS cannot use it to read the CloudTrail logs. "
+            "Update the connector and confirm the CloudTrail log bucket/KMS access settings."
         )
     if code == "AccessDeniedException" and "startpolicygeneration" in compact:
         return POLICY_GEN_WRONG_REGION_HINT
     if "accessdenied" in lower or "not authorized" in lower or "unauthorized" in lower:
         return POLICY_GEN_WRONG_REGION_HINT
     if "enable advanced" in lower or "advanced iam policy" in lower:
-        return "Turn on Advanced IAM policy generation on the AWS connector, then try again."
+        return "Turn on Advanced IAM policy generation for this AWS connector, then try again."
     if "could not determine cloudtrail access role" in lower or "cloudtrail reader role" in lower:
         return POLICY_GEN_MONITOR_ROLE_MISSING
 
-    return (
-        "Could not start CloudTrail analysis right now. Try again in a few minutes, "
-        "or ask your administrator if the problem continues."
-    )
+    return "Could not start policy analysis right now. Try again in a few minutes."
