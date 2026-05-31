@@ -10,7 +10,9 @@ from botocore.stub import Stubber
 import app.core.aws  # noqa: F401 — side effect: clears empty AWS_* env so boto3 clients build
 from app.core.iam_usage import remove_service_wildcards_when_specific_actions_exist
 from app.services.access_analyzer_policy import (
+    format_access_analyzer_timestamp,
     latest_policy_generation_status,
+    policy_generation_cloudtrail_window,
     start_policy_generation,
     CONFIDENCE_HIGH,
     CONFIDENCE_LOW,
@@ -317,11 +319,53 @@ def test_derive_cloudtrail_access_role_arn_from_scanner():
     )
 
 
+def test_format_access_analyzer_timestamp_strips_subsecond_precision():
+    dt = datetime(2026, 5, 31, 20, 1, 1, 753296, tzinfo=timezone.utc)
+    assert format_access_analyzer_timestamp(dt) == "2026-05-31T20:01:01Z"
+    assert format_access_analyzer_timestamp(datetime(2026, 3, 1, tzinfo=timezone.utc)) == "2026-03-01T00:00:00Z"
+
+
+def test_policy_generation_cloudtrail_window_end_after_start():
+    end = datetime(2026, 5, 31, 12, 0, 0, tzinfo=timezone.utc)
+    start, out_end = policy_generation_cloudtrail_window(end_time=end, lookback_days=90)
+    assert start < out_end
+    assert out_end == end
+
+
+def test_trail_entry_for_policy_generation_multi_region():
+    from app.services.access_analyzer_policy import trail_entry_for_policy_generation
+
+    assert trail_entry_for_policy_generation(
+        arn="arn:aws:cloudtrail:us-east-1:123:trail/t1",
+        is_multi_region=True,
+    ) == {
+        "cloudTrailArn": "arn:aws:cloudtrail:us-east-1:123:trail/t1",
+        "allRegions": True,
+    }
+
+
+def test_trail_entry_for_policy_generation_single_region():
+    from app.services.access_analyzer_policy import trail_entry_for_policy_generation
+
+    assert trail_entry_for_policy_generation(
+        arn="arn:aws:cloudtrail:eu-west-1:123:trail/t1",
+        is_multi_region=False,
+        home_region="eu-west-1",
+    ) == {
+        "cloudTrailArn": "arn:aws:cloudtrail:eu-west-1:123:trail/t1",
+        "regions": ["eu-west-1"],
+    }
+
+
 def test_start_policy_generation_calls_api():
+    from app.services.access_analyzer_policy import trail_entry_for_policy_generation
+
     principal = "arn:aws:iam::123456789012:role/app"
     access_role = "arn:aws:iam::123456789012:role/VigilPolicyGenerationRole"
     trail = "arn:aws:cloudtrail:us-east-1:123:trail/t1"
-    start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 5, 31, 12, 0, 0, tzinfo=timezone.utc)
+    start, window_end = policy_generation_cloudtrail_window(end_time=end, lookback_days=90)
+    trail_payload = trail_entry_for_policy_generation(arn=trail, is_multi_region=True)
     client = boto3.client("accessanalyzer", region_name="us-east-1")
     stub = Stubber(client)
     stub.add_response(
@@ -330,9 +374,10 @@ def test_start_policy_generation_calls_api():
         {
             "policyGenerationDetails": {"principalArn": principal},
             "cloudTrailDetails": {
-                "trails": [{"cloudTrailArn": trail}],
+                "trails": [trail_payload],
                 "accessRole": access_role,
-                "startTime": start,
+                "startTime": format_access_analyzer_timestamp(start),
+                "endTime": format_access_analyzer_timestamp(window_end),
             },
         },
     )
@@ -340,9 +385,9 @@ def test_start_policy_generation_calls_api():
         out = start_policy_generation(
             client,
             principal_arn=principal,
-            trail_arns=[trail],
+            trails=[{"arn": trail, "is_multi_region": True, "home_region": "us-east-1"}],
             access_role_arn=access_role,
-            start_time=start,
+            end_time=end,
         )
     assert out["job_id"] == "job-1"
     assert out["status"] == "IN_PROGRESS"

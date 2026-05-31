@@ -27,8 +27,14 @@ IAM_ACCESS_KEY_CHECKS = frozenset(
     }
 )
 
-# IAM API is global — SSM document stays in the connector / REMEDIATION_AUTOMATION_REGION.
+# Custom Vigil document runs from one automation home region; PlanJson carries resource_region.
+VIGIL_CUSTOM_SSM_CHECKS = SG_CHECKS | SSM_CHECKS | IAM_ACCESS_KEY_CHECKS
+# Back-compat alias (was IAM-only before SG/SSM used home region too).
 IAM_GLOBAL_SSM_CHECKS = IAM_ACCESS_KEY_CHECKS
+
+
+def automation_home_region() -> str:
+    return get_settings().REMEDIATION_AUTOMATION_REGION or "us-east-1"
 
 
 def _region_from_arn(arn: str | None) -> str | None:
@@ -49,7 +55,7 @@ def resource_region_for_finding(finding: Finding) -> str:
 
 
 def automation_region_for_finding(finding: Finding) -> str:
-    """SSM Automation region: match the resource region, except global IAM keys."""
+    """SSM StartAutomationExecution region (home for Vigil custom doc; resource for AWS runbooks)."""
     return resolve_automation_region(
         finding.check_id,
         resource_region_for_finding(finding),
@@ -57,13 +63,13 @@ def automation_region_for_finding(finding: Finding) -> str:
 
 
 def resolve_automation_region(check_id: str | None, resource_region: str | None) -> str:
-    """Pick SSM Automation region for a check + resource (API status / runner verify)."""
-    settings = get_settings()
-    if check_id and check_id in IAM_GLOBAL_SSM_CHECKS:
-        return settings.REMEDIATION_AUTOMATION_REGION or resource_region or "us-east-1"
+    """Pick SSM Automation region for describe/start and StartAutomationExecution."""
+    home_region = automation_home_region()
+    if check_id and check_id in VIGIL_CUSTOM_SSM_CHECKS:
+        return home_region
     if resource_region:
         return resource_region
-    return settings.REMEDIATION_AUTOMATION_REGION or "us-east-1"
+    return home_region
 
 
 def _supported_action(check_id: str) -> str | None:
@@ -125,8 +131,8 @@ def build_remediation_plan_body(
             "delivery": delivery,
             "document_name": settings.REMEDIATION_SSM_DOCUMENT_NAME,
             "note": (
-                "Start SSM Automation in automation_region (same as resource_region for regional resources). "
-                "Deploy Vigil-RemediationPlanExecutor in that region. IAM key remediation uses the connector home region."
+                "AWS-owned runbooks run in resource_region. Vigil custom document runs in automation_region "
+                "(REMEDIATION_AUTOMATION_REGION); PlanJson includes resource_region for regional API calls."
             ),
         },
         "steps": _steps_for_check(finding),

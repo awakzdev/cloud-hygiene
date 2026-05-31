@@ -19,6 +19,10 @@ from app.services.iam_permission_check import (
     load_role_policy_documents,
     load_role_policy_names,
 )
+from app.services.access_analyzer_policy import (
+    cloudtrail_monitor_role_exists,
+    cloudtrail_monitor_role_name,
+)
 from app.services.remediation_runner_status import check_remediation_runner
 
 ADVANCED_POLICY_ACTIONS = (
@@ -27,6 +31,7 @@ ADVANCED_POLICY_ACTIONS = (
     "access-analyzer:CancelPolicyGeneration",
     "access-analyzer:GetGeneratedPolicy",
     "access-analyzer:ListPolicyGenerations",
+    "iam:PassRole",
 )
 
 VERIFICATION_META = {
@@ -123,7 +128,7 @@ def build_capability_verification_context(acc: AwsAccount) -> CapabilityVerifica
     remediation_documents = load_role_policy_documents(iam, DEFAULT_REMEDIATION_ROLE_NAME)
     inline_names, attached_names = load_role_policy_names(iam, DEFAULT_REMEDIATION_ROLE_NAME)
 
-    need_runner = any(spec.runner_supported for spec in REMEDIATION_MODULES)
+    need_runner = any(getattr(acc, spec.enable_column, False) for spec in REMEDIATION_MODULES)
     runner_status = (
         check_remediation_runner(acc, session=sess, scanner_policy_documents=scanner_documents)
         if need_runner
@@ -155,12 +160,30 @@ def _verify_advanced_with_ctx(acc: AwsAccount, ctx: CapabilityVerificationContex
     result["assumable"] = True
     granted = check_actions_on_documents(ctx.scanner_documents, ADVANCED_POLICY_ACTIONS)
     rows = _permission_rows(ADVANCED_POLICY_ACTIONS, granted)
+    monitor_name = cloudtrail_monitor_role_name(acc.role_arn)
+    monitor_ok = cloudtrail_monitor_role_exists(ctx.session, acc.role_arn) if monitor_name else False
     result["permissions"] = rows
-    result["granted_count"] = sum(1 for r in rows if r["granted"])
-    result["deployed"] = result["granted_count"] == result["required_count"]
+    result["required_count"] = len(ADVANCED_POLICY_ACTIONS)
+    action_granted = sum(1 for r in rows if r["granted"])
+    result["granted_count"] = action_granted
+    result["cloudtrail_monitor_role"] = monitor_name
+    result["cloudtrail_monitor_role_present"] = monitor_ok
+    result["deployed"] = action_granted == result["required_count"] and monitor_ok
     if not result["deployed"]:
         missing = [r["action"] for r in rows if not r["granted"]]
-        result["error"] = f"Missing permissions: {', '.join(missing)}"
+        if monitor_name and not monitor_ok and not missing:
+            result["error"] = (
+                "Advanced policy generation stack is incomplete. "
+                "Update the Vigil connector (Advanced IAM policy generation), then verify again."
+            )
+        elif monitor_name and not monitor_ok:
+            result["error"] = (
+                "Advanced policy generation stack is incomplete. "
+                f"Missing: {', '.join(missing)}. "
+                "Update the Vigil connector, then verify again."
+            )
+        else:
+            result["error"] = f"Missing permissions: {', '.join(missing)}"
 
     result["requested"] = wanted or result["deployed"]
     return _finalize_module_result(result)
@@ -170,6 +193,61 @@ def _remediation_role_has_policy(ctx: CapabilityVerificationContext, policy_name
     if policy_name in ctx.remediation_inline_policy_names:
         return True
     return policy_name in ctx.remediation_attached_policy_names
+
+
+def _ssm_remediation_ready(ctx: CapabilityVerificationContext) -> bool:
+    """True when connector can start SSM Automation and the document is active."""
+    if ctx.session_error or ctx.runner_status is None:
+        return False
+    return bool(ctx.runner_status.get("ready"))
+
+
+def _ssm_remediation_blockers(ctx: CapabilityVerificationContext) -> list[str]:
+    if ctx.session_error:
+        return [ctx.session_error]
+    if ctx.runner_status is None:
+        return ["SSM remediation runner was not checked"]
+    return list(ctx.runner_status.get("blockers") or [])
+
+
+def _ssm_remediation_error(ctx: CapabilityVerificationContext) -> str | None:
+    blockers = _ssm_remediation_blockers(ctx)
+    if not blockers:
+        return None
+    return "; ".join(blockers)
+
+
+def verify_ssm_remediation(
+    acc: AwsAccount, ctx: CapabilityVerificationContext | None = None
+) -> dict[str, Any]:
+    """Aggregate SSM remediation readiness (document + connector StartAutomationExecution)."""
+    if ctx is None:
+        ctx = build_capability_verification_context(acc)
+    wanted = any(getattr(acc, spec.enable_column) for spec in REMEDIATION_MODULES)
+    ready = _ssm_remediation_ready(ctx)
+    blockers = _ssm_remediation_blockers(ctx)
+    result: dict[str, Any] = {
+        "requested": wanted,
+        "deployed": ready,
+        "ready": ready,
+        "status": "not_requested",
+        "blockers": blockers,
+        "error": None,
+        "runner_status": ctx.runner_status,
+    }
+    if not wanted:
+        result["status"] = "not_requested"
+        return result
+    if ctx.session_error:
+        result["status"] = "not_assumable"
+        result["error"] = ctx.session_error
+        return result
+    if ready:
+        result["status"] = "ready"
+        return result
+    result["status"] = "missing_permissions"
+    result["error"] = _ssm_remediation_error(ctx) or "SSM remediation not ready"
+    return result
 
 
 def _verify_remediation_module_with_ctx(
@@ -194,28 +272,34 @@ def _verify_remediation_module_with_ctx(
     rows = _permission_rows(spec.permissions, granted)
     result["permissions"] = rows
     result["granted_count"] = sum(1 for r in rows if r["granted"])
-
     perms_ok = result["granted_count"] == result["required_count"]
-    if not perms_ok:
-        missing = [r["action"] for r in rows if not r["granted"]]
-        result["error"] = f"Missing permissions: {', '.join(missing)}"
 
+    ssm_ready = _ssm_remediation_ready(ctx)
     if spec.runner_supported and ctx.runner_status is not None:
         result["runner_ready"] = bool(ctx.runner_status.get("ready"))
-        if not result["runner_ready"]:
-            blockers = ctx.runner_status.get("blockers") or []
-            runner_err = "; ".join(blockers) if blockers else "Remediation runner not ready"
-            result["error"] = (
-                f"{result['error']}; {runner_err}" if result["error"] else runner_err
-            )
 
-    if spec.runner_supported:
-        result["deployed"] = perms_ok and bool(result["runner_ready"])
-    else:
-        result["deployed"] = perms_ok
-
-    if result["deployed"]:
+    if wanted and ssm_ready:
+        # SSM-first: execution role permissions are enforced by vigil-remediation-ssm.yaml at runtime.
+        result["deployed"] = True
+        result["via_ssm"] = True
         result["error"] = None
+        if spec.runner_supported:
+            result["runner_ready"] = True
+    elif wanted:
+        # Report SSM blockers only — avoid noisy per-module IAM action lists on the connector role.
+        result["deployed"] = False
+        result["error"] = _ssm_remediation_error(ctx) or "SSM remediation not ready"
+    elif perms_ok and (not spec.runner_supported or result.get("runner_ready")):
+        result["deployed"] = True
+        result["error"] = None
+    else:
+        result["deployed"] = False
+        if perms_ok and spec.runner_supported and not result.get("runner_ready"):
+            blockers = ctx.runner_status.get("blockers") if ctx.runner_status else []
+            result["error"] = "; ".join(blockers) if blockers else "Remediation runner not ready"
+        elif not perms_ok:
+            missing = [r["action"] for r in rows if not r["granted"]]
+            result["error"] = f"Missing permissions: {', '.join(missing)}"
 
     result["requested"] = wanted or result["deployed"]
     return _finalize_module_result(result)
@@ -247,6 +331,7 @@ def apply_capability_verification(acc: AwsAccount) -> dict[str, Any]:
     if adv["deployed"]:
         acc.enable_advanced_policy_generation = True
 
+    ssm = verify_ssm_remediation(acc, ctx)
     remediation_results: dict[str, Any] = {}
     for spec in REMEDIATION_MODULES:
         mod = verify_remediation_module(acc, spec, ctx)
@@ -257,6 +342,7 @@ def apply_capability_verification(acc: AwsAccount) -> dict[str, Any]:
 
     return {
         "advanced_policy_generation": adv,
+        "ssm_remediation": ssm,
         "remediation_modules": remediation_results,
         "verification": {
             **VERIFICATION_META,

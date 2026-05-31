@@ -36,12 +36,13 @@ export function cfnConsoleRegion(templateUrl: string): string {
   return m?.[1] ?? "us-east-1";
 }
 
+/** Global console host + region query — IAM Identity Center SSO lands here reliably. */
 export function cfnConsoleBase(templateUrl: string): string {
   const region = cfnConsoleRegion(templateUrl);
-  return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}`;
+  return `https://console.aws.amazon.com/cloudformation/home?region=${region}`;
 }
 
-/** Read trust principal + role name from a server-built console launch URL. */
+/** Read trust principal + role name from the create-stack console URL (always has params). */
 export function parseCfnLaunchMeta(launchUrl: string): {
   trustPrincipalArn: string;
   scannerRoleName: string;
@@ -62,17 +63,20 @@ function stackNameForVariant(acc: CfnAccountSlice, variant: CfnDeployVariant): s
   return displayConnectorStackName(acc);
 }
 
-function buildLaunchUrl(
+/** Filtered stack list — AWS has no supported update-wizard deep link (stackName in hash is dropped). */
+export function buildCfnStackListUrl(acc: CfnAccountSlice, variant: CfnDeployVariant): string {
+  const stackName = stackNameForVariant(acc, variant);
+  const base = cfnConsoleBase(acc.cfn_template_url);
+  return `${base}#/stacks?filteringText=${encodeURIComponent(stackName)}&filteringStatus=active`;
+}
+
+function buildCreateLaunchUrl(
   acc: CfnAccountSlice,
   opts: CfnConnectionOptions,
-  variant: CfnDeployVariant,
 ): string {
-  const stackName = stackNameForVariant(acc, variant);
-  const meta = parseCfnLaunchMeta(
-    variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
-  );
+  const stackName = stackNameForVariant(acc, "create");
+  const meta = parseCfnLaunchMeta(acc.cfn_launch_url);
   const params = new URLSearchParams();
-  // stackName before templateURL — avoids console update wizard sending stackName='*'.
   params.set("stackName", stackName);
   params.set("templateURL", acc.cfn_template_url);
   params.set("param_ExternalId", acc.external_id);
@@ -86,17 +90,7 @@ function buildLaunchUrl(
     params.set(`param_${spec.cfnParameter}`, yesNo(opts.remediation_modules[spec.id]));
   }
   const base = cfnConsoleBase(acc.cfn_template_url);
-  const path =
-    variant === "update"
-      ? `${base}#/stacks/update/template`
-      : `${base}#/stacks/create/review`;
-  return `${path}?${params.toString()}`;
-}
-
-export function buildCfnStackListUrl(acc: CfnAccountSlice, variant: CfnDeployVariant): string {
-  const stackName = stackNameForVariant(acc, variant);
-  const base = cfnConsoleBase(acc.cfn_template_url);
-  return `${base}#/stacks?filteringText=${encodeURIComponent(stackName)}`;
+  return `${base}#/stacks/create/review?${params.toString()}`;
 }
 
 export function buildCfnCliCommand(
@@ -105,9 +99,7 @@ export function buildCfnCliCommand(
   variant: CfnDeployVariant,
 ): string {
   const stackName = stackNameForVariant(acc, variant);
-  const meta = parseCfnLaunchMeta(
-    variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
-  );
+  const meta = parseCfnLaunchMeta(acc.cfn_launch_url);
   const region = cfnConsoleRegion(acc.cfn_template_url);
   const verb = variant === "create" ? "create-stack" : "update-stack";
   const lines = [
@@ -135,18 +127,20 @@ export function resolveDeployArtifacts(
   variant: CfnDeployVariant,
 ): { consoleUrl: string; cliCommand: string; stackListUrl: string; stackName: string } {
   const stackName = stackNameForVariant(acc, variant);
+  const stackListUrl = buildCfnStackListUrl(acc, variant);
   if (!connectionOptions) {
     return {
       consoleUrl: variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
       cliCommand: variant === "update" ? acc.cfn_update_cli_command : acc.cfn_cli_command,
-      stackListUrl: buildCfnStackListUrl(acc, variant),
+      stackListUrl,
       stackName,
     };
   }
   return {
-    consoleUrl: buildLaunchUrl(acc, connectionOptions, variant),
+    consoleUrl:
+      variant === "update" ? stackListUrl : buildCreateLaunchUrl(acc, connectionOptions),
     cliCommand: buildCfnCliCommand(acc, connectionOptions, variant),
-    stackListUrl: buildCfnStackListUrl(acc, variant),
+    stackListUrl,
     stackName,
   };
 }

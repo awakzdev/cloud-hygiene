@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { logout, token } from "./api";
+import { RecheckNotificationsProvider } from "./context/RecheckNotificationsContext";
 
 const navItem = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-4 px-5 py-3 rounded-xl text-base font-medium transition-all ${
@@ -124,10 +125,12 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
-        <div className="px-8 py-8">
-          <Outlet />
-        </div>
+      <main className="flex flex-1 flex-col overflow-auto">
+        <RecheckNotificationsProvider>
+          <div className="flex-1 px-8 py-8">
+            <Outlet />
+          </div>
+        </RecheckNotificationsProvider>
       </main>
     </div>
   );

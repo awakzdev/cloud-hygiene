@@ -13,6 +13,7 @@ import { remediationSummaryFor } from "../data/remediationSummaries";
 import { affectedResourcesPreview, daysAgo, severityLabel } from "../lib/findingDisplay";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 import { isAccountConnected } from "../lib/accountConnection";
+import NotificationsBell from "../components/NotificationsBell";
 
 type Finding = {
   id: string;
@@ -249,7 +250,26 @@ function BenchmarkScopeSelect({
   );
 }
 
-function MetricStrip({
+function metricTileClasses(
+  accent: "neutral" | "red" | "amber",
+  isActive: boolean,
+): string {
+  if (accent === "red") {
+    return isActive
+      ? "bg-red-50 text-red-800 ring-1 ring-red-200/80 shadow-sm shadow-red-100/80"
+      : "text-red-700 hover:bg-red-50/70 hover:shadow-md hover:shadow-red-100/60 hover:ring-1 hover:ring-red-200/50";
+  }
+  if (accent === "amber") {
+    return isActive
+      ? "bg-amber-50 text-amber-900 ring-1 ring-amber-200/80 shadow-sm shadow-amber-100/80"
+      : "text-amber-800 hover:bg-amber-50/70 hover:shadow-md hover:shadow-amber-100/60 hover:ring-1 hover:ring-amber-200/50";
+  }
+  return isActive
+    ? "bg-zinc-100 text-zinc-900 ring-1 ring-zinc-200/90 shadow-sm shadow-zinc-200/50"
+    : "text-zinc-800 hover:bg-zinc-50 hover:shadow-md hover:shadow-zinc-200/40 hover:ring-1 hover:ring-zinc-200/60";
+}
+
+function MetricSummary({
   totals,
   active,
   onSelect,
@@ -261,46 +281,41 @@ function MetricStrip({
   highlightActive?: boolean;
 }) {
   const chTotal = totals.critical + totals.high;
-  const segments: {
+  const items: {
     key: SeverityFilter;
     label: string;
     value: number;
+    accent: "neutral" | "red" | "amber";
     prominent?: boolean;
-    accent?: "red" | "amber" | "neutral";
   }[] = [
-    { key: "all", label: "Open", value: totals.open, prominent: true, accent: "neutral" },
-    { key: "critical_high", label: "Crit + high", value: chTotal, prominent: true, accent: "red" },
+    { key: "all", label: "Open", value: totals.open, accent: "neutral", prominent: true },
+    { key: "critical_high", label: "Crit + high", value: chTotal, accent: "red", prominent: true },
     { key: "medium", label: "Medium", value: totals.medium, accent: "amber" },
     { key: "low", label: "Low", value: totals.low, accent: "neutral" },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-      {segments.map((seg) => {
-        const isActive = highlightActive && active === seg.key;
-        const tone =
-          seg.accent === "red"
-            ? isActive
-              ? "border-red-200/70 bg-red-50/70 text-red-800"
-              : "border-zinc-200/80 bg-white text-red-700 hover:border-red-200/70 hover:bg-red-50/40"
-            : seg.accent === "amber"
-              ? isActive
-                ? "border-amber-200/70 bg-amber-50/70 text-amber-900"
-                : "border-zinc-200/80 bg-white text-amber-800 hover:border-amber-200/70 hover:bg-amber-50/40"
-              : isActive
-                ? "border-zinc-300 bg-zinc-50 text-zinc-950"
-                : "border-zinc-200/80 bg-white text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50/70";
-
+    <div className="inline-flex flex-wrap items-center gap-1">
+      {items.map((item) => {
+        const isActive = highlightActive && active === item.key;
         return (
           <button
-            key={seg.key}
+            key={item.key}
             type="button"
-            onClick={() => onSelect(seg.key)}
-            className={`rounded-xl border px-4 py-3 text-left shadow-sm transition ${tone}`}
+            onClick={() => onSelect(item.key)}
+            className={`inline-flex min-w-[4.5rem] flex-col items-center rounded-lg border border-transparent px-2.5 py-2 transition ${metricTileClasses(item.accent, isActive)}`}
           >
-            <span className="block text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{seg.label}</span>
-            <span className={`mt-2 block tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
-              {seg.value}
+            <span
+              className={`tabular-nums leading-none ${item.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}
+            >
+              {item.value}
+            </span>
+            <span
+              className={`mt-1 uppercase tracking-wide ${
+                item.prominent ? "text-[11px] font-semibold opacity-80" : "text-[11px] font-medium opacity-70"
+              }`}
+            >
+              {item.label}
             </span>
           </button>
         );
@@ -788,24 +803,67 @@ export default function Findings() {
 
   return (
     <div className="w-full px-6 py-6">
-      <div className="mb-5 rounded-xl border border-zinc-200/80 bg-white px-6 py-5 shadow-sm shadow-zinc-950/[0.03]">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
-          {scanRun.data?.finished_at && (
-            <span className="text-sm text-zinc-500">Last scan {lastScanLabel(scanRun.data.finished_at)}</span>
-          )}
-          {benchmarkFilter !== "all" && (
-            <span className="text-sm font-medium text-indigo-700/90">{frameworkLabel(benchmarkFilter)} scope</span>
-          )}
+      <div className="mb-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
+            {scanRun.data?.finished_at && (
+              <span className="text-sm text-zinc-500">Last scan {lastScanLabel(scanRun.data.finished_at)}</span>
+            )}
+            {benchmarkFilter !== "all" && (
+              <span className="text-sm font-medium text-indigo-700/90">{frameworkLabel(benchmarkFilter)} scope</span>
+            )}
+          </div>
+          <div className="shrink-0 pt-0.5">
+            <NotificationsBell />
+          </div>
         </div>
-        <p className="mt-1 text-sm text-zinc-500">Security posture overview</p>
-        <div className="mt-4">
-          <MetricStrip
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-3">
+          <MetricSummary
             totals={metricTotals}
             active={severityFilter}
             onSelect={handleMetricSelect}
             highlightActive={status === "open"}
           />
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:ml-auto">
+              <button
+                type="button"
+                onClick={downloadCsv}
+                className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+              >
+                Export
+              </button>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isRefreshing && (
+                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
+                Refresh
+              </button>
+              {connectedId && (
+                <button
+                  type="button"
+                  onClick={() => triggerScan(connectedId)}
+                  disabled={scanTriggered || isRunning}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {(scanTriggered || isRunning) && (
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  {isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}
+                </button>
+              )}
+          </div>
         </div>
       </div>
 
@@ -844,55 +902,14 @@ export default function Findings() {
         }`}
       >
         <div
-          className={`space-y-3 border-b px-4 py-3 ${
+          className={`flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
             hasUrgent ? "border-red-100/80 bg-gradient-to-r from-red-50/40 via-white to-white" : "border-zinc-100 bg-zinc-50/40"
           }`}
         >
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <StatusTabs status={status} onChange={setStatus} />
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              <button
-                onClick={downloadCsv}
-                className="inline-flex h-9 items-center rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
-              >
-                Export
-              </button>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isRefreshing && (
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                )}
-                Refresh
-              </button>
-              {connectedId && (
-                <button
-                  onClick={() => triggerScan(connectedId)}
-                  disabled={scanTriggered || isRunning}
-                  className="inline-flex h-9 items-center gap-2 rounded-lg bg-indigo-600 px-3.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {(scanTriggered || isRunning) && (
-                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                  )}
-                  {isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:items-center">
-              <BenchmarkScopeSelect value={benchmarkFilter} onChange={handleBenchmarkChange} />
-              <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} className="min-w-0 flex-1" />
-            </div>
+          <StatusTabs status={status} onChange={setStatus} />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3 sm:justify-end">
+            <BenchmarkScopeSelect value={benchmarkFilter} onChange={handleBenchmarkChange} />
+            <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} className="min-w-0 flex-1 max-w-md" />
             <SortToggle sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort} />
           </div>
         </div>

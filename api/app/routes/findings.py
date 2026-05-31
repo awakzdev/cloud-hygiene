@@ -12,6 +12,10 @@ from app.core.security import current_principal
 from app.models import Finding, FindingEvent, AwsAccount
 from app.models.org import Org
 from app.services.check_settings import hidden_check_ids
+from app.services.finding_supersession import (
+    RETIRED_FINDING_CHECKS,
+    resolve_retired_for_resource,
+)
 
 router = APIRouter()
 
@@ -100,7 +104,7 @@ def list_findings(
 ):
     org_id = uuid.UUID(p["org_id"])
     org = db.get(Org, org_id)
-    hidden = hidden_check_ids(org.settings if org else {})
+    hidden = hidden_check_ids(org.settings if org else {}) | RETIRED_FINDING_CHECKS
 
     base_q = select(Finding).where(Finding.org_id == org_id)
     if hidden:
@@ -160,9 +164,11 @@ def resolve(finding_id: str, body: ResolveIn, p=Depends(current_principal), db: 
             "Confirm verification before resolving (re-scan or manual check)",
         )
     f = _get_owned(db, p, finding_id)
+    now = datetime.now(timezone.utc)
     f.status = "resolved"
-    f.resolved_at = datetime.now(timezone.utc)
+    f.resolved_at = now
     db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="resolved", actor=p["sub"], note=body.note))
+    resolve_retired_for_resource(db, canonical=f, now=now, actor=p["sub"])
     db.commit()
     return _to_out(f)
 
@@ -290,6 +296,9 @@ def get_remediation_execution(finding_id: str, p=Depends(current_principal), db:
 
     from app.models.remediation_execution import RemediationExecution
 
+    from app.models import AwsAccount
+    from app.services.remediation_execution_sync import sync_remediation_execution_from_ssm
+
     f = _get_owned(db, p, finding_id)
     row = db.scalar(
         select(RemediationExecution)
@@ -299,6 +308,10 @@ def get_remediation_execution(finding_id: str, p=Depends(current_principal), db:
     )
     if not row:
         return {"status": "none"}
+    acc = db.get(AwsAccount, row.account_id)
+    if acc and acc.role_arn:
+        row = sync_remediation_execution_from_ssm(db, row=row, account=acc)
+    result = row.result_json if isinstance(row.result_json, dict) else {}
     return {
         "plan_id": row.plan_id,
         "status": row.status,
@@ -306,6 +319,7 @@ def get_remediation_execution(finding_id: str, p=Depends(current_principal), db:
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "result": row.result_json,
         "error": row.error,
+        "automation_execution_id": result.get("automation_execution_id"),
     }
 
 

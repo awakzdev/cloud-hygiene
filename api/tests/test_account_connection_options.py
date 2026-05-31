@@ -37,41 +37,29 @@ def test_launch_url_new_stack_name():
     assert "param_EnableSecurityGroupRemediation=No" in url
 
 
-def test_launch_url_legacy_stack_name():
+def test_update_launch_url_opens_filtered_stack_list():
     url = _update_launch_url(
         "ext-abc",
         stack_name=settings.CFN_STACK_NAME_LEGACY,
         enable_advanced_policy_generation=True,
         remediation_modules={**_MODULES_OFF, "security_groups": True},
     )
-    assert f"stackName={settings.CFN_STACK_NAME_LEGACY}" in url
-    assert "param_EnableSecurityGroupRemediation=Yes" in url
-    assert "#/stacks/update/template" in url
-    assert "console.aws.amazon.com/cloudformation/home?region=" in url
+    assert "#/stacks?filteringText=" in url
+    assert f"filteringText={settings.CFN_STACK_NAME_LEGACY}" in url
+    assert "filteringStatus=active" in url
+    assert "update/template" not in url
+    assert "update/review" not in url
+    assert url.startswith("https://console.aws.amazon.com/cloudformation/")
 
 
-def test_update_launch_url_never_empty_stack_name():
+def test_update_launch_url_defaults_empty_stack_name():
     url = _update_launch_url(
         "ext-abc",
         stack_name="",
         enable_advanced_policy_generation=False,
         remediation_modules=_MODULES_OFF,
     )
-    assert f"stackName={settings.CFN_STACK_NAME}" in url
-    assert "stackName=%2A" not in url
-    assert "stackName=*" not in url
-    assert url.index("stackName=") < url.index("templateURL=")
-
-
-def test_update_launch_url_not_review_route():
-    url = _update_launch_url(
-        "ext-abc",
-        stack_name=settings.CFN_STACK_NAME,
-        enable_advanced_policy_generation=False,
-        remediation_modules=_MODULES_OFF,
-    )
-    assert "update/review" not in url
-    assert "update/template" in url
+    assert f"filteringText={settings.CFN_STACK_NAME}" in url
 
 
 def test_cli_uses_stack_name():
@@ -142,5 +130,5 @@ def test_account_out_update_uses_db_stack_name():
     acc = _mock_account(status="connected", cfn_stack_name=settings.CFN_STACK_NAME_LEGACY)
     out = _account_out(acc)
     assert out.cfn_stack_name == settings.CFN_STACK_NAME_LEGACY
-    assert f"stackName={settings.CFN_STACK_NAME_LEGACY}" in out.cfn_update_launch_url
+    assert f"filteringText={settings.CFN_STACK_NAME_LEGACY}" in out.cfn_update_launch_url
     assert f"--stack-name {settings.CFN_STACK_NAME_LEGACY}" in out.cfn_update_cli_command

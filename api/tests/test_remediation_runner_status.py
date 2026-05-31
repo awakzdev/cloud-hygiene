@@ -63,9 +63,14 @@ def test_ssm_document_missing_blocker(mock_assume):
         "DescribeDocument",
     )
 
-    out = check_remediation_runner(acc)
+    out = check_remediation_runner(
+        acc,
+        check_id="ec2.security_group.unrestricted_rdp",
+        resource_region="us-east-2",
+    )
     assert out["ready"] is False
-    assert any("SSM Automation document" in b for b in out["blockers"])
+    assert out["automation_region"] == "us-east-1"
+    assert any("Custom Vigil automation document" in b for b in out["blockers"])
 
 
 @patch("app.services.remediation_runner_status.assume_role")

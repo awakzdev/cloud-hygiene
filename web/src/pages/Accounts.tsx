@@ -10,6 +10,7 @@ import { isValidIamRoleArn } from "../lib/awsArn";
 import {
   DEFAULT_REMEDIATION_MODULES,
   REMEDIATION_MODULE_SPECS,
+  allRemediationModulesEnabled,
   anyRemediationEnabled,
   countRemediationEnabled,
   type RemediationModules,
@@ -100,6 +101,14 @@ type ModuleVerifyResult = {
 
 type CapabilityVerifyResults = {
   advanced_policy_generation?: ModuleVerifyResult;
+  ssm_remediation?: {
+    requested?: boolean;
+    deployed?: boolean;
+    ready?: boolean;
+    status?: ModuleVerifyStatus;
+    error?: string | null;
+    blockers?: string[];
+  };
   remediation_modules?: Record<string, ModuleVerifyResult>;
 };
 
@@ -514,16 +523,25 @@ function capabilityVerifyFeedback(
   } else if (adv?.requested && adv.status === "not_assumable") {
     errors.push("Policy generation: Not assumable");
   }
+
+  const ssm = data.capabilities.ssm_remediation;
   const mods = data.capabilities.remediation_modules ?? {};
-  for (const spec of REMEDIATION_MODULE_SPECS) {
-    const row = mods[spec.id];
-    if (!row?.requested) continue;
-    if (row.status === "not_assumable") {
-      errors.push(`${spec.label}: Not assumable${row.error ? ` — ${row.error}` : ""}`);
-    } else if (row.status !== "ready" && row.error) {
-      errors.push(`${spec.label}: ${row.error}`);
+  const anyRemediationRequested = REMEDIATION_MODULE_SPECS.some((m) => mods[m.id]?.requested);
+
+  if (anyRemediationRequested || ssm?.requested) {
+    if (ssm?.status === "not_assumable" && ssm.error) {
+      errors.push(`SSM remediation: ${ssm.error}`);
+    } else if (ssm?.error && ssm.status !== "ready") {
+      errors.push(`SSM remediation: ${ssm.error}`);
+    } else if (!ssm) {
+      for (const spec of REMEDIATION_MODULE_SPECS) {
+        const row = mods[spec.id];
+        if (!row?.requested || row.status === "ready" || !row.error) continue;
+        errors.push(`${spec.label}: ${row.error}`);
+      }
     }
   }
+
   if (errors.length) {
     return { tone: "error", message: errors.join(" · ") };
   }
@@ -826,13 +844,32 @@ const deploySecondaryBtn =
 const dangerGhostBtn =
   "inline-flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium text-red-600 transition hover:border-red-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50";
 
+const ssmRemediationBadgeClass =
+  "rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-amber-200/60";
+
+function remediationBadgesCollapsed(
+  acc: Account,
+  modules: RemediationModules,
+  capabilityVerify?: CapabilityVerifyResults | null,
+): boolean {
+  if (!anyRemediationEnabled(modules)) return false;
+  if (allRemediationModulesEnabled(modules)) return true;
+  if (capabilityVerify?.ssm_remediation?.ready || capabilityVerify?.ssm_remediation?.deployed) {
+    return true;
+  }
+  const enabled = REMEDIATION_MODULE_SPECS.filter((m) => modules[m.id]);
+  return enabled.every((m) => acc.remediation_modules_deployed[m.id]);
+}
+
 function CapabilityBadges({
   acc,
   connectionOptions,
+  capabilityVerify,
 }: {
   acc: Account;
   /** During pending setup, derive posture from local selection (avoids badge flicker on save). */
   connectionOptions?: ConnectionOptions;
+  capabilityVerify?: CapabilityVerifyResults | null;
 }) {
   const connected = isAccountConnected(acc);
   const opts = connectionOptions ?? accountConnectionOptions(acc);
@@ -840,13 +877,9 @@ function CapabilityBadges({
   const policyGenSelected =
     (connected && acc.enable_advanced_policy_generation) ||
     (!connected && opts.enable_advanced_policy_generation);
-  const remediationEnabled = REMEDIATION_MODULE_SPECS.filter((m) =>
-    connected ? acc.remediation_modules[m.id] : opts.remediation_modules[m.id],
-  );
-  const ssmAllDeployed =
-    connected &&
-    remediationEnabled.length > 0 &&
-    remediationEnabled.every((m) => acc.remediation_modules_deployed[m.id]);
+  const remediationModules = connected ? acc.remediation_modules : opts.remediation_modules;
+  const remediationEnabled = REMEDIATION_MODULE_SPECS.filter((m) => remediationModules[m.id]);
+  const ssmCollapsed = remediationBadgesCollapsed(acc, remediationModules, capabilityVerify);
 
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
@@ -864,9 +897,9 @@ function CapabilityBadges({
           Policy Generation
         </span>
       )}
-      {ssmAllDeployed ? (
+      {ssmCollapsed ? (
         <span
-          className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/60"
+          className={ssmRemediationBadgeClass}
           title={remediationEnabled.map((m) => m.label).join(" · ")}
         >
           SSM remediation
@@ -877,11 +910,11 @@ function CapabilityBadges({
           return (
             <span
               key={m.id}
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${
+              className={
                 deployed || !connected
-                  ? "bg-amber-50 text-amber-900 ring-amber-200/60"
-                  : "bg-amber-50/40 text-amber-800/70 ring-amber-200/40"
-              }`}
+                  ? ssmRemediationBadgeClass
+                  : "rounded-full bg-amber-50/40 px-2 py-0.5 text-[10px] font-medium text-amber-800/70 ring-1 ring-amber-200/40"
+              }
             >
               {m.badgeLabel}
             </span>
@@ -916,7 +949,7 @@ function ManageCapabilitiesPanel({
   verificationMeta: VerificationMeta | null;
 }) {
   const optionalCapabilities = hasOptionalCapabilities(acc);
-  const [deployTab, setDeployTab] = useState<DeployTab>("console");
+  const [deployTab, setDeployTab] = useState<DeployTab>("cli");
   const [cliExpanded, setCliExpanded] = useState(false);
   return (
     <div className="border-t border-zinc-200/60 bg-zinc-50/40 px-4 py-4">
@@ -939,14 +972,18 @@ function ManageCapabilitiesPanel({
                 Policy Generation
               </span>
             )}
-            {REMEDIATION_MODULE_SPECS.filter((m) => draft.remediation_modules[m.id]).map((m) => (
-              <span
-                key={m.id}
-                className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/60"
-              >
-                {m.badgeLabel}
-              </span>
-            ))}
+            {allRemediationModulesEnabled(draft.remediation_modules) ? (
+              <span className={ssmRemediationBadgeClass}>SSM remediation</span>
+            ) : (
+              REMEDIATION_MODULE_SPECS.filter((m) => draft.remediation_modules[m.id]).map((m) => (
+                <span
+                  key={m.id}
+                  className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/60"
+                >
+                  {m.badgeLabel}
+                </span>
+              ))
+            )}
           </div>
         </div>
         <button type="button" onClick={onClose} className="text-xs font-medium text-zinc-500 hover:text-zinc-800">
@@ -1104,7 +1141,8 @@ function AdvancedPolicyGenerationCard({
           <CapabilityAccessBadge kind="read-analysis" />
         </div>
         <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
-          Uses CloudTrail policy generation and IAM last-accessed data for least-privilege recommendations.
+          Uses IAM Access Analyzer to generate least-privilege policy recommendations from CloudTrail and IAM
+          last-accessed data.
         </p>
         {!compact && (
           <>
@@ -1747,15 +1785,22 @@ function DeployMethodTabs({
   onCliExpandedChange?: (open: boolean) => void;
 }) {
   const [internalTab, setInternalTab] = useState<DeployTab>("console");
+  const [templateCopied, setTemplateCopied] = useState(false);
   const tab = activeTab ?? internalTab;
   const setTab = onActiveTabChange ?? setInternalTab;
   const isUpdate = variant === "update";
-  const { consoleUrl, cliCommand, stackListUrl, stackName } = resolveDeployArtifacts(
+  const { consoleUrl, cliCommand, stackName } = resolveDeployArtifacts(
     acc,
     deployOptions,
     isUpdate ? "update" : "create",
   );
-  const consoleLabel = isUpdate ? "Update CloudFormation" : "Launch CloudFormation";
+  const consoleLabel = isUpdate ? "Open stack in console" : "Launch CloudFormation";
+
+  async function copyTemplateUrl() {
+    await navigator.clipboard.writeText(acc.cfn_template_url);
+    setTemplateCopied(true);
+    window.setTimeout(() => setTemplateCopied(false), 2000);
+  }
 
   const tabs: { id: DeployTab; label: string }[] = [
     { id: "console", label: "Console" },
@@ -1785,13 +1830,27 @@ function DeployMethodTabs({
       <div className="mt-3">
         {tab === "console" && (
           <div className="space-y-2.5">
-            {isUpdate && (
+            {isUpdate ? (
+              <>
+                <p className="text-[11px] leading-relaxed text-zinc-600">
+                  AWS does not support a reliable one-click update URL. Open{" "}
+                  <span className="font-mono font-medium text-zinc-800">{stackName}</span>, choose{" "}
+                  <span className="font-medium text-zinc-700">Update</span> →{" "}
+                  <span className="font-medium text-zinc-700">Replace existing template</span>, paste
+                  the template URL, then set parameters. Or use the{" "}
+                  <span className="font-medium text-zinc-700">CLI</span> tab (recommended).
+                </p>
+                <ol className="list-decimal space-y-0.5 pl-4 text-[11px] leading-relaxed text-zinc-600">
+                  <li>Open the stack below and click Update.</li>
+                  <li>Replace existing template → Amazon S3 URL → paste copied template URL.</li>
+                  <li>Next through parameters (match your capability toggles) → Submit.</li>
+                </ol>
+              </>
+            ) : (
               <p className="text-[11px] leading-relaxed text-zinc-600">
-                Updates stack{" "}
-                <span className="font-mono font-medium text-zinc-800">{stackName}</span> (
-                <span className="font-mono text-zinc-700">vigil-stack.yaml</span>
-                ). SSM remediation modules are parameters on this connector stack — not a separate
-                template update.
+                Launches stack{" "}
+                <span className="font-mono font-medium text-zinc-800">{stackName}</span> with your
+                selected capabilities pre-filled.
               </p>
             )}
             <div className={deployBtnRow}>
@@ -1806,14 +1865,20 @@ function DeployMethodTabs({
                   />
                 </svg>
               </a>
-              <a
-                href={isUpdate ? stackListUrl : acc.cfn_template_url}
-                target="_blank"
-                rel="noreferrer"
-                className={deploySecondaryBtn}
-              >
-                {isUpdate ? "Find stack" : "View template YAML"}
-              </a>
+              {isUpdate ? (
+                <button type="button" onClick={() => void copyTemplateUrl()} className={deploySecondaryBtn}>
+                  {templateCopied ? "Copied" : "Copy template URL"}
+                </button>
+              ) : (
+                <a
+                  href={acc.cfn_template_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className={deploySecondaryBtn}
+                >
+                  View template YAML
+                </a>
+              )}
             </div>
           </div>
         )}
@@ -2334,9 +2399,13 @@ function AccountCard({
             ) : (
               <p className="text-xs text-zinc-500">Setup required</p>
             )}
-            <CapabilityBadges acc={acc} connectionOptions={connected ? undefined : setupConnectionOptions} />
+            <CapabilityBadges
+              acc={acc}
+              connectionOptions={connected ? undefined : setupConnectionOptions}
+              capabilityVerify={capabilityVerify}
+            />
             {connected && (
-              <div className="mt-0.5">
+              <div className="mt-1.5">
                 <ScanFreshnessBadge iso={acc.last_scan_at} isScanActive={isScanActive} />
               </div>
             )}

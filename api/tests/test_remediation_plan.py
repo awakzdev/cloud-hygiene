@@ -28,12 +28,16 @@ def _sg_finding(**ev) -> Finding:
     )
 
 
-def test_remediation_plan_v2_fields():
+def test_remediation_plan_v2_fields(monkeypatch):
+    monkeypatch.setenv("REMEDIATION_AUTOMATION_REGION", "us-east-1")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
     f = _sg_finding()
     plan = build_remediation_plan(f)
     assert plan["schema"] == PLAN_SCHEMA
     assert plan["resource_region"] == "us-east-2"
-    assert plan["automation_region"] == "us-east-2"
+    assert plan["automation_region"] == "us-east-1"
     assert plan["exact_match_rules"]
     assert plan["expires_at"]
     assert plan["content_sha256"]
@@ -55,16 +59,20 @@ def test_preview_plan_has_no_approval():
     assert "approval" not in plan
 
 
-def test_dispatch_uses_resource_region_for_ssm_automation():
+def test_dispatch_custom_vigil_doc_uses_home_automation_region(monkeypatch):
+    monkeypatch.setenv("REMEDIATION_AUTOMATION_REGION", "us-east-1")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
     f = _sg_finding()
     out = build_remediation_dispatch(f, approved_by="user-abc")
-    assert out["automation_region"] == "us-east-2"
+    assert out["automation_region"] == "us-east-1"
     assert out["resource_region"] == "us-east-2"
-    assert out["plan"]["automation_region"] == "us-east-2"
+    assert out["plan"]["automation_region"] == "us-east-1"
     assert out["plan"]["execution"]["runner_type"] == "ssm"
     cli = out["cli"]["start_automation"]
     assert "ssm start-automation-execution" in cli
-    assert "--region us-east-2" in cli
+    assert "--region us-east-1" in cli
 
 
 def test_dispatch_iam_keys_use_home_automation_region(monkeypatch):
@@ -164,7 +172,20 @@ def test_access_key_unused_plan_enables_automation():
     assert out["apply_paths"]["customer_automation"] is True
 
 
-def test_ssm_plan_uses_arn_region_and_enables_automation():
+def test_resolve_automation_region_aws_runbook_uses_resource_region():
+    from app.services.remediation_plan import resolve_automation_region
+
+    assert (
+        resolve_automation_region("s3.bucket.public_access_not_blocked", "eu-west-1")
+        == "eu-west-1"
+    )
+
+
+def test_ssm_plan_uses_arn_region_and_enables_automation(monkeypatch):
+    monkeypatch.setenv("REMEDIATION_AUTOMATION_REGION", "us-east-1")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
     from unittest.mock import MagicMock
 
     from app.services.iac_snippets import build_iac_remediation
@@ -187,6 +208,7 @@ def test_ssm_plan_uses_arn_region_and_enables_automation():
 
     plan = build_remediation_plan(f)
     assert plan["resource_region"] == "eu-west-1"
+    assert plan["automation_region"] == "us-east-1"
     assert plan["supported_action"] == "migrate_ssm_string_to_secure_string"
 
     db = MagicMock()

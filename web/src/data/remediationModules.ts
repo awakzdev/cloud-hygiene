@@ -117,3 +117,10 @@ export function anyRemediationEnabled(modules: RemediationModules): boolean {
 export function countRemediationEnabled(modules: RemediationModules): number {
   return REMEDIATION_MODULE_SPECS.filter((m) => modules[m.id]).length;
 }
+
+export function allRemediationModulesEnabled(modules: RemediationModules): boolean {
+  return (
+    REMEDIATION_MODULE_SPECS.length > 0 &&
+    REMEDIATION_MODULE_SPECS.every((m) => modules[m.id])
+  );
+}

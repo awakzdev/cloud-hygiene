@@ -16,7 +16,7 @@ Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution
 
 - **No dynamic IAM attach**: write permissions are static on the customer-owned automation role.
 - **AWS-native execution**: execution history and output live in Systems Manager.
-- **Region-aligned automation**: for regional resources (security groups, SSM parameters, etc.), `automation_region` matches `resource_region` from the finding. Deploy `vigil-remediation-ssm.yaml` in **each region** you remediate. IAM access keys use `REMEDIATION_AUTOMATION_REGION` (global IAM APIs).
+- **Regions**: `resource_region` is where the affected resource lives. `automation_region` is where `StartAutomationExecution` runs. **AWS-owned runbooks** use `resource_region`. **Vigil custom document** (`Vigil-RemediationPlanExecutor`) uses `REMEDIATION_AUTOMATION_REGION` once; `PlanJson` includes `resource_region` for regional API calls (EC2, SSM, IAM).
 - **Exact-match revoke**: security-group fixes only remove tuples from `exact_match_rules`; returns `stale_plan` if live rules drifted.
 - **No custom Lambda runner**: SSM owns execution, audit trail, and output.
 
@@ -27,7 +27,7 @@ Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution
    `ssm:StartAutomationExecution`, `ssm:GetAutomationExecution`, and `iam:PassRole` for
    `VigilRemediationAutomationRole` only.
 
-2. **Custom Vigil document** (SG exact-match, IAM access keys, SSM parameters) — deploy **in each AWS region** where you have findings to fix (e.g. `us-east-2` for a security group there):
+2. **Custom Vigil document** (SG exact-match, IAM access keys, SSM parameters) — deploy **once** in the automation home region (`REMEDIATION_AUTOMATION_REGION`, default `us-east-1`):
 
 ```bash
 aws cloudformation deploy \
@@ -41,6 +41,14 @@ aws cloudformation deploy \
 AWS-owned runbooks (S3 public access, CloudTrail) do not require this stack.
 
 Set Vigil `REMEDIATION_AUTOMATION_REGION=us-east-1` to the automation home region.
+
+## Console: empty `stackName` validation error
+
+AWS documents quick-create links for **create** only (`#/stacks/create/review`). Update wizard
+URLs (`#/stacks/update/review` or `update/template`) often drop `stackName` and fail with
+`Value '' at 'stackName'`. Vigil no longer uses those links: **Manage capabilities → CLI**
+(one command) or **Open stack in console** (filtered list) then Update → Replace template →
+paste the template URL from **Copy template URL**.
 
 ## Console: "Failed to load stack policy"
 

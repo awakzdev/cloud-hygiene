@@ -12,6 +12,8 @@ export const ADVANCED_POLICY_RAW_ACTIONS = [
   "access-analyzer:StartPolicyGeneration",
   "access-analyzer:CancelPolicyGeneration",
   "access-analyzer:GetGeneratedPolicy",
+  "access-analyzer:ListPolicyGenerations",
+  "iam:PassRole",
 ] as const;
 
 export function countSelectedIamActions(options: {

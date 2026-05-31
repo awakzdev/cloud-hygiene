@@ -442,9 +442,10 @@ def export_findings_csv(
     from app.models import Finding
     from app.models.org import Org
     from app.services.check_settings import hidden_check_ids
+    from app.services.finding_supersession import RETIRED_FINDING_CHECKS
 
     org = db.get(Org, uuid.UUID(p["org_id"]))
-    hidden = hidden_check_ids(org.settings if org else {})
+    hidden = hidden_check_ids(org.settings if org else {}) | RETIRED_FINDING_CHECKS
 
     q = select(Finding).where(Finding.org_id == uuid.UUID(p["org_id"]))
     if hidden:

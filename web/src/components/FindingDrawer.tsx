@@ -13,6 +13,11 @@ import { supportsBlastRadius } from "../data/blastRadiusChecks";
 import { checkLabels } from "../data/checkLabels";
 import { documentationForCheck } from "../data/checkDocumentation";
 import { policyGenerationReasonLabel } from "../data/policyGenerationCopy";
+import {
+  formatCloudTrailStartFeedback,
+  friendlyPolicyGenerationError,
+} from "../lib/policyGenerationErrors";
+import { useRecheckNotifications } from "../context/RecheckNotificationsContext";
 import { remediationSummaryFor } from "../data/remediationSummaries";
 import {
   daysAgo,
@@ -145,6 +150,10 @@ const SG_AUTOMATION_ONLY_CHECKS = new Set([
   "ec2.security_group.unrestricted_ssh",
   "ec2.security_group.unrestricted_rdp",
 ]);
+
+export function defaultFindingRemediationMode(checkId: string): FindingRemediationMode {
+  return SG_AUTOMATION_ONLY_CHECKS.has(checkId) ? "automation" : "console";
+}
 
 function RemediationModeToggle({
   value,
@@ -3283,7 +3292,10 @@ function BlastRadiusSection({
   );
 }
 
-type Tab = "overview" | "resources" | "compliance" | "remediation" | "whatif";
+export type FindingDrawerTab = "overview" | "resources" | "compliance" | "remediation" | "whatif";
+export type FindingRemediationMode = "console" | "cli" | "terraform" | "automation";
+
+type Tab = FindingDrawerTab;
 
 type MappedControl = {
   framework: string;
@@ -4010,22 +4022,27 @@ function PolicyDiffView({
 }
 
 function PolicyCloudTrailStartAction({
+  findingId,
   accountId,
   roleArn,
   data,
   onRefresh,
 }: {
+  findingId: string;
   accountId: string;
   roleArn: string;
   data: GeneratedPolicy;
   onRefresh: () => void;
 }) {
+  const { startCloudTrailAnalysis, failCloudTrailAnalysis } = useRecheckNotifications();
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inProgress = data.access_analyzer?.reason === "in_progress";
   const canStart = data.improve_via_cloudtrail && data.confidence !== "high";
 
   if (!canStart && !inProgress) return null;
+
+  const feedbackDisplay = feedback ? formatCloudTrailStartFeedback(feedback) : null;
 
   const start = async () => {
     setBusy(true);
@@ -4036,32 +4053,65 @@ function PolicyCloudTrailStartAction({
         { method: "POST" },
       );
       setFeedback(res.message);
+      startCloudTrailAnalysis({ findingId, accountId, roleArn, message: res.message });
       onRefresh();
     } catch (e) {
-      setFeedback(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      const msg = friendlyPolicyGenerationError(raw);
+      setFeedback(msg);
+      failCloudTrailAnalysis({ findingId, accountId, roleArn, message: msg });
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="mt-2 rounded-md border border-indigo-200/80 bg-indigo-50/50 px-2.5 py-2">
-      {inProgress ? (
-        <p className="text-[11px] text-indigo-950">{policyGenerationReasonLabel("in_progress")}</p>
-      ) : (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={start}
-          className="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-50 disabled:opacity-60"
-        >
-          {busy ? "Starting…" : "Start CloudTrail analysis"}
-        </button>
+    <div className="mt-3 overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm shadow-zinc-900/[0.04]">
+      <div className="flex flex-col gap-3 border-b border-zinc-100 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold text-zinc-900">CloudTrail Analyzes</p>
+          <p className="mt-0.5 text-[11px] text-zinc-500">~15 min · resource ARNs · IAM unchanged until you apply</p>
+        </div>
+        {!inProgress && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={start}
+            className="inline-flex shrink-0 items-center justify-center rounded-lg bg-zinc-900 px-3.5 py-2 text-[11px] font-semibold text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Starting…" : "Start analysis"}
+          </button>
+        )}
+      </div>
+      {inProgress && (
+        <div className="flex items-start gap-2.5 border-b border-indigo-100 bg-indigo-50/60 px-4 py-3">
+          <svg
+            className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-indigo-600"
+            fill="none"
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <p className="text-[11px] leading-relaxed text-indigo-950">
+            {policyGenerationReasonLabel("in_progress")}
+          </p>
+        </div>
       )}
-      {feedback && <p className="mt-1.5 text-[10px] leading-snug text-indigo-900">{feedback}</p>}
-      <p className="mt-1 text-[10px] text-indigo-800/90">
-        Starts an AWS policy-generation job (several minutes). Does not change IAM until you apply a policy yourself.
-      </p>
+      {feedbackDisplay && (
+        <div
+          className={`px-4 py-3 text-[11px] leading-relaxed ${
+            feedbackDisplay.tone === "error"
+              ? "border-t border-red-100 bg-red-50 text-red-900"
+              : feedbackDisplay.tone === "success"
+                ? "border-t border-emerald-100 bg-emerald-50 text-emerald-950"
+                : "border-t border-zinc-100 bg-zinc-50 text-zinc-700"
+          }`}
+        >
+          {feedbackDisplay.message}
+        </div>
+      )}
     </div>
   );
 }
@@ -4130,6 +4180,7 @@ function GeneratePolicySection({
         <>
           <PolicyCoverageMeta data={data} />
           <PolicyCloudTrailStartAction
+            findingId={finding.id}
             accountId={accountId}
             roleArn={finding.resource_arn}
             data={data}
@@ -4349,65 +4400,95 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
         {done ? "Approved" : "Exception"}
       </button>
       {open && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-end">
-          <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
-          <div className="relative w-full max-w-[640px] rounded-t-2xl bg-white shadow-2xl p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-zinc-900">Document exception</h3>
-              <button onClick={() => setOpen(false)} className="text-zinc-400 hover:text-zinc-600">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6">
+          <div
+            className="absolute inset-0 bg-zinc-950/25 backdrop-blur-[2px]"
+            onClick={() => setOpen(false)}
+            aria-hidden
+          />
+          <div
+            role="dialog"
+            aria-labelledby="exception-dialog-title"
+            className="relative w-full max-w-[520px] overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50 shadow-2xl shadow-zinc-900/15"
+          >
+            <div className="border-b border-amber-200/80 bg-amber-50/90 px-4 py-2.5 text-[12px] leading-snug text-amber-950">
+              <span className="font-semibold">Audit evidence.</span> This exception, approver, and expiry will appear in your evidence pack.
             </div>
-            <p className="text-sm text-zinc-500">
-              Exceptions are retained in the evidence pack. Auditors can review the reason, approver, and expiry.
-            </p>
-            <form onSubmit={submit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">Reason <span className="text-red-500">*</span></label>
-                <textarea
-                  value={reason}
-                  onChange={e => setReason(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Internal sandbox repo — no production code. Risk accepted by CTO."
-                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">Approved by <span className="text-red-500">*</span></label>
-                <input
-                  type="text"
-                  value={approvedBy}
-                  onChange={e => setApprovedBy(e.target.value)}
-                  placeholder="e.g. Alice Smith (CTO)"
-                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-700 mb-1">Expires (optional)</label>
-                <input
-                  type="date"
-                  value={expiresAt}
-                  onChange={e => setExpiresAt(e.target.value)}
-                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-800 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
-                />
-              </div>
-              <div className="flex gap-2 pt-1">
+            <div className="p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 id="exception-dialog-title" className="text-base font-semibold text-zinc-900">
+                    Document exception
+                  </h3>
+                  <p className="mt-1 text-sm leading-relaxed text-zinc-500">
+                    Exceptions are retained in the evidence pack. Auditors can review the reason, approver, and expiry.
+                  </p>
+                </div>
                 <button
-                  type="submit"
-                  disabled={submitting || !reason.trim() || !approvedBy.trim()}
-                  className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700 disabled:opacity-50"
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="shrink-0 rounded-lg p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+                  aria-label="Close"
                 >
-                  {submitting ? "Saving…" : "Save exception"}
-                </button>
-                <button type="button" onClick={() => setOpen(false)} className="flex-1 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 transition">
-                  Cancel
+                  <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
-            </form>
+              <form onSubmit={submit} className="mt-5 space-y-4">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">
+                    Reason <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Internal sandbox repo — no production code. Risk accepted by CTO."
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm placeholder:text-zinc-400 focus:border-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">
+                    Approved by <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={approvedBy}
+                    onChange={(e) => setApprovedBy(e.target.value)}
+                    placeholder="e.g. Alice Smith (CTO)"
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm placeholder:text-zinc-400 focus:border-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-zinc-700">Expires (optional)</label>
+                  <input
+                    type="date"
+                    value={expiresAt}
+                    onChange={(e) => setExpiresAt(e.target.value)}
+                    className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-800 shadow-sm focus:border-zinc-300 focus:outline-none focus:ring-2 focus:ring-zinc-900/10"
+                  />
+                </div>
+                <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setOpen(false)}
+                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 sm:min-w-[7rem]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting || !reason.trim() || !approvedBy.trim()}
+                    className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-[9rem]"
+                  >
+                    {submitting ? "Saving…" : "Save exception"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       )}
@@ -4497,8 +4578,14 @@ export function FindingDrawer({
   accountId,
   onClose,
   onAction,
-  resolved,
+  tab,
+  onTabChange,
+  remTab,
+  onRemTabChange,
+  verified,
+  verifyUnchanged,
   verifying,
+  onDismissVerifyOutcome,
 }: {
   finding: Finding | null;
   relatedFindings?: Finding[];
@@ -4506,13 +4593,15 @@ export function FindingDrawer({
   accountId: string | null;
   onClose: () => void;
   onAction: (id: string, action: "recheck" | "reopen") => void;
-  resolved?: boolean;
+  tab: FindingDrawerTab;
+  onTabChange: (tab: FindingDrawerTab) => void;
+  remTab: FindingRemediationMode;
+  onRemTabChange: (mode: FindingRemediationMode) => void;
+  verified?: boolean;
+  verifyUnchanged?: boolean;
   verifying?: boolean;
+  onDismissVerifyOutcome?: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("overview");
-  const [remTab, setRemTab] = useState<RemediationMode>("console");
-  const [countdown, setCountdown] = useState(5);
-  const prevFindingId = useRef<string | null>(null);
   const prevCheckId = useRef<string | null>(null);
 
   const { data: accountMeta } = useQuery({
@@ -4526,26 +4615,23 @@ export function FindingDrawer({
 
   useEffect(() => {
     if (!finding) {
-      prevFindingId.current = null;
       prevCheckId.current = null;
       return;
     }
-    const openedFresh = prevFindingId.current === null;
     const differentCheck =
       prevCheckId.current !== null && prevCheckId.current !== finding.check_id;
-    if (openedFresh || differentCheck) {
-      setTab("overview");
-      setRemTab("console");
+    if (differentCheck) {
+      onTabChange("overview");
+      onRemTabChange(defaultFindingRemediationMode(finding.check_id));
     }
-    prevFindingId.current = finding.id;
     prevCheckId.current = finding.check_id;
-  }, [finding?.id, finding?.check_id]);
+  }, [finding?.id, finding?.check_id, onTabChange, onRemTabChange]);
 
   useEffect(() => {
     if (finding && SG_AUTOMATION_ONLY_CHECKS.has(finding.check_id) && remTab === "terraform") {
-      setRemTab("automation");
+      onRemTabChange("automation");
     }
-  }, [finding?.check_id, finding?.id, remTab]);
+  }, [finding?.check_id, finding?.id, remTab, onRemTabChange]);
 
   const multiResource = (relatedFindings?.length ?? 0) > 1;
   const showBlastRadius = !!finding && supportsBlastRadius(finding.check_id) && !!accountId;
@@ -4559,18 +4645,22 @@ export function FindingDrawer({
       "resources",
       ...(showBlastRadius ? (["whatif"] as Tab[]) : []),
     ]);
-    if (!available.has(tab)) setTab("overview");
-  }, [finding?.id, showBlastRadius]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!available.has(tab)) onTabChange("overview");
+  }, [finding?.id, showBlastRadius, tab, onTabChange]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!resolved) { setCountdown(5); return; }
-    setCountdown(5);
-    const tick = setInterval(() => setCountdown((c) => c - 1), 1000);
-    const close = setTimeout(onClose, 5000);
-    return () => { clearInterval(tick); clearTimeout(close); };
-  }, [resolved]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!verified || !finding) return;
+    const t = window.setTimeout(() => {
+      onDismissVerifyOutcome?.();
+      onClose();
+    }, 3000);
+    return () => window.clearTimeout(t);
+  }, [verified, finding?.id, onClose, onDismissVerifyOutcome]);
 
   if (!finding) return null;
+
+  const showReopenFooter =
+    (finding.status === "resolved" || finding.status === "ignored") && !verified && !verifying;
 
   const rem =
     identityRemediations[finding.check_id] ??
@@ -4620,6 +4710,30 @@ export function FindingDrawer({
     !!finding.exception_approved_by;
 
   return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className={`fixed right-0 top-0 z-50 flex h-full w-full ${DRAWER_MAX_W} flex-col overflow-hidden bg-white shadow-2xl`}>
+    {verified && (
+      <div
+        className="absolute inset-0 z-[60] flex flex-col items-center justify-center bg-gradient-to-b from-emerald-50 via-emerald-50/95 to-white px-8 text-center"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="relative mb-6 flex h-24 w-24 items-center justify-center">
+          <span
+            className="absolute inset-0 rounded-full bg-emerald-400/30 animate-ping"
+            style={{ animationDuration: "1.4s" }}
+            aria-hidden
+          />
+          <span className="relative flex h-24 w-24 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/35 ring-4 ring-emerald-100">
+            <svg className="h-11 w-11" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24" aria-hidden>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </span>
+        </div>
+        <p className="text-2xl font-bold tracking-tight text-emerald-950">Verified</p>
+        <p className="mt-2 max-w-xs text-sm leading-relaxed text-emerald-900/75">
+          Re-check passed — this finding is resolved.
+        </p>
+      </div>
+    )}
     <div className={`relative overflow-hidden bg-gradient-to-b ${wash} px-6 pt-5 pb-3`}>
       <button onClick={onClose} className="absolute right-4 top-4 rounded-md p-1 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
       <div className="flex items-center gap-2 pr-10"><span className="text-[11px] font-medium text-zinc-600">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
@@ -4646,7 +4760,7 @@ export function FindingDrawer({
         {tabs.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => onTabChange(t.id)}
             className={`flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-[13px] font-medium transition-all ${
               tab === t.id ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-900/5" : "text-zinc-600 hover:text-zinc-800"
             }`}
@@ -4663,6 +4777,26 @@ export function FindingDrawer({
       </div>
     </div>
     <div className={`flex-1 ${drawerBodyGap} overflow-y-auto bg-zinc-50/80 px-6 pb-5 pt-4`}>
+      {verifyUnchanged && !verified && (
+        <div
+          className="flex items-start gap-3 rounded-xl border border-amber-200/80 bg-amber-50/90 px-4 py-3.5 text-[12px] leading-relaxed text-amber-950"
+          role="status"
+        >
+          <p className="min-w-0 flex-1">
+            <span className="font-semibold">Still open</span> — verify finished but this finding did not resolve. Fix
+            the issue in AWS, then try again.
+          </p>
+          {onDismissVerifyOutcome && (
+            <button
+              type="button"
+              onClick={onDismissVerifyOutcome}
+              className="shrink-0 text-[11px] font-medium text-amber-900/80 hover:text-amber-950"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
       {tab === "overview" && (
         <OverviewTabContent
           impact={ops.impact}
@@ -4707,7 +4841,7 @@ export function FindingDrawer({
               {!isIdentityCheck && (
                 <RemediationModeToggle
                   value={remTab}
-                  onChange={setRemTab}
+                  onChange={onRemTabChange}
                   hideTerraform={SG_AUTOMATION_ONLY_CHECKS.has(finding.check_id)}
                 />
               )}
@@ -4746,7 +4880,7 @@ export function FindingDrawer({
             </div>
           </div>
           <FlowCallout tone="positive" title="Validate after remediation">
-            Click Verify to re-run this check. If the issue is fixed, Vigil moves the finding to Resolved automatically.
+            Click Verify to confirm the fix in AWS. Supported checks resolve in seconds; others queue a full re-scan.
           </FlowCallout>
         </div>
       )}
@@ -4755,7 +4889,7 @@ export function FindingDrawer({
       )}
     </div>
     <div className="flex gap-2 border-t border-zinc-200/50 bg-white/90 px-6 py-3 shadow-[0_-1px_0_rgba(0,0,0,0.03),0_-6px_16px_-6px_rgba(0,0,0,0.04)] backdrop-blur-sm">
-      {finding.status === "resolved" || finding.status === "ignored" ? (
+      {showReopenFooter ? (
         <button
           type="button"
           onClick={() => onAction(finding.id, "reopen")}
@@ -4766,40 +4900,35 @@ export function FindingDrawer({
       ) : (
         <button
           type="button"
-          disabled={verifying}
+          disabled={verifying || verified}
           onClick={() => onAction(finding.id, "recheck")}
-          className={drawerFooterPrimary}
+          className={`${drawerFooterPrimary} relative inline-flex min-h-[38px] min-w-[7.5rem] shrink-0 items-center justify-center gap-2 ${
+            verified ? "!bg-emerald-600 shadow-emerald-900/15 ring-emerald-700/20 hover:!bg-emerald-600" : ""
+          }`}
         >
+          <span className={verifying ? "invisible" : ""} aria-hidden={verifying}>
+            {verified ? "Verified" : "Verify"}
+          </span>
           {verifying && (
-            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+            <span className="absolute inset-0 flex items-center justify-center gap-2">
+              <svg className="h-3.5 w-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <span>Verifying…</span>
+            </span>
           )}
-          {verifying ? "Verifying…" : "Verify"}
+          {verified && !verifying && (
+            <span className="absolute inset-0 flex items-center justify-center gap-1.5 text-emerald-100">
+              <svg className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>Verified</span>
+            </span>
+          )}
         </button>
       )}
       <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
-    {resolved && (
-      <div className={`fixed right-0 top-0 z-[60] flex h-full w-full ${DRAWER_MAX_W} flex-col items-center justify-center bg-white/85 backdrop-blur-md`}>
-        <div className="relative flex items-center justify-center">
-          <div className="absolute h-36 w-36 animate-ping rounded-full bg-emerald-400 opacity-10" style={{ animationDuration: "1.4s" }} />
-          <div className="relative flex h-32 w-32 items-center justify-center rounded-full bg-emerald-500" style={{ boxShadow: "0 0 0 12px rgba(16,185,129,0.12), 0 0 60px rgba(16,185,129,0.45)" }}>
-            <svg className="h-16 w-16 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-        </div>
-        <p className="mt-8 text-2xl font-bold tracking-tight text-zinc-900">Issue resolved</p>
-        <p className="mt-2 text-sm text-zinc-500">Closing in {countdown}s</p>
-        <button
-          onClick={onClose}
-          className="mt-5 rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-medium text-zinc-600 shadow-sm transition hover:bg-zinc-50 hover:text-zinc-900"
-        >
-          Close now
-        </button>
-      </div>
-    )}
   </div></>;
 }

@@ -24,10 +24,36 @@ from app.services.remediation_plan import (
     resource_region_for_finding,
 )
 from app.services.ssm_remediation_catalog import (
+    SsmRemediationRunbook,
     automation_parameters_for_plan,
     runbook_for_check,
     runbook_payload,
 )
+
+
+def _dispatch_instructions(
+    *,
+    runbook: SsmRemediationRunbook | None,
+    automation_region: str,
+    resource_region: str,
+) -> list[str]:
+    base = [
+        "Update the Vigil connector stack with the SSM remediation module for this finding family.",
+        "When execute=true, Vigil calls ssm:StartAutomationExecution in automation_region using the connector role.",
+        "Plan expires — prepare again after re-scan if the resource changed.",
+    ]
+    if runbook and runbook.owner == "vigil":
+        base.insert(
+            1,
+            f"Vigil custom document: deploy Vigil-RemediationPlanExecutor once in {automation_region} "
+            f"(home region). PlanJson targets resource_region {resource_region}.",
+        )
+    elif runbook and runbook.owner == "aws":
+        base.insert(
+            1,
+            f"AWS-owned runbook {runbook.document_name} runs in {automation_region} (resource region).",
+        )
+    return base
 
 
 def build_remediation_dispatch(
@@ -126,10 +152,9 @@ def build_remediation_dispatch(
         "cfn_template_url": settings.CFN_REMEDIATION_SSM_TEMPLATE_URL,
         "prepared": True,
         "executed": automation_execution_id is not None,
-        "instructions": [
-            "Update the Vigil connector stack with the SSM remediation module for this finding family.",
-            f"Deploy Vigil-RemediationPlanExecutor in {automation_region} (matches this resource).",
-            "When execute=true, Vigil calls ssm:StartAutomationExecution in that region using the connector role.",
-            "Plan expires — prepare again after re-scan if the resource changed.",
-        ],
+        "instructions": _dispatch_instructions(
+            runbook=runbook,
+            automation_region=automation_region,
+            resource_region=resource_region,
+        ),
     }

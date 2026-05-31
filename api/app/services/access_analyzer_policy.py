@@ -20,7 +20,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_MEDIUM = "medium"
@@ -33,6 +33,64 @@ _SCANNER_ROLE_NAME = "VigilScannerRole"
 _LEGACY_SCANNER_ROLE_NAME = "VigilReadOnlyScannerRole"
 _ACCESS_ANALYZER_MONITOR_SUFFIX = "AccessAnalyzerMonitor"
 _IAM_ACTION_RE = re.compile(r"^[a-z0-9-]+:[A-Za-z0-9*?]+$")
+# Align with IAM last-accessed / unused-role finding windows.
+_POLICY_GEN_LOOKBACK_DAYS = 90
+# When no analyzer regions are in DB, try these instead of every opted-in region (avoids false AccessDenied).
+_POLICY_GEN_FALLBACK_REGIONS: tuple[str, ...] = ("us-east-1", "us-west-2", "eu-west-1")
+
+
+def format_access_analyzer_timestamp(dt: datetime) -> str:
+    """Serialize for StartPolicyGeneration cloudTrailDetails timestamps.
+
+    AWS accepts ``yyyy-MM-dd'T'HH:mm:ssZ`` or ``yyyy-MM-dd'T'HH:mm:ss.SSSZ`` (milliseconds only).
+    Never pass a bare ``datetime`` to boto3 — it serializes with microsecond precision (``.ffffffZ``),
+    which the API rejects.
+    """
+    dt = dt.astimezone(timezone.utc).replace(microsecond=0)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def region_from_trail_arn(arn: str) -> str | None:
+    parts = arn.split(":")
+    if len(parts) >= 4 and parts[2] == "cloudtrail":
+        return parts[3] or None
+    return None
+
+
+def trail_entry_for_policy_generation(
+    *,
+    arn: str,
+    is_multi_region: bool = False,
+    home_region: str | None = None,
+) -> dict:
+    """Build one StartPolicyGeneration trail object (requires regions or allRegions)."""
+    entry: dict = {"cloudTrailArn": arn}
+    if is_multi_region:
+        entry["allRegions"] = True
+    else:
+        region = (home_region or region_from_trail_arn(arn) or "").strip()
+        if region:
+            entry["regions"] = [region]
+        else:
+            entry["allRegions"] = True
+    return entry
+
+
+def policy_generation_cloudtrail_window(
+    *,
+    end_time: datetime | None = None,
+    start_time: datetime | None = None,
+    lookback_days: int = _POLICY_GEN_LOOKBACK_DAYS,
+) -> tuple[datetime, datetime]:
+    """Return (start, end) UTC for CloudTrail policy generation; end must be strictly after start."""
+    end = (end_time or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+    if start_time is not None:
+        start = start_time.astimezone(timezone.utc).replace(microsecond=0)
+    else:
+        start = end - timedelta(days=lookback_days)
+    if start >= end:
+        start = end - timedelta(hours=1)
+    return start, end
 _LEGACY_SCANNER_TO_POLICY_GEN: dict[str, str] = {
     _LEGACY_SCANNER_ROLE_NAME: _POLICY_GEN_ROLE_NAME,
 }
@@ -53,6 +111,25 @@ def derive_advanced_role_arn(base_role_arn: str | None) -> str | None:
     if mapped:
         return f"{prefix}{mapped}"
     return arn
+
+
+def cloudtrail_monitor_role_name(connector_role_arn: str | None) -> str | None:
+    arn = derive_cloudtrail_access_role_arn(connector_role_arn)
+    if not arn:
+        return None
+    return arn.rsplit("/", 1)[-1]
+
+
+def cloudtrail_monitor_role_exists(session, connector_role_arn: str | None) -> bool:
+    """True when the IAM role Access Analyzer assumes to read CloudTrail logs exists."""
+    name = cloudtrail_monitor_role_name(connector_role_arn)
+    if not name:
+        return False
+    try:
+        session.client("iam").get_role(RoleName=name)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def derive_cloudtrail_access_role_arn(base_role_arn: str | None) -> str | None:
@@ -255,22 +332,45 @@ def start_policy_generation(
     client,
     *,
     principal_arn: str,
-    trail_arns: list[str],
     access_role_arn: str,
+    trail_arns: list[str] | None = None,
+    trails: list[dict] | None = None,
     start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    lookback_days: int = _POLICY_GEN_LOOKBACK_DAYS,
 ) -> dict:
-    """Start an AWS CloudTrail policy-generation job (async; poll for SUCCEEDED)."""
-    if not trail_arns:
+    """Start an AWS CloudTrail policy-generation job (async; poll for SUCCEEDED).
+
+    Each trail needs ``regions`` or ``allRegions`` per AWS API. Pass ``trails`` with
+    ``arn``, optional ``is_multi_region``, optional ``home_region`` from the DB when available.
+    """
+    if trails:
+        trail_payloads = [
+            trail_entry_for_policy_generation(
+                arn=str(t["arn"]),
+                is_multi_region=bool(t.get("is_multi_region")),
+                home_region=t.get("home_region"),
+            )
+            for t in trails
+        ]
+    elif trail_arns:
+        trail_payloads = [trail_entry_for_policy_generation(arn=arn) for arn in trail_arns]
+    else:
         raise ValueError("no_trails")
     if not access_role_arn:
         raise ValueError("no_access_role")
-    when = start_time or datetime.now(timezone.utc)
+    window_start, window_end = policy_generation_cloudtrail_window(
+        start_time=start_time,
+        end_time=end_time,
+        lookback_days=lookback_days,
+    )
     resp = client.start_policy_generation(
         policyGenerationDetails={"principalArn": principal_arn},
         cloudTrailDetails={
-            "trails": [{"cloudTrailArn": arn} for arn in trail_arns],
+            "trails": trail_payloads,
             "accessRole": access_role_arn,
-            "startTime": when,
+            "startTime": format_access_analyzer_timestamp(window_start),
+            "endTime": format_access_analyzer_timestamp(window_end),
         },
     )
     job_id = resp.get("jobId")

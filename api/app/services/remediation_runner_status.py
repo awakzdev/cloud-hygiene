@@ -12,7 +12,10 @@ from app.services.iam_permission_check import (
     check_actions_on_documents,
     connector_can_start_document_automation,
 )
-from app.services.remediation_plan import IAM_GLOBAL_SSM_CHECKS, resolve_automation_region
+from app.services.remediation_plan import (
+    automation_home_region,
+    resolve_automation_region,
+)
 
 DOCUMENT_NAME = "Vigil-RemediationPlanExecutor"
 
@@ -105,9 +108,18 @@ def check_remediation_runner(
             out["blockers"].append(f"SSM document {document_name} exists but Status={status}")
     except ClientError as e:
         if e.response.get("Error", {}).get("Code") in ("InvalidDocument", "InvalidDocumentOperation"):
-            out["blockers"].append(
-                f"SSM Automation document {document_name} not found in {automation_region} — deploy vigil-remediation-ssm.yaml"
-            )
+            if runbook and runbook.owner == "vigil":
+                home = automation_home_region()
+                out["blockers"].append(
+                    f"Custom Vigil automation document {document_name} is not deployed in the "
+                    f"automation home region {home}. Deploy vigil-remediation-ssm.yaml there once; "
+                    "PlanJson carries resource_region for changes in the target region."
+                )
+            else:
+                out["blockers"].append(
+                    f"AWS runbook {document_name} is not available in {automation_region} "
+                    "(resource region). AWS-owned documents are regional."
+                )
         else:
             out["blockers"].append(f"Cannot describe SSM document: {e}")
 
@@ -131,16 +143,11 @@ def check_remediation_runner(
             f"AWS-owned runbook {document_name} — no Vigil custom document required."
         )
     elif runbook and runbook.owner == "vigil":
-        region_note = (
-            f"Deploy infra/cfn/vigil-remediation-ssm.yaml in {automation_region} "
-            "(same region as the resource being remediated)."
+        home = automation_home_region()
+        out["hints"].append(
+            f"Custom Vigil document: deploy vigil-remediation-ssm.yaml once in {home} "
+            f"(REMEDIATION_AUTOMATION_REGION). Target resource region: {resource_region or 'n/a'}."
         )
-        if check_id in IAM_GLOBAL_SSM_CHECKS:
-            region_note = (
-                f"Deploy infra/cfn/vigil-remediation-ssm.yaml in {automation_region} "
-                f"(IAM home region; connector REMEDIATION_AUTOMATION_REGION)."
-            )
-        out["hints"].append(f"Custom Vigil document: {region_note}")
 
     if out["ready"]:
         out["hints"] = [
@@ -154,10 +161,10 @@ def check_remediation_runner(
             "Update the Vigil connector stack (vigil-stack / core scanner) with SSM remediation modules enabled.",
             f"Connector needs ssm:DescribeDocument and ssm:StartAutomationExecution in {automation_region}.",
             (
-                f"Regional resources: deploy Vigil-RemediationPlanExecutor in each AWS region you remediate "
-                f"(this finding: {automation_region})."
-                if resource_region and check_id not in IAM_GLOBAL_SSM_CHECKS
-                else f"Set REMEDIATION_AUTOMATION_REGION={settings.REMEDIATION_AUTOMATION_REGION} for IAM automation home region."
+                f"Set REMEDIATION_AUTOMATION_REGION={settings.REMEDIATION_AUTOMATION_REGION} "
+                f"to match where Vigil-RemediationPlanExecutor is deployed."
+                if runbook and runbook.owner == "vigil"
+                else f"AWS-owned runbook must exist in the resource region ({automation_region})."
             ),
         ]
     return out

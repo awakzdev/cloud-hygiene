@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.checks.base import FindingDraft
 from app.models import Finding, FindingEvent
+from app.services.finding_supersession import resolve_retired_superseded
 
 
 def persist_findings(
@@ -83,6 +84,10 @@ def persist_findings(
             f.resolved_at = now
             db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="resolved", actor="system", note="not present in latest scan"))
             resolved += 1
+
+    resolved += resolve_retired_superseded(
+        db, account_id=account_id, now=now, check_ids_run=check_ids_run
+    )
 
     db.commit()
     return opened, resolved
